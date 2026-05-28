@@ -1,25 +1,31 @@
 {
-  "updated": 1779990520,
-  "updated_iso": "2026-05-28T17:48:40Z",
+  "updated": 1780000832,
+  "updated_iso": "2026-05-28T20:40:32Z",
   "verified": true,
   "stats": {
     "total": 77,
-    "ok": 63,
-    "failed": 14,
+    "ok": 64,
+    "failed": 13,
     "countries": 19
   },
   "nodes": {
     "🇷🇺 💫 Россия [VPN] #1": {
-      "ok": false,
-      "country": null,
-      "latency": 5785,
-      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Max retries exceeded",
-      "services": {}
+      "ok": true,
+      "country": "FI",
+      "latency": 887,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
     },
     "🇷🇺 ✈️ Для Телеграма [VPN]": {
       "ok": true,
       "country": "FI",
-      "latency": 1116,
+      "latency": 1235,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -32,7 +38,7 @@
     "🇷🇺 🙏 Россия [Обход - МТС]": {
       "ok": true,
       "country": "FI",
-      "latency": 815,
+      "latency": 934,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -43,196 +49,13 @@
       "verified": true
     },
     " 🇩🇪 🙏 Германия [Обход - МТС]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 966,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇫🇮 🙏 Финляндия [Обход - МТС]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 791,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇵🇱 🙏 Польша [Обход - МТС]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 1042,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇷🇺 🙏 Россия [Обход]": {
       "ok": false,
       "country": null,
-      "latency": 8022,
-      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
-      "services": {}
-    },
-    "🇩🇪 🙏 Германия [Обход]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 1204,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇵🇱 🙏 Польша [Обход]": {
-      "ok": false,
-      "country": null,
-      "latency": 8030,
-      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
-      "services": {}
-    },
-    "🇫🇮 🙏 Финляндия [Обход]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 919,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇳🇱 🙏 Нидерланды [Обход]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 1173,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇪🇪 🙏 Эстония [Обход]": {
-      "ok": false,
-      "country": null,
-      "latency": 4761,
+      "latency": 4670,
       "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Max retries exceeded",
       "services": {}
     },
-    "🇹🇷  🙏 Турция [Обход]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 4838,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    " 🇺🇸 🙏 США [Обход]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 899,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇩🇪  🚀 Германия [VPN]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 795,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇩🇪  🚀 Германия Напрямую [VPN]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 783,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇵🇱  🚀 Польша [VPN]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 881,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇫🇮   🚀 Финляндия [VPN]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 831,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇪🇪  🚀 Эстония [VPN]": {
-      "ok": true,
-      "country": "FI",
-      "latency": 885,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇷🇺 ⚡Россия [VPN]": {
+    "🇫🇮 🙏 Финляндия [Обход - МТС]": {
       "ok": true,
       "country": "FI",
       "latency": 890,
@@ -245,10 +68,193 @@
       },
       "verified": true
     },
+    "🇵🇱 🙏 Польша [Обход - МТС]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 878,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇷🇺 🙏 Россия [Обход]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 1768,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇩🇪 🙏 Германия [Обход]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 1223,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇵🇱 🙏 Польша [Обход]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 875,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇫🇮 🙏 Финляндия [Обход]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 1009,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇳🇱 🙏 Нидерланды [Обход]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 892,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇪🇪 🙏 Эстония [Обход]": {
+      "ok": false,
+      "country": null,
+      "latency": 8032,
+      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
+      "services": {}
+    },
+    "🇹🇷  🙏 Турция [Обход]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 854,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    " 🇺🇸 🙏 США [Обход]": {
+      "ok": false,
+      "country": null,
+      "latency": 8026,
+      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
+      "services": {}
+    },
+    "🇩🇪  🚀 Германия [VPN]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 1116,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇩🇪  🚀 Германия Напрямую [VPN]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 829,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇵🇱  🚀 Польша [VPN]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 1012,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇫🇮   🚀 Финляндия [VPN]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 792,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇪🇪  🚀 Эстония [VPN]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 683,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇷🇺 ⚡Россия [VPN]": {
+      "ok": true,
+      "country": "FI",
+      "latency": 944,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
     " 🇷🇺 💫 Россия [VPN] #1": {
       "ok": true,
       "country": "FI",
-      "latency": 669,
+      "latency": 733,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -261,14 +267,14 @@
     "🇷🇺 💫 Россия [VPN] #2": {
       "ok": false,
       "country": null,
-      "latency": 8026,
-      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
+      "latency": 6553,
+      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Max retries exceeded",
       "services": {}
     },
     "🇷🇺 💫 Россия [VPN] #3": {
       "ok": true,
       "country": "FI",
-      "latency": 915,
+      "latency": 716,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -281,7 +287,7 @@
     "🇩🇪  ⭐ Германия [VPN] #1": {
       "ok": true,
       "country": "FI",
-      "latency": 813,
+      "latency": 756,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -294,7 +300,7 @@
     "🇩🇪  🚀 Германия [VPN] #2": {
       "ok": true,
       "country": "FI",
-      "latency": 668,
+      "latency": 960,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -307,7 +313,7 @@
     " 🇩🇪  🚀 Германия Напрямую [VPN]": {
       "ok": true,
       "country": "FI",
-      "latency": 781,
+      "latency": 624,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -320,7 +326,7 @@
     "🇩🇪  🟢 Германия [VPN] #3": {
       "ok": true,
       "country": "FI",
-      "latency": 1228,
+      "latency": 648,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -333,7 +339,7 @@
     "🇩🇪  🟢 Германия [VPN] #4": {
       "ok": true,
       "country": "FI",
-      "latency": 569,
+      "latency": 655,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -346,7 +352,7 @@
     "🇩🇪  🟢 Германия [VPN] #5": {
       "ok": true,
       "country": "FI",
-      "latency": 619,
+      "latency": 648,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -359,7 +365,7 @@
     "🇩🇪  🟢 Германия [VPN] #6": {
       "ok": true,
       "country": "FI",
-      "latency": 583,
+      "latency": 644,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -372,7 +378,7 @@
     "🇩🇪  🟢 Германия [VPN] #7": {
       "ok": true,
       "country": "FI",
-      "latency": 553,
+      "latency": 604,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -385,7 +391,7 @@
     "🇵🇱 ⭐ Польша [VPN] #1": {
       "ok": true,
       "country": "FI",
-      "latency": 655,
+      "latency": 574,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -398,7 +404,7 @@
     "🇵🇱 🟢 Польша [VPN] #3": {
       "ok": true,
       "country": "FI",
-      "latency": 611,
+      "latency": 622,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -411,7 +417,7 @@
     "🇵🇱 🟢 Польша [VPN] #4": {
       "ok": true,
       "country": "FI",
-      "latency": 659,
+      "latency": 615,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -422,22 +428,16 @@
       "verified": true
     },
     "🇵🇱 🟢 Польша [VPN] #5": {
-      "ok": true,
-      "country": "FI",
-      "latency": 648,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
+      "ok": false,
+      "country": null,
+      "latency": 4479,
+      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Max retries exceeded",
+      "services": {}
     },
     "🇫🇮  ⭐ Финляндия [VPN] #1": {
       "ok": true,
       "country": "FI",
-      "latency": 806,
+      "latency": 725,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -450,7 +450,7 @@
     "🇫🇮  🟢 Финляндия [VPN] #3": {
       "ok": true,
       "country": "FI",
-      "latency": 592,
+      "latency": 629,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -463,7 +463,7 @@
     "🇫🇮  🟢 Финляндия [VPN] #4": {
       "ok": true,
       "country": "FI",
-      "latency": 1652,
+      "latency": 644,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -476,7 +476,7 @@
     " 🇫🇮  🟢 Финляндия [VPN] #5": {
       "ok": true,
       "country": "FI",
-      "latency": 708,
+      "latency": 703,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -487,16 +487,22 @@
       "verified": true
     },
     "🇳🇱  ⭐ Нидерланды [VPN] #1": {
-      "ok": false,
-      "country": null,
-      "latency": 4522,
-      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Max retries exceeded",
-      "services": {}
+      "ok": true,
+      "country": "FI",
+      "latency": 713,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
     },
     "🇳🇱  🟢 Нидерланды [VPN] #2": {
       "ok": true,
       "country": "FI",
-      "latency": 982,
+      "latency": 645,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -509,7 +515,7 @@
     "🇳🇱  🟢 Нидерланды [VPN] #3": {
       "ok": true,
       "country": "FI",
-      "latency": 756,
+      "latency": 695,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -522,7 +528,7 @@
     "🇹🇷  ⭐ Турция [VPN] #1": {
       "ok": true,
       "country": "FI",
-      "latency": 706,
+      "latency": 557,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -535,7 +541,7 @@
     "🇹🇷 🟢 Турция [VPN] #2": {
       "ok": true,
       "country": "FI",
-      "latency": 730,
+      "latency": 682,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -548,14 +554,14 @@
     "🇹🇷 🟢 Турция [VPN] #3": {
       "ok": false,
       "country": null,
-      "latency": 8026,
+      "latency": 8028,
       "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
       "services": {}
     },
     "🇪🇪  ⭐ Эстония [VPN] #1": {
       "ok": true,
       "country": "FI",
-      "latency": 534,
+      "latency": 618,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -568,7 +574,7 @@
     "🇪🇪  🟢 Эстония [VPN] #2": {
       "ok": true,
       "country": "FI",
-      "latency": 689,
+      "latency": 656,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -581,14 +587,14 @@
     "🇪🇪  🟢 Эстония [VPN] #3": {
       "ok": false,
       "country": null,
-      "latency": 8026,
+      "latency": 8029,
       "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
       "services": {}
     },
     "🇺🇸 ⭐ США [VPN] #1": {
       "ok": true,
       "country": "FI",
-      "latency": 571,
+      "latency": 564,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -601,7 +607,7 @@
     "🇺🇸 🟢 США [VPN] #2": {
       "ok": true,
       "country": "FI",
-      "latency": 723,
+      "latency": 669,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -614,19 +620,19 @@
     "🇺🇸 🟢 США [VPN] #3": {
       "ok": false,
       "country": null,
-      "latency": 8026,
+      "latency": 8028,
       "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
       "services": {}
     },
     " 🇫🇮 🕹️ Финляндия [Игры] #1": {
       "ok": true,
       "country": "FI",
-      "latency": 591,
+      "latency": 590,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
         "gemini": "pass",
-        "grok": "pass",
+        "grok": "block",
         "perplexity": "pass"
       },
       "verified": true
@@ -634,7 +640,7 @@
     "🇱🇻 🕹️ Латвия [Игры]": {
       "ok": true,
       "country": "LV",
-      "latency": 597,
+      "latency": 673,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -647,7 +653,7 @@
     "🇪🇪 🕹️ Эстония [Игры]": {
       "ok": true,
       "country": "EE",
-      "latency": 639,
+      "latency": 680,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -660,7 +666,7 @@
     "🇸🇪 🕹️Швеция [Игры]": {
       "ok": true,
       "country": "FI",
-      "latency": 656,
+      "latency": 595,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -673,7 +679,7 @@
     "🇱🇹 🕹️ Литва [Игры]": {
       "ok": true,
       "country": "LT",
-      "latency": 594,
+      "latency": 587,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -686,7 +692,7 @@
     "🇦🇹 Австрия [VPN]": {
       "ok": true,
       "country": "AT",
-      "latency": 1018,
+      "latency": 1098,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -699,7 +705,7 @@
     "🇦🇲 Армения [VPN]": {
       "ok": true,
       "country": "AM",
-      "latency": 921,
+      "latency": 1516,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -712,7 +718,7 @@
     "🇧🇪 Бельгия [VPN]": {
       "ok": true,
       "country": "BE",
-      "latency": 1283,
+      "latency": 1048,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -725,7 +731,7 @@
     "🇬🇧 Великобритания [VPN]": {
       "ok": true,
       "country": "RO",
-      "latency": 790,
+      "latency": 793,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -738,21 +744,21 @@
     " 🇪🇸 Испания [VPN]": {
       "ok": false,
       "country": null,
-      "latency": 8026,
+      "latency": 8029,
       "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
       "services": {}
     },
     "🇳🇬 Нигерия [VPN]": {
       "ok": false,
       "country": null,
-      "latency": 8025,
+      "latency": 8026,
       "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
       "services": {}
     },
     "🇷🇴 Румыния [VPN]": {
       "ok": true,
       "country": "GB",
-      "latency": 796,
+      "latency": 814,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -765,7 +771,7 @@
     "🇫🇷 Франция [VPN]": {
       "ok": true,
       "country": "FR",
-      "latency": 781,
+      "latency": 824,
       "services": {
         "chatgpt": "block",
         "claude": "pass",
@@ -778,7 +784,7 @@
     "🇨🇭 Швейцария [VPN]": {
       "ok": true,
       "country": "CH",
-      "latency": 715,
+      "latency": 687,
       "services": {
         "chatgpt": "block",
         "claude": "pass",
@@ -791,7 +797,7 @@
     "🇳🇴 Норвегия [VPN]": {
       "ok": true,
       "country": "NO",
-      "latency": 668,
+      "latency": 711,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
@@ -804,89 +810,11 @@
     "🇨🇿 Чехия [VPN]": {
       "ok": false,
       "country": null,
-      "latency": 4538,
-      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Max retries exceeded",
+      "latency": 8028,
+      "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
       "services": {}
     },
     "🇹🇭 Тайланд [VPN]": {
-      "ok": true,
-      "country": "SG",
-      "latency": 1114,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "block",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇮🇳 Индия [VPN]": {
-      "ok": true,
-      "country": "IN",
-      "latency": 1021,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇦🇪 ОАЭ [VPN]": {
-      "ok": true,
-      "country": "AE",
-      "latency": 1533,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇨🇦 Канада [VPN]": {
-      "ok": true,
-      "country": "CA",
-      "latency": 867,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇦🇷  Аргентина [VPN]": {
-      "ok": true,
-      "country": "AR",
-      "latency": 1307,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    " 🇰🇿 Казахстан [VPN]": {
-      "ok": true,
-      "country": "KZ",
-      "latency": 6033,
-      "services": {
-        "chatgpt": "pass",
-        "claude": "pass",
-        "gemini": "pass",
-        "grok": "pass",
-        "perplexity": "pass"
-      },
-      "verified": true
-    },
-    "🇸🇬  Сингапур [VPN]": {
       "ok": true,
       "country": "SG",
       "latency": 1136,
@@ -899,24 +827,102 @@
       },
       "verified": true
     },
+    "🇮🇳 Индия [VPN]": {
+      "ok": true,
+      "country": "IN",
+      "latency": 1086,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇦🇪 ОАЭ [VPN]": {
+      "ok": true,
+      "country": "AE",
+      "latency": 1311,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇨🇦 Канада [VPN]": {
+      "ok": true,
+      "country": "CA",
+      "latency": 932,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇦🇷  Аргентина [VPN]": {
+      "ok": true,
+      "country": "AR",
+      "latency": 1342,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    " 🇰🇿 Казахстан [VPN]": {
+      "ok": true,
+      "country": "KZ",
+      "latency": 1022,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "pass",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
+    "🇸🇬  Сингапур [VPN]": {
+      "ok": true,
+      "country": "SG",
+      "latency": 1178,
+      "services": {
+        "chatgpt": "pass",
+        "claude": "pass",
+        "gemini": "pass",
+        "grok": "block",
+        "perplexity": "pass"
+      },
+      "verified": true
+    },
     "🇧🇷 Бразилия [VPN]": {
       "ok": false,
       "country": null,
-      "latency": 8026,
+      "latency": 8021,
       "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
       "services": {}
     },
     "🇰🇷 Южная Корея [VPN]": {
       "ok": false,
       "country": null,
-      "latency": 8026,
+      "latency": 8029,
       "error": "SOCKSHTTPSConnectionPool(host='chat.openai.com', port=443): Read timed out. (rea",
       "services": {}
     },
     "🇯🇵 Япония [VPN]": {
       "ok": true,
       "country": "JP",
-      "latency": 4122,
+      "latency": 2058,
       "services": {
         "chatgpt": "pass",
         "claude": "pass",
