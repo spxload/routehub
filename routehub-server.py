@@ -2,12 +2,11 @@
 # =====================================================================
 #  routehub-server.py — серверная часть RouteHub (Этап B плана v3).
 #  ИИ-доступность: ОСНОВНОЙ критерий — живой запрос к эндпоинту;
-#  страна — запасной сигнал (при неинформативном ответе -> unknown,
-#  не block, чтобы не выбросить рабочий узел).
-#  Гео: два поля — cf_loc (точка Cloudflare, loc=) и country/geo
-#  (реальный выходной IP, как 2ip).
-#  Скорость НЕ меряет (её пишет телефон, Этап H).
-#  Рейтинг: 3 метрики, EWMA, светофор 4 цвета.
+#  страна — запасной сигнал (при неинформативном ответе -> unknown).
+#  Гео: cf_loc (точка Cloudflare, loc=) и country/geo — РЕАЛЬНЫЙ
+#  выходной IP, определяется ЧЕРЕЗ туннель (как 2ip), без rate-limit.
+#  Тестирование параллельное (concurrency, B.4.10): свой Xray-порт
+#  на воркер. Скорость НЕ меряет. Рейтинг: EWMA, светофор 4 цвета.
 #  Стерильный лог: только имена узлов, НИКОГДА полные URI.
 # =====================================================================
 
@@ -29,6 +28,7 @@ SOCKS_PORT  = 10808
 DEFAULTS = {
     "verify_ai": True, "pause_min_sec": 0.5, "pause_max_sec": 3.0,
     "ewma_fresh": 0.7, "ewma_old": 0.3, "stale_hours": 4, "history_len": 20,
+    "concurrency": 6,
     "block_lists": {
         "chatgpt":    ["RU","BY","CN","KP","SY","IR","VE","CU","AF","UA"],
         "claude":     ["RU","BY","CN","KP","SY","IR","VE","CU","AF"],
@@ -214,17 +214,24 @@ def extract_trace(body):
     return (loc.group(1) if loc else None), (ip.group(1) if ip else None)
 
 
-def geo_full(ip):
-    if not ip:
-        return None, ''
-    try:
-        r = requests.get('http://ip-api.com/json/' + ip + '?fields=countryCode,city,regionName', timeout=6)
-        d = r.json()
-        cc = (d.get('countryCode') or '').strip() or None
-        city = (d.get('city') or d.get('regionName') or '').strip()
-        return cc, city
-    except Exception:
-        return None, ''
+def geo_via_proxy(port):
+    # Страна РЕАЛЬНОГО выходного IP, как её видит внешний наблюдатель (как 2ip):
+    # запрос идёт ЧЕРЕЗ сам туннель. Лимит не бьётся — у каждого узла свой выходной IP.
+    for url, kc, kk in (
+        ('https://api.ip.sb/geoip', 'country_code', 'city'),
+        ('https://ipinfo.io/json',  'country',      'city'),
+    ):
+        status, body, _ = via_socks(port, url, timeout=8)
+        if status and body:
+            try:
+                d = json.loads(body)
+                cc = (d.get(kc) or '').strip().upper() or None
+                city = (d.get(kk) or '').strip()
+                if cc:
+                    return cc, city
+            except Exception:
+                pass
+    return None, ''
 
 
 def live_ai(port, svc):
@@ -265,31 +272,31 @@ def decide_service(svc, live, country, blocklist):
     return 'unknown'
 
 
-def test_node(node, cfg):
+def test_node(node, cfg, port=SOCKS_PORT):
     udp_guess = node['type'] != 'ws'
-    xcfg = make_xray_config(node, SOCKS_PORT)
+    xcfg = make_xray_config(node, port)
     with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
         json.dump(xcfg, f); cfg_path = f.name
     proc = None
     try:
         proc = subprocess.Popen([XRAY_BIN, 'run', '-c', cfg_path],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if not wait_port(SOCKS_PORT, timeout=8):
+        if not wait_port(port, timeout=8):
             return {'ok': False, 'cf_loc': None, 'country': None, 'geo': '', 'latency': 99999,
                     'error': 'xray-port-timeout', 'services': {}, 'udp': udp_guess}
         time.sleep(0.5)
-        status, body, latency = via_socks(SOCKS_PORT, TRACE_URL, timeout=8)
+        status, body, latency = via_socks(port, TRACE_URL, timeout=8)
         if status is None:
             return {'ok': False, 'cf_loc': None, 'country': None, 'geo': '', 'latency': latency,
                     'error': body[:80], 'services': {}, 'udp': udp_guess}
-        cf_loc, out_ip = extract_trace(body)
-        country, city = geo_full(out_ip)
+        cf_loc, _out_ip = extract_trace(body)
+        country, city = geo_via_proxy(port)
         if country is None:
             country = cf_loc
         block = cfg['block_lists']
         services = {}
         for s in SERVICES:
-            live = live_ai(SOCKS_PORT, s) if cfg['verify_ai'] else 'unknown'
+            live = live_ai(port, s) if cfg['verify_ai'] else 'unknown'
             services[s] = decide_service(s, live, country, block)
         return {'ok': True, 'cf_loc': cf_loc, 'country': country, 'geo': city,
                 'latency': latency, 'services': services, 'udp': udp_guess,
@@ -374,7 +381,9 @@ def main():
     counts = {'green': 0, 'yellow': 0, 'red': 0, 'unknown': 0}
     countries = set()
 
-    for i, node in enumerate(nodes, 1):
+    # untested (vmess/hysteria/…) — сразу в результат, без сети
+    testable = []
+    for node in nodes:
         name = node['display']
         ntype = 'bypass' if is_bypass(node['name']) else 'normal'
         if not node.get('tested', False):
@@ -383,30 +392,50 @@ def main():
                              'light': 'unknown', 'health': None, 'stability': None,
                              'udp': None, 'services': {}}
             counts['unknown'] += 1
-            log(f'  [{i}/{len(nodes)}] x {name[:42]} -> {results[name]["reason"][:40]}')
-            continue
+            log(f'  x {name[:42]} -> {results[name]["reason"][:40]}')
+        else:
+            testable.append((node, ntype))
+
+    # Параллельное тестирование: каждый воркер — свой Xray-порт (B.4.10).
+    workers = max(1, int(cfg.get('concurrency', 1)))
+    log(f'Тестирую {len(testable)} узлов, потоков: {workers}')
+
+    def work(item, idx):
+        node, ntype = item
+        port = SOCKS_PORT + (idx % workers)   # уникальный порт на слот воркера
+        time.sleep(random.uniform(cfg['pause_min_sec'], cfg['pause_max_sec']))  # B.4.9 джиттер
         try:
-            res = test_node(node, cfg)
+            res = test_node(node, cfg, port)
         except Exception as e:
             res = {'ok': False, 'cf_loc': None, 'country': None, 'geo': '', 'latency': 99999,
                    'error': str(e)[:80], 'services': {}, 'udp': None}
-        health, stability, svc_scores = update_metrics(name, res, hist, cfg)
-        svc_status = res.get('services', {})
-        light = light_of(health, stability, svc_status, hist[name]['last_t'], cfg)
-        counts[light] = counts.get(light, 0) + 1
-        if res.get('ok') and res.get('country'): countries.add(res['country'])
-        results[name] = {
-            'country': res.get('country'), 'cf_loc': res.get('cf_loc'),
-            'geo': res.get('geo', ''), 'type': ntype, 'udp': res.get('udp'),
-            'light': light, 'health': health, 'stability': stability,
-            'services': {s: {'status': svc_status.get(s, 'unknown'),
-                             'score': svc_scores.get(s, 0)} for s in SERVICES},
-        }
-        log(f'  [{i}/{len(nodes)}] {light} {name[:38]} -> '
-            f'cf={res.get("cf_loc")} real={res.get("country")} '
-            f'ai={"".join((svc_status.get(s,"?") or "?")[0] for s in SERVICES)} '
-            f'h{health} ({res.get("latency","?")}ms)')
-        time.sleep(random.uniform(cfg['pause_min_sec'], cfg['pause_max_sec']))
+        return node['display'], ntype, res
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    done = 0
+    total = len(testable)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(work, item, i) for i, item in enumerate(testable)]
+        for fut in as_completed(futs):
+            name, ntype, res = fut.result()
+            done += 1
+            # метрики/история — в главном потоке (не потокобезопасно)
+            health, stability, svc_scores = update_metrics(name, res, hist, cfg)
+            svc_status = res.get('services', {})
+            light = light_of(health, stability, svc_status, hist[name]['last_t'], cfg)
+            counts[light] = counts.get(light, 0) + 1
+            if res.get('ok') and res.get('country'): countries.add(res['country'])
+            results[name] = {
+                'country': res.get('country'), 'cf_loc': res.get('cf_loc'),
+                'geo': res.get('geo', ''), 'type': ntype, 'udp': res.get('udp'),
+                'light': light, 'health': health, 'stability': stability,
+                'services': {s: {'status': svc_status.get(s, 'unknown'),
+                                 'score': svc_scores.get(s, 0)} for s in SERVICES},
+            }
+            log(f'  [{done}/{total}] {light} {name[:36]} -> '
+                f'cf={res.get("cf_loc")} real={res.get("country")} '
+                f'ai={"".join((svc_status.get(s,"?") or "?")[0] for s in SERVICES)} '
+                f'h{health} ({res.get("latency","?")}ms)')
 
     output = {
         'version': 2, 'updated': int(time.time()),
