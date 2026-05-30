@@ -19,6 +19,11 @@
 #  Порядок узлов в выводе СОХРАНЯЕТСЯ как в подписке (поле pos = номер
 #  узла у провайдера, 1..N). Это позволяет видеть «хвост» подписки и
 #  отображать узлы в Loon в том же порядке, что отдаёт провайдер.
+#  ДИАГНОСТИКА: по каждому узлу выводится блок tech (параметры из
+#  подписки: security/sni/fp/alpn/transport/flow/host:port/path) +
+#  out_ip (выходной IP). UUID НЕ выводится (это секрет доступа).
+#  Поля tech нужны, чтобы искать схожесть между узлами (напр. почему
+#  Gemini не грузится под аккаунтом на части узлов).
 # =====================================================================
 
 import os, sys, json, base64, socket, subprocess, tempfile, time, re
@@ -168,6 +173,27 @@ def is_bypass(name):
     return any(m in name for m in BYPASS_MARKERS)
 
 
+def node_tech(node):
+    # Технические поля узла из подписки — для диагностики «схожести».
+    # БЕЗ uuid (это секрет доступа к узлу). out_ip добавляется отдельно
+    # (это уже результат теста, а не поле подписки).
+    return {
+        'proto': node.get('proto'),
+        'security': node.get('security'),     # reality / tls / none — тип маскировки
+        'transport': node.get('type'),        # tcp / ws / grpc
+        'sni': node.get('sni'),               # маскировочный домен (SNI)
+        'fp': node.get('fp'),                 # fingerprint (chrome и т.п.)
+        'alpn': node.get('alpn'),             # h2 / http/1.1
+        'flow': node.get('flow'),             # напр. xtls-rprx-vision
+        'host_in': node.get('host'),          # адрес ВХОДА (сервер подключения)
+        'port': node.get('port'),
+        'ws_host_header': node.get('hostHeader'),
+        'service_name': node.get('serviceName'),
+        'path': node.get('path'),
+        'reality': bool(node.get('pbk')),     # есть publicKey -> reality
+    }
+
+
 def make_xray_config(node, socks_port):
     stream = {'network': node['type']}
     sec = node['security']
@@ -290,7 +316,8 @@ def geo_via_proxy(port, out_ip=None, cf_loc=None):
     maxmind = maxmind_lookup(out_ip)
     ptr = ROUTEHUB_GEO.reverse_dns(out_ip) if out_ip else ''
     res = ROUTEHUB_GEO.consolidate(sources, cf_loc, maxmind, ptr)
-    return res   # dict: country, country_conf, city, city_conf, ip_type, asn, org
+    res['ptr'] = ptr   # reverse-DNS выходного IP (тоже полезно для диагностики)
+    return res   # dict: country, country_conf, city, city_conf, ip_type, asn, org, ptr
 
 
 def chatgpt_live(port):
@@ -387,6 +414,7 @@ def test_node(node, cfg, port=SOCKS_PORT):
                 'country': country, 'country_conf': geo['country_conf'],
                 'geo': city, 'city_conf': geo['city_conf'],
                 'ip_type': geo['ip_type'], 'asn': geo['asn'], 'org': geo['org'],
+                'ptr': geo.get('ptr', ''),
                 'latency': latency, 'services': services, 'udp': udp_guess,
                 'verified': cfg['verify_ai']}
     finally:
@@ -468,11 +496,9 @@ def main():
     # в подписке (1..N) — сохраняем здесь, до параллельного теста, чтобы
     # потом восстановить исходный порядок в выводе и видеть «хвост».
     order = []          # display-имена в порядке подписки
-    pos_of = {}         # display -> позиция (1..N)
     for i, node in enumerate(nodes, start=1):
         node['pos'] = i
         order.append(node['display'])
-        pos_of[node['display']] = i
 
     results = {}
     counts = {'green': 0, 'yellow': 0, 'red': 0, 'unknown': 0}
@@ -484,7 +510,7 @@ def main():
         ntype = 'bypass' if is_bypass(node['name']) else 'normal'
         if not node.get('tested', False):
             results[name] = {'pos': node['pos'], 'country': None, 'cf_loc': None, 'geo': '',
-                             'type': ntype, 'tested': False,
+                             'type': ntype, 'tested': False, 'tech': node_tech(node),
                              'reason': node.get('reason', 'не тестируется'),
                              'light': 'unknown', 'health': None, 'stability': None,
                              'udp': None, 'services': {}}
@@ -512,6 +538,7 @@ def main():
         finally:
             with pool_lock:
                 port_pool.append(port)
+        res['tech'] = node_tech(node)
         return node['display'], node['pos'], ntype, res
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -530,10 +557,11 @@ def main():
             results[name] = {
                 'pos': npos,
                 'country': res.get('country'), 'country_conf': res.get('country_conf'),
-                'cf_loc': res.get('cf_loc'), 'geo': res.get('geo', ''),
-                'city_conf': res.get('city_conf'), 'ip_type': res.get('ip_type'),
-                'asn': res.get('asn'), 'org': res.get('org'),
-                'type': ntype, 'udp': res.get('udp'),
+                'cf_loc': res.get('cf_loc'), 'out_ip': res.get('out_ip'),
+                'geo': res.get('geo', ''), 'city_conf': res.get('city_conf'),
+                'ip_type': res.get('ip_type'), 'asn': res.get('asn'),
+                'org': res.get('org'), 'ptr': res.get('ptr', ''),
+                'type': ntype, 'udp': res.get('udp'), 'tech': res.get('tech', {}),
                 'light': light, 'health': health, 'stability': stability,
                 'services': {s: {'status': svc_status.get(s, 'unknown'),
                                  'score': svc_scores.get(s, 0)} for s in SERVICES},
@@ -548,9 +576,11 @@ def main():
     ordered_results = {name: results[name] for name in order if name in results}
 
     output = {
-        'version': 2, 'updated': int(time.time()),
+        'version': 3, 'updated': int(time.time()),
         'updated_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
         'verified': cfg['verify_ai'], 'order': 'subscription',
+        'note': 'tech = параметры узла из подписки (без uuid). out_ip = выходной IP. '
+                'ptr = reverse-DNS выходного IP. pos = номер узла у провайдера.',
         'stats': {'total': len(nodes), 'green': counts['green'],
                   'yellow': counts['yellow'], 'red': counts['red'],
                   'unknown': counts['unknown'], 'countries': len(countries)},
