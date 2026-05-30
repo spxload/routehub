@@ -1,15 +1,15 @@
 {
   "version": 3,
-  "updated": 1780174561,
-  "updated_iso": "2026-05-30T20:56:01Z",
+  "updated": 1780175212,
+  "updated_iso": "2026-05-30T21:06:52Z",
   "verified": true,
   "order": "subscription",
   "note": "tech = параметры узла из подписки (без uuid). out_ip = выходной IP. ptr = reverse-DNS выходного IP. pos = номер узла у провайдера.",
   "stats": {
     "total": 80,
     "green": 55,
-    "yellow": 16,
-    "red": 9,
+    "yellow": 14,
+    "red": 11,
     "unknown": 0,
     "countries": 31
   },
@@ -45,7 +45,7 @@
       },
       "light": "red",
       "health": 76.9,
-      "stability": 17.9,
+      "stability": 18.0,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -57,7 +57,7 @@
         },
         "gemini": {
           "status": "block",
-          "score": 0.2
+          "score": 0.1
         },
         "grok": {
           "status": "pass",
@@ -100,7 +100,7 @@
       },
       "light": "red",
       "health": 0.0,
-      "stability": 0.2,
+      "stability": 0.1,
       "services": {
         "chatgpt": {
           "status": "unknown",
@@ -129,13 +129,13 @@
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.204",
-      "geo": "Frankfurt am Main",
+      "out_ip": "2a0b:4141:820:15d4::2",
+      "geo": "Amsterdam",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
-      "asn": 198883,
-      "org": "Tabunscic Anatoli",
-      "ptr": "de.premium",
+      "asn": 213887,
+      "org": "WAIcore Ltd",
+      "ptr": "",
       "type": "bypass",
       "udp": false,
       "tech": {
@@ -155,7 +155,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -210,7 +210,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -239,13 +239,13 @@
       "country": "FI",
       "country_conf": 0.75,
       "cf_loc": "FI",
-      "out_ip": "2a0b:4143:0:358::2",
-      "geo": "Helsinki",
+      "out_ip": "152.89.244.150",
+      "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
-      "asn": 215730,
-      "org": "H2nexus Ltd",
-      "ptr": "",
+      "asn": 30823,
+      "org": "aurologic GmbH",
+      "ptr": "150.244.89.152",
       "type": "bypass",
       "udp": false,
       "tech": {
@@ -265,7 +265,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -294,7 +294,7 @@
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:3da::2",
+      "out_ip": "2a0e:d600:0:3e8::2",
       "geo": "Warsaw",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -320,7 +320,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -346,15 +346,15 @@
     },
     "[Lastdep] 🇷🇺 🙏 Россия [Обход]": {
       "pos": 7,
-      "country": "RU",
-      "country_conf": 1.0,
-      "cf_loc": "RU",
-      "out_ip": "45.92.177.185",
-      "geo": "St Petersburg",
-      "city_conf": "medium",
-      "ip_type": "datacenter",
-      "asn": 49505,
-      "org": "JSC Selectel",
+      "country": null,
+      "country_conf": null,
+      "cf_loc": null,
+      "out_ip": null,
+      "geo": "",
+      "city_conf": null,
+      "ip_type": null,
+      "asn": null,
+      "org": null,
       "ptr": "",
       "type": "bypass",
       "udp": false,
@@ -374,27 +374,27 @@
         "reality": false
       },
       "light": "red",
-      "health": 70.8,
-      "stability": 16.3,
+      "health": 21.2,
+      "stability": 8.2,
       "services": {
         "chatgpt": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "claude": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "gemini": {
-          "status": "block",
+          "status": "unknown",
           "score": 9.0
         },
         "grok": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "perplexity": {
-          "status": "block",
+          "status": "unknown",
           "score": 0.0
         }
       }
@@ -404,7 +404,7 @@
       "country": "DE",
       "country_conf": 1.0,
       "cf_loc": "DE",
-      "out_ip": "185.126.67.110",
+      "out_ip": "185.126.67.28",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -429,8 +429,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 91.8,
-      "stability": 36.5,
+      "health": 97.5,
+      "stability": 42.9,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -459,10 +459,10 @@
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:3e4::2",
+      "out_ip": "2a0e:d600:0:3e5::2",
       "geo": "Warsaw",
       "city_conf": "medium",
-      "ip_type": "residential?",
+      "ip_type": "vpn/proxy",
       "asn": 215730,
       "org": "H2nexus Ltd",
       "ptr": "",
@@ -485,7 +485,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 82.2,
+      "stability": 84.0,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -511,15 +511,15 @@
     },
     "[Lastdep] 🇫🇮 🙏 Финляндия [Обход]": {
       "pos": 10,
-      "country": "DE",
-      "country_conf": 0.5,
+      "country": "FI",
+      "country_conf": 1.0,
       "cf_loc": "FI",
-      "out_ip": "152.89.244.216",
-      "geo": "Frankfurt am Main",
+      "out_ip": "2a0b:4143:0:367::2",
+      "geo": "Helsinki",
       "city_conf": "medium",
-      "ip_type": "residential?",
-      "asn": 30823,
-      "org": "aurologic GmbH",
+      "ip_type": "vpn/proxy",
+      "asn": 215730,
+      "org": "H2nexus Ltd",
       "ptr": "",
       "type": "bypass",
       "udp": false,
@@ -539,8 +539,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 93.7,
-      "stability": 54.4,
+      "health": 98.1,
+      "stability": 59.0,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -566,10 +566,10 @@
     },
     "[Lastdep] 🇳🇱 🙏 Нидерланды [Обход]": {
       "pos": 11,
-      "country": "NL",
-      "country_conf": 0.75,
+      "country": "RU",
+      "country_conf": 0.5,
       "cf_loc": "NL",
-      "out_ip": "2a03:6f02::1:4468",
+      "out_ip": "2a03:6f02::1:4470",
       "geo": "Amsterdam",
       "city_conf": "medium",
       "ip_type": "residential?",
@@ -593,9 +593,9 @@
         "path": "//",
         "reality": false
       },
-      "light": "green",
+      "light": "red",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -606,12 +606,12 @@
           "score": 100.0
         },
         "gemini": {
-          "status": "pass",
-          "score": 100.0
+          "status": "block",
+          "score": 30.0
         },
         "grok": {
           "status": "pass",
-          "score": 99.8
+          "score": 99.9
         },
         "perplexity": {
           "status": "pass",
@@ -624,13 +624,13 @@
       "country": "EE",
       "country_conf": 1.0,
       "cf_loc": "EE",
-      "out_ip": "144.31.170.59",
+      "out_ip": "95.85.245.226",
       "geo": "Tallinn",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 209693,
       "org": "Oc Networks Limited",
-      "ptr": "vds15741.1cent.network",
+      "ptr": "vds16917.1cent.network",
       "type": "bypass",
       "udp": false,
       "tech": {
@@ -649,8 +649,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 78.8,
-      "stability": 35.7,
+      "health": 93.6,
+      "stability": 42.1,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -679,7 +679,7 @@
       "country": "TR",
       "country_conf": 1.0,
       "cf_loc": "TR",
-      "out_ip": "38.180.208.147",
+      "out_ip": "38.180.171.59",
       "geo": "Istanbul",
       "city_conf": "medium",
       "ip_type": "residential?",
@@ -704,8 +704,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 79.0,
-      "stability": 50.0,
+      "health": 93.7,
+      "stability": 55.0,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -734,7 +734,7 @@
       "country": "US",
       "country_conf": 1.0,
       "cf_loc": "US",
-      "out_ip": "185.161.70.62",
+      "out_ip": "185.161.70.75",
       "geo": "New York",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -760,7 +760,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -789,13 +789,13 @@
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "2a0b:4141:820:15cd::2",
-      "geo": "Amsterdam",
+      "out_ip": "45.145.56.116",
+      "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
-      "asn": 213887,
-      "org": "WAIcore Ltd",
-      "ptr": "",
+      "asn": 198883,
+      "org": "Tabunscic Anatoli",
+      "ptr": "izkotzeo8.example.com",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -815,7 +815,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -842,15 +842,15 @@
     "[Lastdep] 🇩🇪  ⭐ 🚀 Германия Напрямую [VPN]": {
       "pos": 16,
       "country": "DE",
-      "country_conf": 1.0,
+      "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "185.126.67.78",
+      "out_ip": "45.145.56.39",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "",
+      "ptr": "germany.node",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -870,7 +870,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -890,7 +890,7 @@
         },
         "perplexity": {
           "status": "pass",
-          "score": 99.8
+          "score": 99.9
         }
       }
     },
@@ -899,10 +899,10 @@
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:39b::2",
+      "out_ip": "2a0e:d600:0:3e6::2",
       "geo": "Warsaw",
       "city_conf": "medium",
-      "ip_type": "residential?",
+      "ip_type": "vpn/proxy",
       "asn": 215730,
       "org": "H2nexus Ltd",
       "ptr": "",
@@ -924,8 +924,8 @@
         "reality": true
       },
       "light": "yellow",
-      "health": 93.7,
-      "stability": 51.8,
+      "health": 98.1,
+      "stability": 56.6,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -980,7 +980,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1009,13 +1009,13 @@
       "country": "EE",
       "country_conf": 1.0,
       "cf_loc": "EE",
-      "out_ip": "87.121.86.159",
+      "out_ip": "95.85.245.81",
       "geo": "Tallinn",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 209693,
       "org": "Oc Networks Limited",
-      "ptr": "vds15762.1cent.network",
+      "ptr": "vds15720.1cent.network",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -1035,7 +1035,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1061,10 +1061,10 @@
     },
     "[Lastdep] 🇳🇱 ⭐ 🚀 Нидерланды [VPN]": {
       "pos": 20,
-      "country": "RU",
-      "country_conf": 0.5,
+      "country": "NL",
+      "country_conf": 0.75,
       "cf_loc": "NL",
-      "out_ip": "2a03:6f02::1:4468",
+      "out_ip": "2a03:6f02::1:446d",
       "geo": "Amsterdam",
       "city_conf": "medium",
       "ip_type": "residential?",
@@ -1088,9 +1088,9 @@
         "path": "",
         "reality": true
       },
-      "light": "red",
+      "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1101,8 +1101,8 @@
           "score": 100.0
         },
         "gemini": {
-          "status": "block",
-          "score": 29.4
+          "status": "pass",
+          "score": 78.8
         },
         "grok": {
           "status": "pass",
@@ -1117,9 +1117,9 @@
     "[Lastdep] 🇹🇷 ⭐ 🚀 Турция [VPN]": {
       "pos": 21,
       "country": "TR",
-      "country_conf": 1.0,
+      "country_conf": 0.75,
       "cf_loc": "TR",
-      "out_ip": "94.131.123.175",
+      "out_ip": "185.234.66.148",
       "geo": "Istanbul",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -1145,7 +1145,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1174,7 +1174,7 @@
       "country": "US",
       "country_conf": 1.0,
       "cf_loc": "US",
-      "out_ip": "185.161.70.77",
+      "out_ip": "185.161.70.76",
       "geo": "New York",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -1200,7 +1200,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1255,7 +1255,7 @@
       },
       "light": "red",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1267,7 +1267,7 @@
         },
         "gemini": {
           "status": "block",
-          "score": 0.2
+          "score": 0.1
         },
         "grok": {
           "status": "pass",
@@ -1310,7 +1310,7 @@
       },
       "light": "red",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1322,7 +1322,7 @@
         },
         "gemini": {
           "status": "block",
-          "score": 0.2
+          "score": 0.1
         },
         "grok": {
           "status": "pass",
@@ -1339,7 +1339,7 @@
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.38",
+      "out_ip": "45.145.56.35",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -1365,7 +1365,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 71.1,
+      "stability": 74.0,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1394,12 +1394,12 @@
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "2a0b:4141:820:15d2::2",
-      "geo": "Amsterdam",
+      "out_ip": "45.145.56.172",
+      "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
-      "asn": 213887,
-      "org": "WAIcore Ltd",
+      "asn": 198883,
+      "org": "Tabunscic Anatoli",
       "ptr": "",
       "type": "normal",
       "udp": true,
@@ -1420,7 +1420,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1449,13 +1449,13 @@
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.115",
+      "out_ip": "45.145.56.207",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "izkotzeo7.example.com",
+      "ptr": "de.premium",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -1475,7 +1475,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 93.9,
+      "stability": 94.5,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1502,15 +1502,15 @@
     "[Lastdep] 🇩🇪  🟢 Германия [VPN] #3": {
       "pos": 29,
       "country": "DE",
-      "country_conf": 0.75,
+      "country_conf": 1.0,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.103",
+      "out_ip": "185.126.67.44",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "izkotzeo.example.com",
+      "ptr": "",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -1530,7 +1530,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1557,15 +1557,15 @@
     "[Lastdep] 🇩🇪  🟢 Германия [VPN] #4": {
       "pos": 30,
       "country": "DE",
-      "country_conf": 0.75,
+      "country_conf": 1.0,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.112",
+      "out_ip": "185.126.67.234",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "izkotzeo4.example.com",
+      "ptr": "germany.node",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -1585,7 +1585,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1612,15 +1612,15 @@
     "[Lastdep] 🇩🇪  🟢 Германия [VPN] #5": {
       "pos": 31,
       "country": "DE",
-      "country_conf": 1.0,
+      "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "185.126.67.75",
+      "out_ip": "45.145.56.205",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "",
+      "ptr": "de.premium",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -1640,7 +1640,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1669,7 +1669,7 @@
       "country": "DE",
       "country_conf": 1.0,
       "cf_loc": "DE",
-      "out_ip": "185.126.67.28",
+      "out_ip": "185.126.67.18",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -1695,7 +1695,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1724,13 +1724,13 @@
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "2a0b:4141:820:15d2::2",
-      "geo": "Amsterdam",
+      "out_ip": "45.145.56.109",
+      "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
-      "asn": 213887,
-      "org": "WAIcore Ltd",
-      "ptr": "",
+      "asn": 198883,
+      "org": "Tabunscic Anatoli",
+      "ptr": "izkotzeo1.example.com",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -1750,7 +1750,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1779,7 +1779,7 @@
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:3da::2",
+      "out_ip": "2a0e:d600:0:2d6::2",
       "geo": "Warsaw",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -1805,7 +1805,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1834,10 +1834,10 @@
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:3d8::2",
+      "out_ip": "2a0e:d600:0:3e6::2",
       "geo": "Warsaw",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 215730,
       "org": "H2nexus Ltd",
       "ptr": "",
@@ -1860,7 +1860,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1889,10 +1889,10 @@
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:3e5::2",
+      "out_ip": "2a0e:d600:0:3ef::2",
       "geo": "Warsaw",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 215730,
       "org": "H2nexus Ltd",
       "ptr": "",
@@ -1915,7 +1915,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1944,10 +1944,10 @@
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:396::2",
+      "out_ip": "2a0e:d600:0:39e::2",
       "geo": "Warsaw",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 215730,
       "org": "H2nexus Ltd",
       "ptr": "",
@@ -1969,8 +1969,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 99.9,
-      "stability": 51.9,
+      "health": 100.0,
+      "stability": 56.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1996,15 +1996,15 @@
     },
     "[Lastdep] 🇫🇮  ⭐ Финляндия [VPN] #1": {
       "pos": 38,
-      "country": "DE",
-      "country_conf": 0.5,
+      "country": "FI",
+      "country_conf": 1.0,
       "cf_loc": "FI",
-      "out_ip": "152.89.244.223",
-      "geo": "Frankfurt am Main",
+      "out_ip": "2a0b:4143:0:34f::2",
+      "geo": "Helsinki",
       "city_conf": "medium",
-      "ip_type": "residential?",
-      "asn": 30823,
-      "org": "aurologic GmbH",
+      "ip_type": "vpn/proxy",
+      "asn": 215730,
+      "org": "H2nexus Ltd",
       "ptr": "",
       "type": "normal",
       "udp": true,
@@ -2025,7 +2025,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2054,13 +2054,13 @@
       "country": "DE",
       "country_conf": 0.5,
       "cf_loc": "FI",
-      "out_ip": "152.89.244.220",
+      "out_ip": "152.89.244.219",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
-      "ip_type": "residential?",
+      "ip_type": "vpn/proxy",
       "asn": 30823,
       "org": "aurologic GmbH",
-      "ptr": "220.244.89.152",
+      "ptr": "",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -2080,15 +2080,15 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
-          "score": 99.8
+          "score": 99.9
         },
         "claude": {
           "status": "pass",
-          "score": 99.8
+          "score": 99.9
         },
         "gemini": {
           "status": "pass",
@@ -2096,26 +2096,26 @@
         },
         "grok": {
           "status": "pass",
-          "score": 99.8
+          "score": 99.9
         },
         "perplexity": {
           "status": "pass",
-          "score": 99.8
+          "score": 99.9
         }
       }
     },
     "[Lastdep] 🇫🇮  🟢 Финляндия [VPN] #4": {
       "pos": 40,
-      "country": "FI",
-      "country_conf": 0.75,
+      "country": "DE",
+      "country_conf": 0.5,
       "cf_loc": "FI",
-      "out_ip": "2a0b:4143:0:358::2",
-      "geo": "Helsinki",
+      "out_ip": "152.89.244.220",
+      "geo": "Frankfurt am Main",
       "city_conf": "medium",
-      "ip_type": "residential?",
-      "asn": 215730,
-      "org": "H2nexus Ltd",
-      "ptr": "",
+      "ip_type": "vpn/proxy",
+      "asn": 30823,
+      "org": "aurologic GmbH",
+      "ptr": "220.244.89.152",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -2135,7 +2135,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2161,16 +2161,16 @@
     },
     "[Lastdep] 🇫🇮  🟢 Финляндия [VPN] #5": {
       "pos": 41,
-      "country": "FI",
-      "country_conf": 0.75,
+      "country": "DE",
+      "country_conf": 0.5,
       "cf_loc": "FI",
-      "out_ip": "2a0b:4143:0:35e::2",
-      "geo": "Helsinki",
+      "out_ip": "152.89.244.220",
+      "geo": "Frankfurt am Main",
       "city_conf": "medium",
-      "ip_type": "residential?",
-      "asn": 215730,
-      "org": "H2nexus Ltd",
-      "ptr": "",
+      "ip_type": "vpn/proxy",
+      "asn": 30823,
+      "org": "aurologic GmbH",
+      "ptr": "220.244.89.152",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -2189,8 +2189,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 99.9,
-      "stability": 51.9,
+      "health": 100.0,
+      "stability": 56.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2216,10 +2216,10 @@
     },
     "[Lastdep] 🇳🇱  ⭐ Нидерланды [VPN] #1": {
       "pos": 42,
-      "country": "NL",
-      "country_conf": 0.75,
+      "country": "RU",
+      "country_conf": 0.5,
       "cf_loc": "NL",
-      "out_ip": "2a03:6f02::1:4466",
+      "out_ip": "2a03:6f02::1:4467",
       "geo": "Amsterdam",
       "city_conf": "medium",
       "ip_type": "residential?",
@@ -2243,9 +2243,9 @@
         "path": "",
         "reality": false
       },
-      "light": "green",
+      "light": "red",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2256,8 +2256,8 @@
           "score": 100.0
         },
         "gemini": {
-          "status": "pass",
-          "score": 99.4
+          "status": "block",
+          "score": 29.8
         },
         "grok": {
           "status": "pass",
@@ -2274,7 +2274,7 @@
       "country": "NL",
       "country_conf": 0.75,
       "cf_loc": "NL",
-      "out_ip": "2a03:6f02::1:446b",
+      "out_ip": "2a03:6f02::1:4468",
       "geo": "Amsterdam",
       "city_conf": "medium",
       "ip_type": "residential?",
@@ -2299,8 +2299,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 99.9,
-      "stability": 51.9,
+      "health": 100.0,
+      "stability": 56.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2326,10 +2326,10 @@
     },
     "[Lastdep] 🇳🇱  🟢 Нидерланды [VPN] #3": {
       "pos": 44,
-      "country": "NL",
-      "country_conf": 0.75,
+      "country": "RU",
+      "country_conf": 0.5,
       "cf_loc": "NL",
-      "out_ip": "2a03:6f02::1:4467",
+      "out_ip": "2a03:6f02::1:446b",
       "geo": "Amsterdam",
       "city_conf": "medium",
       "ip_type": "residential?",
@@ -2353,9 +2353,9 @@
         "path": "",
         "reality": false
       },
-      "light": "yellow",
-      "health": 99.9,
-      "stability": 51.9,
+      "light": "red",
+      "health": 100.0,
+      "stability": 56.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2366,8 +2366,8 @@
           "score": 100.0
         },
         "gemini": {
-          "status": "pass",
-          "score": 91.8
+          "status": "block",
+          "score": 27.5
         },
         "grok": {
           "status": "pass",
@@ -2409,8 +2409,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 79.0,
-      "stability": 50.0,
+      "health": 93.7,
+      "stability": 55.0,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2439,7 +2439,7 @@
       "country": "TR",
       "country_conf": 1.0,
       "cf_loc": "TR",
-      "out_ip": "38.180.208.147",
+      "out_ip": "38.180.208.145",
       "geo": "Istanbul",
       "city_conf": "medium",
       "ip_type": "residential?",
@@ -2464,8 +2464,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 99.9,
-      "stability": 51.9,
+      "health": 100.0,
+      "stability": 56.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2494,10 +2494,10 @@
       "country": "TR",
       "country_conf": 1.0,
       "cf_loc": "TR",
-      "out_ip": "38.180.208.147",
+      "out_ip": "38.180.171.59",
       "geo": "Istanbul",
       "city_conf": "medium",
-      "ip_type": "residential?",
+      "ip_type": "vpn/proxy",
       "asn": 58061,
       "org": "Scalaxy B.V.",
       "ptr": "",
@@ -2520,7 +2520,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 82.2,
+      "stability": 84.0,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2549,13 +2549,13 @@
       "country": "EE",
       "country_conf": 1.0,
       "cf_loc": "EE",
-      "out_ip": "144.31.170.96",
+      "out_ip": "64.188.82.44",
       "geo": "Tallinn",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 209693,
       "org": "Oc Networks Limited",
-      "ptr": "vds15748.1cent.network",
+      "ptr": "vds16924.1cent.network",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -2575,7 +2575,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2604,13 +2604,13 @@
       "country": "EE",
       "country_conf": 1.0,
       "cf_loc": "EE",
-      "out_ip": "95.85.245.84",
+      "out_ip": "64.188.82.44",
       "geo": "Tallinn",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 209693,
       "org": "Oc Networks Limited",
-      "ptr": "vds15727.1cent.network",
+      "ptr": "vds16924.1cent.network",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -2629,8 +2629,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 99.9,
-      "stability": 50.0,
+      "health": 100.0,
+      "stability": 55.0,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2659,13 +2659,13 @@
       "country": "EE",
       "country_conf": 1.0,
       "cf_loc": "EE",
-      "out_ip": "95.85.245.227",
+      "out_ip": "144.31.170.41",
       "geo": "Tallinn",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 209693,
       "org": "Oc Networks Limited",
-      "ptr": "vds16931.1cent.network",
+      "ptr": "vds15734.1cent.network",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -2685,7 +2685,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 82.2,
+      "stability": 84.0,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2714,7 +2714,7 @@
       "country": "US",
       "country_conf": 1.0,
       "cf_loc": "US",
-      "out_ip": "185.161.70.77",
+      "out_ip": "185.161.70.19",
       "geo": "New York",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -2740,7 +2740,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2769,7 +2769,7 @@
       "country": "US",
       "country_conf": 1.0,
       "cf_loc": "US",
-      "out_ip": "185.161.70.77",
+      "out_ip": "185.161.70.76",
       "geo": "New York",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -2794,8 +2794,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 99.9,
-      "stability": 51.9,
+      "health": 100.0,
+      "stability": 56.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2824,7 +2824,7 @@
       "country": "US",
       "country_conf": 1.0,
       "cf_loc": "US",
-      "out_ip": "185.161.70.75",
+      "out_ip": "185.161.70.74",
       "geo": "New York",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -2850,7 +2850,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 82.2,
+      "stability": 84.0,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2905,7 +2905,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2934,7 +2934,7 @@
       "country": "LV",
       "country_conf": 0.75,
       "cf_loc": "LV",
-      "out_ip": "103.231.73.147",
+      "out_ip": "94.131.104.174",
       "geo": "Riga",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -2960,7 +2960,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2992,7 +2992,7 @@
       "out_ip": "144.31.170.59",
       "geo": "Tallinn",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 209693,
       "org": "Oc Networks Limited",
       "ptr": "vds15741.1cent.network",
@@ -3015,7 +3015,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3044,13 +3044,13 @@
       "country": "FI",
       "country_conf": 0.38,
       "cf_loc": "FI",
-      "out_ip": "132.243.231.121",
+      "out_ip": "132.243.231.118",
       "geo": "Frankfurt am Main",
       "city_conf": "low",
       "ip_type": "residential?",
       "asn": 213702,
       "org": "QWINS LTD",
-      "ptr": "vm143615.hosted-by.qwins.co",
+      "ptr": "vm143600.hosted-by.qwins.co",
       "type": "normal",
       "udp": true,
       "tech": {
@@ -3070,7 +3070,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3099,7 +3099,7 @@
       "country": "LT",
       "country_conf": 0.75,
       "cf_loc": "LT",
-      "out_ip": "94.131.13.82",
+      "out_ip": "94.131.13.66",
       "geo": "Vilnius",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -3125,7 +3125,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3180,7 +3180,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3235,7 +3235,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3290,7 +3290,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3345,7 +3345,7 @@
       },
       "light": "red",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "block",
@@ -3357,7 +3357,7 @@
         },
         "gemini": {
           "status": "block",
-          "score": 0.2
+          "score": 0.1
         },
         "grok": {
           "status": "block",
@@ -3400,7 +3400,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3455,7 +3455,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3509,8 +3509,8 @@
         "reality": false
       },
       "light": "red",
-      "health": 0.1,
-      "stability": 1.1,
+      "health": 0.0,
+      "stability": 0.6,
       "services": {
         "chatgpt": {
           "status": "unknown",
@@ -3565,7 +3565,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3620,7 +3620,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3675,7 +3675,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3730,7 +3730,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3785,7 +3785,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3839,8 +3839,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 93.7,
-      "stability": 49.6,
+      "health": 98.1,
+      "stability": 54.6,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3895,7 +3895,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3922,9 +3922,9 @@
     "[Lastdep] 🇮🇳 Индия [VPN]": {
       "pos": 73,
       "country": "IN",
-      "country_conf": 0.75,
+      "country_conf": 0.5,
       "cf_loc": "IN",
-      "out_ip": "45.89.105.194",
+      "out_ip": "45.89.105.206",
       "geo": "Mumbai",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -3950,7 +3950,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3979,7 +3979,7 @@
       "country": "AE",
       "country_conf": 1.0,
       "cf_loc": "AE",
-      "out_ip": "38.180.11.117",
+      "out_ip": "176.97.78.62",
       "geo": "Dubai",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -4005,7 +4005,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -4060,7 +4060,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -4113,9 +4113,9 @@
         "path": "",
         "reality": false
       },
-      "light": "yellow",
-      "health": 98.1,
-      "stability": 58.4,
+      "light": "green",
+      "health": 99.4,
+      "stability": 62.6,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -4169,8 +4169,8 @@
         "reality": false
       },
       "light": "yellow",
-      "health": 70.6,
-      "stability": 12.3,
+      "health": 91.2,
+      "stability": 21.1,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -4225,7 +4225,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -4280,7 +4280,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 86.0,
+      "stability": 87.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -4335,7 +4335,7 @@
       },
       "light": "green",
       "health": 100.0,
-      "stability": 90.8,
+      "stability": 91.7,
       "services": {
         "chatgpt": {
           "status": "pass",
