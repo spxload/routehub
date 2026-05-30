@@ -16,9 +16,12 @@
 #  Нейтральный trace (cloudflare.com) — блок одного ИИ не валит весь узел.
 #  Параллельность (concurrency): пул Xray-портов. Скорость НЕ меряет.
 #  Рейтинг: EWMA, светофор 4 цвета. Лог стерильный: имена, без URI.
+#  Порядок узлов в выводе СОХРАНЯЕТСЯ как в подписке (поле pos = номер
+#  узла у провайдера, 1..N). Это позволяет видеть «хвост» подписки и
+#  отображать узлы в Loon в том же порядке, что отдаёт провайдер.
 # =====================================================================
 
-import os, sys, json, base64, socket, subprocess, tempfile, time, re, random
+import os, sys, json, base64, socket, subprocess, tempfile, time, re
 from urllib.parse import urlparse, parse_qs, unquote
 
 # модуль консолидации гео (routehub-geo.py рядом)
@@ -461,7 +464,16 @@ def main():
         log('ОШИБКА: узлов не найдено.'); sys.exit(1)
     log(f'Узлов всего: {len(nodes)}')
 
-    random.shuffle(nodes)
+    # Порядок провайдера сохраняется (НЕ перемешиваем). pos = номер узла
+    # в подписке (1..N) — сохраняем здесь, до параллельного теста, чтобы
+    # потом восстановить исходный порядок в выводе и видеть «хвост».
+    order = []          # display-имена в порядке подписки
+    pos_of = {}         # display -> позиция (1..N)
+    for i, node in enumerate(nodes, start=1):
+        node['pos'] = i
+        order.append(node['display'])
+        pos_of[node['display']] = i
+
     results = {}
     counts = {'green': 0, 'yellow': 0, 'red': 0, 'unknown': 0}
     countries = set()
@@ -471,17 +483,18 @@ def main():
         name = node['display']
         ntype = 'bypass' if is_bypass(node['name']) else 'normal'
         if not node.get('tested', False):
-            results[name] = {'country': None, 'cf_loc': None, 'geo': '', 'type': ntype,
-                             'tested': False, 'reason': node.get('reason', 'не тестируется'),
+            results[name] = {'pos': node['pos'], 'country': None, 'cf_loc': None, 'geo': '',
+                             'type': ntype, 'tested': False,
+                             'reason': node.get('reason', 'не тестируется'),
                              'light': 'unknown', 'health': None, 'stability': None,
                              'udp': None, 'services': {}}
             counts['unknown'] += 1
-            log(f'  x {name[:42]} -> {results[name]["reason"][:40]}')
+            log(f'  x #{node["pos"]:>2} {name[:40]} -> {results[name]["reason"][:36]}')
         else:
             testable.append((node, ntype))
 
     workers = max(1, int(cfg.get('concurrency', 1)))
-    log(f'Тестирую {len(testable)} узлов, потоков: {workers}')
+    log(f'Тестирую {len(testable)} узлов, потоков: {workers} (порядок подписки сохраняется)')
 
     import threading
     port_pool = list(range(SOCKS_PORT, SOCKS_PORT + workers))
@@ -499,7 +512,7 @@ def main():
         finally:
             with pool_lock:
                 port_pool.append(port)
-        return node['display'], ntype, res
+        return node['display'], node['pos'], ntype, res
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     done = 0
@@ -507,7 +520,7 @@ def main():
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = [ex.submit(work, item) for item in testable]
         for fut in as_completed(futs):
-            name, ntype, res = fut.result()
+            name, npos, ntype, res = fut.result()
             done += 1
             health, stability, svc_scores = update_metrics(name, res, hist, cfg)
             svc_status = res.get('services', {})
@@ -515,6 +528,7 @@ def main():
             counts[light] = counts.get(light, 0) + 1
             if res.get('ok') and res.get('country'): countries.add(res['country'])
             results[name] = {
+                'pos': npos,
                 'country': res.get('country'), 'country_conf': res.get('country_conf'),
                 'cf_loc': res.get('cf_loc'), 'geo': res.get('geo', ''),
                 'city_conf': res.get('city_conf'), 'ip_type': res.get('ip_type'),
@@ -524,20 +538,23 @@ def main():
                 'services': {s: {'status': svc_status.get(s, 'unknown'),
                                  'score': svc_scores.get(s, 0)} for s in SERVICES},
             }
-            log(f'  [{done}/{total}] {light} {name[:34]} -> '
+            log(f'  [{done}/{total}] #{npos:>2} {light} {name[:30]} -> '
                 f'{res.get("country")}({res.get("country_conf")}) {res.get("geo","")[:12]} '
                 f'{res.get("ip_type","")} '
                 f'ai={"".join((svc_status.get(s,"?") or "?")[0] for s in SERVICES)} '
                 f'h{health} ({res.get("latency","?")}ms)')
 
+    # Восстанавливаем порядок подписки (provider order) в выводе.
+    ordered_results = {name: results[name] for name in order if name in results}
+
     output = {
         'version': 2, 'updated': int(time.time()),
         'updated_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-        'verified': cfg['verify_ai'],
+        'verified': cfg['verify_ai'], 'order': 'subscription',
         'stats': {'total': len(nodes), 'green': counts['green'],
                   'yellow': counts['yellow'], 'red': counts['red'],
                   'unknown': counts['unknown'], 'countries': len(countries)},
-        'nodes': results,
+        'nodes': ordered_results,
     }
     with open(OUTPUT, 'w', encoding='utf-8') as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
