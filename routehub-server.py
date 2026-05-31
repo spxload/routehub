@@ -21,8 +21,10 @@
 #  отображать узлы в Loon в том же порядке, что отдаёт провайдер.
 #  ДИАГНОСТИКА: по каждому узлу выводится блок tech (параметры из
 #  подписки: security/sni/fp/alpn/transport/flow/host:port/path) +
-#  out_ip (выходной IP). UUID НЕ выводится (это секрет доступа).
-#  Поля tech нужны, чтобы искать схожесть между узлами (напр. почему
+#  out_ip (выходной IP) + dns_check (резолв AI-доменов через узел:
+#  honest = родная сеть сервиса, redirect = DNS-подмена на сторонний
+#  прокси/SmartDNS). UUID НЕ выводится (это секрет доступа).
+#  Поля нужны, чтобы искать схожесть между узлами (напр. почему
 #  Gemini не грузится под аккаунтом на части узлов).
 # =====================================================================
 
@@ -353,6 +355,54 @@ def service_country(port, svc):
     return m.group(1) if m else None
 
 
+# ASN, принадлежащие Google и OpenAI/их CDN. Если домен AI-сервиса
+# резолвится в IP ЭТИХ сетей — DNS честный. Если в чужую сеть — это
+# DNS-подмена (SmartDNS): домен заворачивается на сторонний прокси.
+GOOGLE_ASNS = {15169, 396982, 19527, 36040, 36384, 41264, 139070, 139190}
+OPENAI_ASNS = {13335, 20940, 14618, 16509}  # OpenAI за Cloudflare/Akamai/Fastly/AWS
+DNS_CHECK_DOMAINS = {
+    'gemini':  ('gemini.google.com', GOOGLE_ASNS, 'Google'),
+    'chatgpt': ('chatgpt.com',       OPENAI_ASNS, 'OpenAI/CDN'),
+}
+
+def dns_resolve_via_proxy(port, hostname):
+    # Резолвим домен «глазами узла» через DoH-резолвер, идущий ЧЕРЕЗ туннель.
+    # Вернётся тот IP, который видит выходная сторона узла. Если провайдер
+    # узла перехватывает/подменяет DNS, это будет видно (чужой IP).
+    url = f'https://1.1.1.1/dns-query?name={hostname}&type=A'
+    proxies = {'http': f'socks5h://127.0.0.1:{port}', 'https': f'socks5h://127.0.0.1:{port}'}
+    headers = {'accept': 'application/dns-json'}
+    try:
+        r = requests.get(url, proxies=proxies, headers=headers, timeout=8)
+        data = r.json()
+        return [a['data'] for a in data.get('Answer', [])
+                if a.get('type') == 1 and re.match(r'^\d+\.\d+\.\d+\.\d+$', a.get('data', ''))]
+    except Exception:
+        return []
+
+def dns_check_via_proxy(port):
+    # Для каждого AI-домена: резолвим через туннель, берём ASN первого IP,
+    # сверяем с «родными» сетями сервиса. verdict: honest/redirect/unknown.
+    out = {}
+    for svc, (host, own_asns, label) in DNS_CHECK_DOMAINS.items():
+        ips = dns_resolve_via_proxy(port, host)
+        if not ips:
+            out[svc] = {'ip': None, 'asn': None, 'verdict': 'unknown'}
+            continue
+        ip = ips[0]
+        mm = maxmind_lookup(ip)
+        asn = mm.get('asn') if mm else None
+        if asn is None:
+            verdict = 'unknown'
+        elif asn in own_asns:
+            verdict = 'honest'      # домен указывает в родную сеть сервиса
+        else:
+            verdict = 'redirect'    # домен заворачивается на чужой IP (SmartDNS-подмена)
+        out[svc] = {'ip': ip, 'asn': asn, 'org': (mm or {}).get('org'),
+                    'expected': label, 'verdict': verdict}
+    return out
+
+
 def decide_by_country(svc, svc_cc, fallback_cc, blocklist):
     # block если страна в блок-листе; pass если страна известна и НЕ в блоке;
     # unknown если страну определить не удалось.
@@ -410,11 +460,14 @@ def test_node(node, cfg, port=SOCKS_PORT):
         for s in manual.get(node['name'], []):
             if s in services:
                 services[s] = 'block'
+        # DNS-диагностика: проверяем, не подменяет ли DNS узла AI-домены
+        # (гипотеза SmartDNS — заворот AI на сторонний прокси).
+        dns_check = dns_check_via_proxy(port) if cfg['verify_ai'] else {}
         return {'ok': True, 'cf_loc': cf_loc, 'out_ip': out_ip,
                 'country': country, 'country_conf': geo['country_conf'],
                 'geo': city, 'city_conf': geo['city_conf'],
                 'ip_type': geo['ip_type'], 'asn': geo['asn'], 'org': geo['org'],
-                'ptr': geo.get('ptr', ''),
+                'ptr': geo.get('ptr', ''), 'dns_check': dns_check,
                 'latency': latency, 'services': services, 'udp': udp_guess,
                 'verified': cfg['verify_ai']}
     finally:
@@ -561,6 +614,7 @@ def main():
                 'geo': res.get('geo', ''), 'city_conf': res.get('city_conf'),
                 'ip_type': res.get('ip_type'), 'asn': res.get('asn'),
                 'org': res.get('org'), 'ptr': res.get('ptr', ''),
+                'dns_check': res.get('dns_check', {}),
                 'type': ntype, 'udp': res.get('udp'), 'tech': res.get('tech', {}),
                 'light': light, 'health': health, 'stability': stability,
                 'services': {s: {'status': svc_status.get(s, 'unknown'),
@@ -580,7 +634,9 @@ def main():
         'updated_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
         'verified': cfg['verify_ai'], 'order': 'subscription',
         'note': 'tech = параметры узла из подписки (без uuid). out_ip = выходной IP. '
-                'ptr = reverse-DNS выходного IP. pos = номер узла у провайдера.',
+                'ptr = reverse-DNS выходного IP. pos = номер узла у провайдера. '
+                'dns_check = резолв AI-доменов через узел: honest (родная сеть сервиса) '
+                'или redirect (DNS-подмена на сторонний прокси, SmartDNS).',
         'stats': {'total': len(nodes), 'green': counts['green'],
                   'yellow': counts['yellow'], 'red': counts['red'],
                   'unknown': counts['unknown'], 'countries': len(countries)},
