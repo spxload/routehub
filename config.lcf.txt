@@ -1,0 +1,141 @@
+# =============================================
+# Loon Configuration — Lastdep + AI Region Switch
+# v2.0 — собран на 2026-05-20
+# =============================================
+
+[General]
+ip-mode = v4-only
+allow-udp-proxy = true
+real-ip = wpad.*,wpad,*.local
+skip-proxy = wpad.*,wpad,*.local,localhost,*.lan,*.localdomain
+bypass-tun = 10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.0.0.0/24,192.0.2.0/24,192.88.99.0/24,192.168.0.0/16,198.18.0.0/15,198.51.100.0/24,203.0.113.0/24,224.0.0.0/4,255.255.255.255/32
+dns-server = system,1.1.1.1,8.8.8.8,77.88.8.8
+doh-server = https://cloudflare-dns.com/dns-query,https://dns.google/dns-query
+sni-sniffing = true
+disable-stun = false
+udp-fallback-mode = REJECT
+test-timeout = 3
+interface-mode = auto
+disable-udp-ports = 443
+
+[Host]
+# Локальные подмены DNS (если нужны)
+
+[Remote Proxy]
+Lastdep = https://sub.lastdep.net/gta4R6EhxcjA6TC8,udp=true,block-quic=true,fast-open=false,skip-cert-verify=true,enabled=true
+
+[Remote Filter]
+# Фильтры создаются вручную через UI Loon → Configuration → Filter
+# Подробности и regex — в INSTALL.md
+# После создания их имена должны точно совпадать с теми, что использованы в [Proxy Group]:
+#   Filter-БЫСТРЫЕ, Filter-РЕЗЕРВ, Filter-ОБХОД, Filter-РФ, Filter-ИИ
+
+[Proxy Group]
+# --- Основные транспортные группы ---
+БЫСТРЫЕ = url-test,Filter-БЫСТРЫЕ,url = http://cp.cloudflare.com/generate_204,interval = 600,tolerance = 100,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Quick.png
+РЕЗЕРВ = fallback,Filter-РЕЗЕРВ,url = http://cp.cloudflare.com/generate_204,interval = 300,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Available.png
+ОБХОД = fallback,Filter-ОБХОД,url = http://cp.cloudflare.com/generate_204,interval = 300,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Bypass.png
+РФ-VPN = fallback,Filter-РФ,url = http://www.yandex.ru,interval = 600,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/RU.png
+
+# --- Каскады маршрутизации ---
+АВТО = fallback,БЫСТРЫЕ,РЕЗЕРВ,ОБХОД,url = http://cp.cloudflare.com/generate_204,interval = 180,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Auto.png
+РУ-МАРШРУТ = fallback,DIRECT,РФ-VPN,АВТО,url = http://www.yandex.ru,interval = 300,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Russia.png
+APPLE-МАРШРУТ = select,DIRECT,АВТО,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Apple.png
+
+# --- AI-группы (управляются скриптом ai-region-switch.js) ---
+# Каждая select-группа получает один и тот же пул кандидатов Filter-ИИ
+# Скрипт назначает конкретный узел для каждого AI индивидуально (sticky-логика)
+ИИ-АВТО = url-test,Filter-ИИ,url = http://cp.cloudflare.com/generate_204,interval = 600,tolerance = 200,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Auto.png
+ИИ-ChatGPT = select,ИИ-АВТО,DIRECT,Filter-ИИ,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/OpenAI.png
+ИИ-Claude = select,ИИ-АВТО,DIRECT,Filter-ИИ,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Claude.png
+ИИ-Gemini = select,ИИ-АВТО,DIRECT,Filter-ИИ,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Gemini.png
+ИИ-Grok = select,ИИ-АВТО,DIRECT,Filter-ИИ,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Grok.png
+ИИ-Perplexity = select,ИИ-АВТО,DIRECT,Filter-ИИ,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Perplexity.png
+ИИ = select,ИИ-АВТО,DIRECT,Filter-ИИ,img-url = https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/AI.png
+
+[Rule]
+# === ПОРЯДОК ВАЖЕН: сверху вниз, первое совпадение выигрывает ===
+
+# 1. Apple Push (критично, должно идти напрямую)
+IP-CIDR,17.0.0.0/8,APPLE-МАРШРУТ,no-resolve
+
+# 2. Локальные REJECT
+IP-CIDR,224.0.0.0/4,REJECT,no-resolve
+IP-CIDR,239.0.0.0/8,REJECT,no-resolve
+
+# 3. AI-сервисы — каждому своя группа (sticky per-service)
+# ChatGPT / OpenAI
+DOMAIN-SUFFIX,openai.com,ИИ-ChatGPT
+DOMAIN-SUFFIX,chatgpt.com,ИИ-ChatGPT
+DOMAIN-SUFFIX,oaistatic.com,ИИ-ChatGPT
+DOMAIN-SUFFIX,oaiusercontent.com,ИИ-ChatGPT
+
+# Anthropic / Claude
+DOMAIN-SUFFIX,anthropic.com,ИИ-Claude
+DOMAIN-SUFFIX,claude.ai,ИИ-Claude
+
+# Google Gemini
+DOMAIN-SUFFIX,gemini.google.com,ИИ-Gemini
+DOMAIN-SUFFIX,bard.google.com,ИИ-Gemini
+DOMAIN-SUFFIX,aistudio.google.com,ИИ-Gemini
+DOMAIN-SUFFIX,generativelanguage.googleapis.com,ИИ-Gemini
+
+# xAI / Grok
+DOMAIN-SUFFIX,x.ai,ИИ-Grok
+DOMAIN-SUFFIX,grok.com,ИИ-Grok
+
+# Perplexity
+DOMAIN-SUFFIX,perplexity.ai,ИИ-Perplexity
+
+# DeepSeek — работает напрямую из РФ
+DOMAIN-SUFFIX,deepseek.com,DIRECT
+
+# 4. GeoIP catch-all для российских IP (резервный механизм)
+GEOIP,RU,РУ-МАРШРУТ
+
+# 5. FINAL — для пользователя в РФ оптимально АВТО
+FINAL,АВТО
+
+[Remote Rule]
+# === Порядок: блок-листы → специфические сервисы → гео → catch-all ===
+
+# Блок-листы рекламы (REJECT в первую очередь)
+https://raw.githubusercontent.com/lodepuly/vpn_tool/main/Tool/Loon/Rule/AdvertisingLite/AdvertisingLite.list, policy=REJECT, tag=Реклама, enabled=true
+
+# Спец-сервисы (AI catch-all для менее распространённых сервисов)
+https://raw.githubusercontent.com/lodepuly/vpn_tool/main/Tool/Loon/Rule/AI/AI.list, policy=ИИ, tag=AI-сервисы (catch-all), enabled=true
+
+# Telegram
+https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Loon/Telegram/Telegram.list, policy=АВТО, tag=Telegram, enabled=true
+
+# Apple Services
+https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Loon/Apple/Apple.list, policy=APPLE-МАРШРУТ, tag=Apple, enabled=true
+
+# Россия (домены)
+https://raw.githubusercontent.com/lodepuly/vpn_tool/main/Tool/Loon/Rule/Russia/Russia.list, policy=РУ-МАРШРУТ, tag=Российские домены, enabled=true
+
+# Россия (IP CIDR) — в самом конце, как catch-all для гео
+https://raw.githubusercontent.com/lodepuly/vpn_tool/main/Tool/Loon/Rule/RussiaIP/RussiaIP.list, policy=РУ-МАРШРУТ, tag=Российские IP, enabled=true
+
+[URL Rewrite]
+
+[Script]
+# Скрипт подмены заголовков для подписки Lastdep
+http-request https://sub.lastdep.net/gta4R6EhxcjA6TC8 script-path=lastdep-headers.js, requires-body=false, timeout=10, tag=Lastdep-Headers, enabled=true
+
+# AI Region Switch — основной скрипт
+# Триггер 1: при изменении сети (Wi-Fi/4G/новая сеть)
+network-changed script-path=ai-region-switch.js, timeout=120, tag=AI-Switch-NetChange, enabled=true
+
+# Триггер 2: cron — раз в день в 04:00
+cron "0 0 4 * * ?" script-path=ai-region-switch.js, timeout=120, tag=AI-Switch-Daily, enabled=true
+
+# Триггер 3: cron — каждые 6 часов, лёгкая ревизия
+cron "0 0 */6 * * ?" script-path=ai-region-switch.js, timeout=120, tag=AI-Switch-6h, enabled=true
+
+[Plugin]
+# BoxJs — UI для управления скриптом через браузер
+https://raw.githubusercontent.com/chavyleung/scripts/master/box/chavy.boxjs.plugin, tag=BoxJs, enabled=true
+
+[Mitm]
+hostname = sub.lastdep.net
