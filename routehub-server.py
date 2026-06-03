@@ -26,6 +26,11 @@
 #  прокси/SmartDNS). UUID НЕ выводится (это секрет доступа).
 #  Поля нужны, чтобы искать схожесть между узлами (напр. почему
 #  Gemini не грузится под аккаунтом на части узлов).
+#  ЖИЗНЕННЫЙ ЦИКЛ УЗЛОВ: is_new=true, если узел впервые в подписке
+#  < 24 ч назад (поля first_seen/last_seen в истории). Присутствие
+#  считается по НАЛИЧИЮ В ПОДПИСКЕ, не по доступности (защита от
+#  whitelist РКН). Узлы, отсутствующие в подписке > 3 дней (исчезли
+#  у провайдера), удаляются из истории, чтобы не засорять рейтинг.
 # =====================================================================
 
 import os, sys, json, base64, socket, subprocess, tempfile, time, re
@@ -503,7 +508,8 @@ def update_metrics(name, res, hist, cfg):
                'country': res.get('country')}])[-cfg['history_len']:]
     hist[name] = {'health': health, 'stability': stability,
                   'service_scores': svc_scores, 'samples': samples,
-                  'last_t': int(time.time())}
+                  'last_t': int(time.time()),
+                  'first_seen': h.get('first_seen'), 'last_seen': h.get('last_seen')}
     return health, stability, svc_scores
 
 
@@ -553,6 +559,31 @@ def main():
         node['pos'] = i
         order.append(node['display'])
 
+    # --- Жизненный цикл узлов (новые / устаревшие) ---
+    # Присутствие отмечаем по НАЛИЧИЮ В ПОДПИСКЕ, НЕ по доступности теста.
+    # Защита от whitelist РКН: при нём обычные узлы недоступны, но остаются
+    # в подписке -> last_seen свежий -> НЕ удаляются ошибочно.
+    now_ts = int(time.time())
+    current_displays = set(order)
+    for name in order:
+        h = hist.setdefault(name, {})
+        h.setdefault('first_seen', now_ts)
+        h['last_seen'] = now_ts
+    # Узлы, которых НЕТ в подписке дольше stale_remove_days (исчезли у
+    # провайдера) — удаляем из истории, чтобы не засорять рейтинг.
+    stale_days = cfg.get('stale_remove_days', 3)
+    cutoff_ts = now_ts - stale_days * 86400
+    removed = 0
+    for nm in list(hist.keys()):
+        if nm not in current_displays and hist[nm].get('last_seen', 0) < cutoff_ts:
+            del hist[nm]; removed += 1
+    if removed:
+        log(f'Удалено из истории (нет в подписке > {stale_days} дн): {removed}')
+
+    def is_new_node(nm):
+        fs = hist.get(nm, {}).get('first_seen', now_ts)
+        return (now_ts - fs) < 86400
+
     results = {}
     counts = {'green': 0, 'yellow': 0, 'red': 0, 'unknown': 0}
     countries = set()
@@ -564,6 +595,7 @@ def main():
         if not node.get('tested', False):
             results[name] = {'pos': node['pos'], 'country': None, 'cf_loc': None, 'geo': '',
                              'type': ntype, 'tested': False, 'tech': node_tech(node),
+                             'is_new': is_new_node(name),
                              'reason': node.get('reason', 'не тестируется'),
                              'light': 'unknown', 'health': None, 'stability': None,
                              'udp': None, 'services': {}}
@@ -616,6 +648,7 @@ def main():
                 'org': res.get('org'), 'ptr': res.get('ptr', ''),
                 'dns_check': res.get('dns_check', {}),
                 'type': ntype, 'udp': res.get('udp'), 'tech': res.get('tech', {}),
+                'is_new': is_new_node(name),
                 'light': light, 'health': health, 'stability': stability,
                 'services': {s: {'status': svc_status.get(s, 'unknown'),
                                  'score': svc_scores.get(s, 0)} for s in SERVICES},
@@ -628,6 +661,7 @@ def main():
 
     # Восстанавливаем порядок подписки (provider order) в выводе.
     ordered_results = {name: results[name] for name in order if name in results}
+    new_count = sum(1 for r in ordered_results.values() if r.get('is_new'))
 
     output = {
         'version': 3, 'updated': int(time.time()),
@@ -635,11 +669,13 @@ def main():
         'verified': cfg['verify_ai'], 'order': 'subscription',
         'note': 'tech = параметры узла из подписки (без uuid). out_ip = выходной IP. '
                 'ptr = reverse-DNS выходного IP. pos = номер узла у провайдера. '
-                'dns_check = резолв AI-доменов через узел: honest (родная сеть сервиса) '
-                'или redirect (DNS-подмена на сторонний прокси, SmartDNS).',
+                'dns_check = резолв AI-доменов через узел: honest/redirect (SmartDNS). '
+                'is_new = узел впервые замечен в подписке < 24 ч назад. Узлы, '
+                'отсутствующие в подписке > 3 дней, удаляются из истории.',
         'stats': {'total': len(nodes), 'green': counts['green'],
                   'yellow': counts['yellow'], 'red': counts['red'],
-                  'unknown': counts['unknown'], 'countries': len(countries)},
+                  'unknown': counts['unknown'], 'countries': len(countries),
+                  'new': new_count},
         'nodes': ordered_results,
     }
     with open(OUTPUT, 'w', encoding='utf-8') as f:
