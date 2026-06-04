@@ -1,18 +1,18 @@
 {
   "version": 3,
-  "updated": 1780567533,
-  "updated_iso": "2026-06-04T10:05:33Z",
+  "updated": 1780586889,
+  "updated_iso": "2026-06-04T15:28:09Z",
   "verified": true,
   "order": "subscription",
   "note": "tech = параметры узла из подписки (без uuid). out_ip = выходной IP. ptr = reverse-DNS выходного IP. pos = номер узла у провайдера. dns_check = резолв AI-доменов через узел: honest/redirect (SmartDNS). is_new = узел впервые замечен в подписке < 24 ч назад. Узлы, отсутствующие в подписке > 3 дней, удаляются из истории.",
   "stats": {
-    "total": 79,
-    "green": 69,
-    "yellow": 2,
-    "red": 8,
+    "total": 87,
+    "green": 68,
+    "yellow": 3,
+    "red": 16,
     "unknown": 0,
-    "countries": 28,
-    "new": 79
+    "countries": 27,
+    "new": 87
   },
   "nodes": {
     "[Lastdep] 🇷🇺 💫 Россия [VPN] #1": {
@@ -105,7 +105,7 @@
       "is_new": true,
       "light": "red",
       "health": 0.0,
-      "stability": 1.9,
+      "stability": 0.9,
       "services": {
         "chatgpt": {
           "status": "unknown",
@@ -132,25 +132,25 @@
     "[Lastdep] 🇷🇺 🙏 Россия [Обход - МТС]": {
       "pos": 3,
       "country": "DE",
-      "country_conf": 0.75,
+      "country_conf": 1.0,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.210",
+      "out_ip": "185.126.67.78",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "de.premium",
+      "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.152.2",
+          "ip": "142.251.157.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -206,16 +206,16 @@
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.114",
+      "out_ip": "45.145.56.117",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "izkotzeo6.example.com",
+      "ptr": "izkotzeo9.example.com",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.150.2",
+          "ip": "142.251.153.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -278,16 +278,16 @@
       "country": "FI",
       "country_conf": 0.75,
       "cf_loc": "FI",
-      "out_ip": "152.89.244.216",
-      "geo": "Frankfurt am Main",
+      "out_ip": "2a0b:4143:0:1de::2",
+      "geo": "Helsinki",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
-      "asn": 30823,
-      "org": "aurologic GmbH",
+      "asn": 215730,
+      "org": "H2nexus Ltd",
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.153.2",
+          "ip": "142.251.156.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -350,16 +350,16 @@
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:396::2",
+      "out_ip": "2a0e:d600:0:39d::2",
       "geo": "Warsaw",
       "city_conf": "medium",
-      "ip_type": "residential?",
+      "ip_type": "vpn/proxy",
       "asn": 215730,
       "org": "H2nexus Ltd",
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.151.2",
+          "ip": "142.251.155.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -417,12 +417,300 @@
         }
       }
     },
-    "[Lastdep] 🇷🇺 🙏 Россия [Обход]": {
+    "[Lastdep] 🇷🇺 🙏 Россия [Обход - Мегафон]": {
       "pos": 7,
+      "country": "DE",
+      "country_conf": 1.0,
+      "cf_loc": "DE",
+      "out_ip": "185.126.67.111",
+      "geo": "Frankfurt am Main",
+      "city_conf": "medium",
+      "ip_type": "vpn/proxy",
+      "asn": 198883,
+      "org": "Tabunscic Anatoli",
+      "ptr": "",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.150.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "104.18.32.47",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "bypass",
+      "udp": false,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "ws",
+        "sni": "cdn.deploy-assure.ru",
+        "fp": "chrome",
+        "alpn": "h2,http/1.1",
+        "flow": "",
+        "host_in": "212.193.149.86",
+        "port": 443,
+        "ws_host_header": "cdn.deploy-assure.ru",
+        "service_name": "",
+        "path": "//",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100,
+      "stability": 64.0,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100
+        }
+      }
+    },
+    "[Lastdep] 🇩🇪 🙏 Германия [Обход - Мегафон]": {
+      "pos": 8,
+      "country": "DE",
+      "country_conf": 0.75,
+      "cf_loc": "DE",
+      "out_ip": "45.145.56.204",
+      "geo": "Frankfurt am Main",
+      "city_conf": "medium",
+      "ip_type": "vpn/proxy",
+      "asn": 198883,
+      "org": "Tabunscic Anatoli",
+      "ptr": "de.premium",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.157.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "104.18.32.47",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "bypass",
+      "udp": false,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "ws",
+        "sni": "cdn.deploy-assure.ru",
+        "fp": "chrome",
+        "alpn": "h2,http/1.1",
+        "flow": "",
+        "host_in": "46.235.189.157",
+        "port": 443,
+        "ws_host_header": "cdn.deploy-assure.ru",
+        "service_name": "",
+        "path": "//",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100,
+      "stability": 64.0,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100
+        }
+      }
+    },
+    "[Lastdep] 🇵🇱 🙏 Польша [Обход - Мегафон]": {
+      "pos": 9,
+      "country": "PL",
+      "country_conf": 1.0,
+      "cf_loc": "PL",
+      "out_ip": "2a0e:d600:0:39d::2",
+      "geo": "Warsaw",
+      "city_conf": "medium",
+      "ip_type": "vpn/proxy",
+      "asn": 215730,
+      "org": "H2nexus Ltd",
+      "ptr": "",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.157.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "172.64.155.209",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "bypass",
+      "udp": false,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "ws",
+        "sni": "cdn.deploy-assure.ru",
+        "fp": "chrome",
+        "alpn": "h2,http/1.1",
+        "flow": "",
+        "host_in": "46.235.186.203",
+        "port": 443,
+        "ws_host_header": "cdn.deploy-assure.ru",
+        "service_name": "",
+        "path": "//",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100,
+      "stability": 64.0,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100
+        }
+      }
+    },
+    "[Lastdep] 🇫🇮 🙏 Финляндия [Обход - Мегафон]": {
+      "pos": 10,
+      "country": "FI",
+      "country_conf": 0.75,
+      "cf_loc": "FI",
+      "out_ip": "152.89.244.230",
+      "geo": "Frankfurt am Main",
+      "city_conf": "medium",
+      "ip_type": "vpn/proxy",
+      "asn": 30823,
+      "org": "aurologic GmbH",
+      "ptr": "",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.152.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "172.64.155.209",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "bypass",
+      "udp": false,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "ws",
+        "sni": "cdn.deploy-assure.ru",
+        "fp": "chrome",
+        "alpn": "h2,http/1.1",
+        "flow": "",
+        "host_in": "212.193.156.236",
+        "port": 443,
+        "ws_host_header": "cdn.deploy-assure.ru",
+        "service_name": "",
+        "path": "//",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100,
+      "stability": 64.0,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100
+        }
+      }
+    },
+    "[Lastdep] 🇷🇺 🙏 Россия [Обход]": {
+      "pos": 11,
       "country": "RU",
       "country_conf": 1.0,
       "cf_loc": "RU",
-      "out_ip": "45.92.177.185",
+      "out_ip": "95.213.184.50",
       "geo": "St Petersburg",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -431,14 +719,14 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.156.2",
+          "ip": "142.251.150.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "8.6.112.0",
+          "ip": "8.47.69.0",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -464,8 +752,8 @@
       },
       "is_new": true,
       "light": "red",
-      "health": 72.1,
-      "stability": 16.2,
+      "health": 91.6,
+      "stability": 24.6,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -490,20 +778,164 @@
       }
     },
     "[Lastdep] 🇩🇪 🙏 Германия [Обход]": {
-      "pos": 8,
+      "pos": 12,
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.212",
+      "out_ip": "45.145.56.110",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "de.premium",
+      "ptr": "izkotzeo2.example.com",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.157.2",
+          "ip": "142.251.154.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "104.18.32.47",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "bypass",
+      "udp": false,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "ws",
+        "sni": "cdn.deploy-assure.ru",
+        "fp": "chrome",
+        "alpn": "h2,http/1.1",
+        "flow": "",
+        "host_in": "cdn.deploy-assure.ru",
+        "port": 443,
+        "ws_host_header": "cdn.deploy-assure.ru",
+        "service_name": "",
+        "path": "//",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100.0,
+      "stability": 97.9,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100.0
+        }
+      }
+    },
+    "[Lastdep] 🇵🇱 🙏 Польша [Обход]": {
+      "pos": 13,
+      "country": "PL",
+      "country_conf": 1.0,
+      "cf_loc": "PL",
+      "out_ip": "2a0e:d600:0:3da::2",
+      "geo": "Warsaw",
+      "city_conf": "medium",
+      "ip_type": "vpn/proxy",
+      "asn": 215730,
+      "org": "H2nexus Ltd",
+      "ptr": "",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.151.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "104.18.32.47",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "bypass",
+      "udp": false,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "ws",
+        "sni": "cdn.deploy-assure.ru",
+        "fp": "chrome",
+        "alpn": "h2,http/1.1",
+        "flow": "",
+        "host_in": "cdn.deploy-assure.ru",
+        "port": 443,
+        "ws_host_header": "cdn.deploy-assure.ru",
+        "service_name": "",
+        "path": "//",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100.0,
+      "stability": 96.0,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100.0
+        }
+      }
+    },
+    "[Lastdep] 🇫🇮 🙏 Финляндия [Обход]": {
+      "pos": 14,
+      "country": "DE",
+      "country_conf": 0.5,
+      "cf_loc": "FI",
+      "out_ip": "152.89.244.224",
+      "geo": "Frankfurt am Main",
+      "city_conf": "medium",
+      "ip_type": "vpn/proxy",
+      "asn": 30823,
+      "org": "aurologic GmbH",
+      "ptr": "",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.155.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -537,7 +969,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 97.7,
+      "stability": 98.5,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -561,18 +993,90 @@
         }
       }
     },
-    "[Lastdep] 🇵🇱 🙏 Польша [Обход]": {
-      "pos": 9,
-      "country": "PL",
-      "country_conf": 1.0,
-      "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:3e8::2",
-      "geo": "Warsaw",
+    "[Lastdep] 🇳🇱 🙏 Нидерланды [Обход]": {
+      "pos": 15,
+      "country": "NL",
+      "country_conf": 0.75,
+      "cf_loc": "NL",
+      "out_ip": "2a03:6f02::1:446e",
+      "geo": "Amsterdam",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
-      "asn": 215730,
-      "org": "H2nexus Ltd",
+      "asn": 9123,
+      "org": "Jsc timeweb",
       "ptr": "",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.156.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "172.64.155.209",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "bypass",
+      "udp": false,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "ws",
+        "sni": "cdn.deploy-assure.ru",
+        "fp": "chrome",
+        "alpn": "h2,http/1.1",
+        "flow": "",
+        "host_in": "cdn.deploy-assure.ru",
+        "port": 443,
+        "ws_host_header": "cdn.deploy-assure.ru",
+        "service_name": "",
+        "path": "//",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100.0,
+      "stability": 93.9,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 91.8
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100.0
+        }
+      }
+    },
+    "[Lastdep] 🇪🇪 🙏 Эстония [Обход]": {
+      "pos": 16,
+      "country": "EE",
+      "country_conf": 1.0,
+      "cf_loc": "EE",
+      "out_ip": "95.85.245.81",
+      "geo": "Tallinn",
+      "city_conf": "medium",
+      "ip_type": "vpn/proxy",
+      "asn": 209693,
+      "org": "Oc Networks Limited",
+      "ptr": "vds15720.1cent.network",
       "dns_check": {
         "gemini": {
           "ip": "142.251.154.2",
@@ -583,6 +1087,78 @@
         },
         "chatgpt": {
           "ip": "104.18.32.47",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "bypass",
+      "udp": false,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "ws",
+        "sni": "cdn.deploy-assure.ru",
+        "fp": "chrome",
+        "alpn": "h2,http/1.1",
+        "flow": "",
+        "host_in": "cdn.deploy-assure.ru",
+        "port": 443,
+        "ws_host_header": "cdn.deploy-assure.ru",
+        "service_name": "",
+        "path": "//",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100.0,
+      "stability": 97.8,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100.0
+        }
+      }
+    },
+    "[Lastdep] 🇹🇷  🙏 Турция [Обход]": {
+      "pos": 17,
+      "country": "TR",
+      "country_conf": 1.0,
+      "cf_loc": "TR",
+      "out_ip": "38.180.208.147",
+      "geo": "Istanbul",
+      "city_conf": "medium",
+      "ip_type": "residential?",
+      "asn": 58061,
+      "org": "Scalaxy B.V.",
+      "ptr": "",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.157.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "8.6.112.0",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -633,300 +1209,12 @@
         }
       }
     },
-    "[Lastdep] 🇫🇮 🙏 Финляндия [Обход]": {
-      "pos": 10,
-      "country": "FI",
-      "country_conf": 0.75,
-      "cf_loc": "FI",
-      "out_ip": "152.89.244.229",
-      "geo": "Frankfurt am Main",
-      "city_conf": "medium",
-      "ip_type": "vpn/proxy",
-      "asn": 30823,
-      "org": "aurologic GmbH",
-      "ptr": "cloud610996.fastpipe.io",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.150.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": "104.18.32.47",
-          "asn": 13335,
-          "org": "Cloudflare, Inc.",
-          "expected": "OpenAI/CDN",
-          "verdict": "honest"
-        }
-      },
-      "type": "bypass",
-      "udp": false,
-      "tech": {
-        "proto": "vless",
-        "security": "tls",
-        "transport": "ws",
-        "sni": "cdn.deploy-assure.ru",
-        "fp": "chrome",
-        "alpn": "h2,http/1.1",
-        "flow": "",
-        "host_in": "cdn.deploy-assure.ru",
-        "port": 443,
-        "ws_host_header": "cdn.deploy-assure.ru",
-        "service_name": "",
-        "path": "//",
-        "reality": false
-      },
-      "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 98.3,
-      "services": {
-        "chatgpt": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "claude": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "gemini": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "grok": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "perplexity": {
-          "status": "pass",
-          "score": 100.0
-        }
-      }
-    },
-    "[Lastdep] 🇳🇱 🙏 Нидерланды [Обход]": {
-      "pos": 11,
-      "country": "NL",
-      "country_conf": 0.75,
-      "cf_loc": "NL",
-      "out_ip": "2a03:6f02::1:4467",
-      "geo": "Amsterdam",
-      "city_conf": "medium",
-      "ip_type": "vpn/proxy",
-      "asn": 9123,
-      "org": "Jsc timeweb",
-      "ptr": "",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.157.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": "104.18.32.47",
-          "asn": 13335,
-          "org": "Cloudflare, Inc.",
-          "expected": "OpenAI/CDN",
-          "verdict": "honest"
-        }
-      },
-      "type": "bypass",
-      "udp": false,
-      "tech": {
-        "proto": "vless",
-        "security": "tls",
-        "transport": "ws",
-        "sni": "cdn.deploy-assure.ru",
-        "fp": "chrome",
-        "alpn": "h2,http/1.1",
-        "flow": "",
-        "host_in": "cdn.deploy-assure.ru",
-        "port": 443,
-        "ws_host_header": "cdn.deploy-assure.ru",
-        "service_name": "",
-        "path": "//",
-        "reality": false
-      },
-      "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 93.2,
-      "services": {
-        "chatgpt": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "claude": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "gemini": {
-          "status": "pass",
-          "score": 72.7
-        },
-        "grok": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "perplexity": {
-          "status": "pass",
-          "score": 100.0
-        }
-      }
-    },
-    "[Lastdep] 🇪🇪 🙏 Эстония [Обход]": {
-      "pos": 12,
-      "country": "EE",
-      "country_conf": 1.0,
-      "cf_loc": "EE",
-      "out_ip": "144.31.170.59",
-      "geo": "Tallinn",
-      "city_conf": "medium",
-      "ip_type": "vpn/proxy",
-      "asn": 209693,
-      "org": "Oc Networks Limited",
-      "ptr": "vds15741.1cent.network",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.155.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": "172.64.155.209",
-          "asn": 13335,
-          "org": "Cloudflare, Inc.",
-          "expected": "OpenAI/CDN",
-          "verdict": "honest"
-        }
-      },
-      "type": "bypass",
-      "udp": false,
-      "tech": {
-        "proto": "vless",
-        "security": "tls",
-        "transport": "ws",
-        "sni": "cdn.deploy-assure.ru",
-        "fp": "chrome",
-        "alpn": "h2,http/1.1",
-        "flow": "",
-        "host_in": "cdn.deploy-assure.ru",
-        "port": 443,
-        "ws_host_header": "cdn.deploy-assure.ru",
-        "service_name": "",
-        "path": "//",
-        "reality": false
-      },
-      "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 97.6,
-      "services": {
-        "chatgpt": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "claude": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "gemini": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "grok": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "perplexity": {
-          "status": "pass",
-          "score": 100.0
-        }
-      }
-    },
-    "[Lastdep] 🇹🇷  🙏 Турция [Обход]": {
-      "pos": 13,
-      "country": "TR",
-      "country_conf": 1.0,
-      "cf_loc": "TR",
-      "out_ip": "38.180.171.224",
-      "geo": "Istanbul",
-      "city_conf": "medium",
-      "ip_type": "residential?",
-      "asn": 58061,
-      "org": "Scalaxy B.V.",
-      "ptr": "",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.152.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": "172.64.155.209",
-          "asn": 13335,
-          "org": "Cloudflare, Inc.",
-          "expected": "OpenAI/CDN",
-          "verdict": "honest"
-        }
-      },
-      "type": "bypass",
-      "udp": false,
-      "tech": {
-        "proto": "vless",
-        "security": "tls",
-        "transport": "ws",
-        "sni": "cdn.deploy-assure.ru",
-        "fp": "chrome",
-        "alpn": "h2,http/1.1",
-        "flow": "",
-        "host_in": "cdn.deploy-assure.ru",
-        "port": 443,
-        "ws_host_header": "cdn.deploy-assure.ru",
-        "service_name": "",
-        "path": "//",
-        "reality": false
-      },
-      "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 95.0,
-      "services": {
-        "chatgpt": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "claude": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "gemini": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "grok": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "perplexity": {
-          "status": "pass",
-          "score": 100.0
-        }
-      }
-    },
     "[Lastdep] 🇺🇸 🙏 США [Обход]": {
-      "pos": 14,
+      "pos": 18,
       "country": "US",
       "country_conf": 1.0,
       "cf_loc": "US",
-      "out_ip": "185.161.70.75",
+      "out_ip": "185.161.70.20",
       "geo": "New York",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -935,7 +1223,7 @@
       "ptr": "usa.io",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.157.2",
+          "ip": "142.251.153.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -994,33 +1282,18 @@
       }
     },
     "[Lastdep] 🇩🇪  ⭐ 🚀 Германия [VPN]": {
-      "pos": 15,
-      "country": "DE",
-      "country_conf": 0.75,
-      "cf_loc": "DE",
-      "out_ip": "45.145.56.115",
-      "geo": "Frankfurt am Main",
-      "city_conf": "medium",
-      "ip_type": "residential?",
-      "asn": 198883,
-      "org": "Tabunscic Anatoli",
-      "ptr": "izkotzeo7.example.com",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.154.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": "172.64.155.209",
-          "asn": 13335,
-          "org": "Cloudflare, Inc.",
-          "expected": "OpenAI/CDN",
-          "verdict": "honest"
-        }
-      },
+      "pos": 19,
+      "country": null,
+      "country_conf": null,
+      "cf_loc": null,
+      "out_ip": null,
+      "geo": "",
+      "city_conf": null,
+      "ip_type": null,
+      "asn": null,
+      "org": null,
+      "ptr": "",
+      "dns_check": {},
       "type": "normal",
       "udp": true,
       "tech": {
@@ -1039,47 +1312,47 @@
         "reality": true
       },
       "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 99.5,
+      "light": "red",
+      "health": 30.0,
+      "stability": 49.8,
       "services": {
         "chatgpt": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "claude": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "gemini": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "grok": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "perplexity": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         }
       }
     },
     "[Lastdep] 🇩🇪  ⭐ 🚀 Германия Напрямую [VPN]": {
-      "pos": 16,
+      "pos": 20,
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.206",
-      "geo": "Frankfurt am Main",
+      "out_ip": "2a0b:4141:820:15cb::2",
+      "geo": "Amsterdam",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
-      "asn": 198883,
-      "org": "Tabunscic Anatoli",
-      "ptr": "de.premium",
+      "asn": 213887,
+      "org": "WAIcore Ltd",
+      "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.150.2",
+          "ip": "142.251.152.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -1138,27 +1411,27 @@
       }
     },
     "[Lastdep] 🇫🇮  ⭐ 🚀 Финляндия [VPN]": {
-      "pos": 17,
+      "pos": 21,
       "country": "FI",
       "country_conf": 0.75,
       "cf_loc": "FI",
-      "out_ip": "2a0b:4143:0:359::2",
-      "geo": "Helsinki",
+      "out_ip": "152.89.244.233",
+      "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
-      "asn": 215730,
-      "org": "H2nexus Ltd",
-      "ptr": "",
+      "asn": 30823,
+      "org": "aurologic GmbH",
+      "ptr": "233.244.89.152",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.157.2",
+          "ip": "142.251.153.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -1210,11 +1483,11 @@
       }
     },
     "[Lastdep] 🇵🇱  ⭐ 🚀 Польша [VPN]": {
-      "pos": 18,
+      "pos": 22,
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:3a0::2",
+      "out_ip": "2a0e:d600:0:3e5::2",
       "geo": "Warsaw",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -1223,7 +1496,7 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.155.2",
+          "ip": "142.251.150.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -1257,7 +1530,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 98.2,
+      "stability": 98.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1282,20 +1555,20 @@
       }
     },
     "[Lastdep] 🇪🇪 ⭐🚀 Эстония [VPN]": {
-      "pos": 19,
+      "pos": 23,
       "country": "EE",
       "country_conf": 1.0,
       "cf_loc": "EE",
-      "out_ip": "95.85.245.52",
+      "out_ip": "144.31.170.41",
       "geo": "Tallinn",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 209693,
       "org": "Oc Networks Limited",
-      "ptr": "vds15755.1cent.network",
+      "ptr": "vds15734.1cent.network",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.155.2",
+          "ip": "142.251.154.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -1354,27 +1627,27 @@
       }
     },
     "[Lastdep] 🇳🇱 ⭐ 🚀 Нидерланды [VPN]": {
-      "pos": 20,
-      "country": "NL",
-      "country_conf": 0.75,
+      "pos": 24,
+      "country": "RU",
+      "country_conf": 0.5,
       "cf_loc": "NL",
-      "out_ip": "2a03:6f02::1:4466",
+      "out_ip": "2a03:6f02::1:446e",
       "geo": "Amsterdam",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 9123,
       "org": "Jsc timeweb",
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.154.2",
+          "ip": "142.251.151.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -1399,7 +1672,7 @@
         "reality": true
       },
       "is_new": true,
-      "light": "green",
+      "light": "red",
       "health": 100.0,
       "stability": 99.5,
       "services": {
@@ -1412,8 +1685,8 @@
           "score": 100.0
         },
         "gemini": {
-          "status": "pass",
-          "score": 100.0
+          "status": "block",
+          "score": 30.0
         },
         "grok": {
           "status": "pass",
@@ -1426,11 +1699,11 @@
       }
     },
     "[Lastdep] 🇹🇷 ⭐ 🚀 Турция [VPN]": {
-      "pos": 21,
+      "pos": 25,
       "country": "TR",
-      "country_conf": 0.75,
+      "country_conf": 1.0,
       "cf_loc": "TR",
-      "out_ip": "185.234.66.147",
+      "out_ip": "94.131.123.177",
       "geo": "Istanbul",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -1498,11 +1771,11 @@
       }
     },
     "[Lastdep] 🇺🇸 ⭐ 🚀 США [VPN]": {
-      "pos": 22,
+      "pos": 26,
       "country": "US",
       "country_conf": 1.0,
       "cf_loc": "US",
-      "out_ip": "185.161.70.76",
+      "out_ip": "185.161.70.62",
       "geo": "New York",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -1511,7 +1784,7 @@
       "ptr": "usa.io",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.151.2",
+          "ip": "142.251.153.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -1570,7 +1843,7 @@
       }
     },
     "[Lastdep] 🇷🇺 🟢 Россия [VPN] #1": {
-      "pos": 23,
+      "pos": 27,
       "country": null,
       "country_conf": null,
       "cf_loc": null,
@@ -1627,7 +1900,7 @@
       }
     },
     "[Lastdep] 🇷🇺 🟢 Россия [VPN] #2": {
-      "pos": 24,
+      "pos": 28,
       "country": null,
       "country_conf": null,
       "cf_loc": null,
@@ -1684,7 +1957,7 @@
       }
     },
     "[Lastdep] 🇷🇺 🟢 Россия [VPN] #3": {
-      "pos": 25,
+      "pos": 29,
       "country": null,
       "country_conf": null,
       "cf_loc": null,
@@ -1740,18 +2013,132 @@
         }
       }
     },
+    "[Lastdep] 🇷🇺 🟢 Россия [VPN] #4": {
+      "pos": 30,
+      "country": null,
+      "country_conf": null,
+      "cf_loc": null,
+      "out_ip": null,
+      "geo": "",
+      "city_conf": null,
+      "ip_type": null,
+      "asn": null,
+      "org": null,
+      "ptr": "",
+      "dns_check": {},
+      "type": "normal",
+      "udp": true,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "tcp",
+        "sni": "",
+        "fp": "chrome",
+        "alpn": "http/1.1",
+        "flow": "xtls-rprx-vision",
+        "host_in": "95.213.184.96",
+        "port": 52006,
+        "ws_host_header": "",
+        "service_name": "",
+        "path": "",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "red",
+      "health": 0,
+      "stability": 30.0,
+      "services": {
+        "chatgpt": {
+          "status": "unknown",
+          "score": 0
+        },
+        "claude": {
+          "status": "unknown",
+          "score": 0
+        },
+        "gemini": {
+          "status": "unknown",
+          "score": 0
+        },
+        "grok": {
+          "status": "unknown",
+          "score": 0
+        },
+        "perplexity": {
+          "status": "unknown",
+          "score": 0
+        }
+      }
+    },
+    "[Lastdep] 🇷🇺 🟢 Россия [VPN] #5": {
+      "pos": 31,
+      "country": null,
+      "country_conf": null,
+      "cf_loc": null,
+      "out_ip": null,
+      "geo": "",
+      "city_conf": null,
+      "ip_type": null,
+      "asn": null,
+      "org": null,
+      "ptr": "",
+      "dns_check": {},
+      "type": "normal",
+      "udp": true,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "tcp",
+        "sni": "",
+        "fp": "chrome",
+        "alpn": "http/1.1",
+        "flow": "xtls-rprx-vision",
+        "host_in": "95.213.184.86",
+        "port": 52006,
+        "ws_host_header": "",
+        "service_name": "",
+        "path": "",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "red",
+      "health": 0,
+      "stability": 30.0,
+      "services": {
+        "chatgpt": {
+          "status": "unknown",
+          "score": 0
+        },
+        "claude": {
+          "status": "unknown",
+          "score": 0
+        },
+        "gemini": {
+          "status": "unknown",
+          "score": 0
+        },
+        "grok": {
+          "status": "unknown",
+          "score": 0
+        },
+        "perplexity": {
+          "status": "unknown",
+          "score": 0
+        }
+      }
+    },
     "[Lastdep] 🇩🇪  ⭐ Германия [VPN] #1": {
-      "pos": 26,
+      "pos": 32,
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.116",
+      "out_ip": "45.145.56.205",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "izkotzeo8.example.com",
+      "ptr": "de.premium",
       "dns_check": {
         "gemini": {
           "ip": "142.251.155.2",
@@ -1788,79 +2175,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 98.8,
-      "services": {
-        "chatgpt": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "claude": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "gemini": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "grok": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "perplexity": {
-          "status": "pass",
-          "score": 100.0
-        }
-      }
-    },
-    "[Lastdep] 🇩🇪  🚀 Германия [VPN] #2": {
-      "pos": 27,
-      "country": "DE",
-      "country_conf": 0.75,
-      "cf_loc": "DE",
-      "out_ip": "45.145.56.208",
-      "geo": "Frankfurt am Main",
-      "city_conf": "medium",
-      "ip_type": "vpn/proxy",
-      "asn": 198883,
-      "org": "Tabunscic Anatoli",
-      "ptr": "de.premium",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.154.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": "172.64.155.209",
-          "asn": 13335,
-          "org": "Cloudflare, Inc.",
-          "expected": "OpenAI/CDN",
-          "verdict": "honest"
-        }
-      },
-      "type": "normal",
-      "udp": true,
-      "tech": {
-        "proto": "vless",
-        "security": "tls",
-        "transport": "tcp",
-        "sni": "",
-        "fp": "firefox",
-        "alpn": "http/1.1",
-        "flow": "xtls-rprx-vision",
-        "host_in": "de.altergate.ru",
-        "port": 52006,
-        "ws_host_header": "",
-        "service_name": "",
-        "path": "",
-        "reality": false
-      },
-      "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 99.5,
+      "stability": 98.9,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -1885,20 +2200,20 @@
       }
     },
     "[Lastdep] 🇩🇪  🚀 Германия Напрямую [VPN]": {
-      "pos": 28,
+      "pos": 33,
       "country": "DE",
       "country_conf": 1.0,
       "cf_loc": "DE",
-      "out_ip": "185.126.67.234",
+      "out_ip": "185.126.67.151",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
-      "ip_type": "residential?",
+      "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "germany.node",
+      "ptr": "new.io",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.152.2",
+          "ip": "142.251.157.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -1956,18 +2271,90 @@
         }
       }
     },
-    "[Lastdep] 🇩🇪  🟢 Германия [VPN] #3": {
-      "pos": 29,
+    "[Lastdep] 🇩🇪  🚀 Германия [VPN] #2": {
+      "pos": 34,
       "country": "DE",
-      "country_conf": 1.0,
+      "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "185.126.67.146",
+      "out_ip": "45.145.56.156",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "",
+      "ptr": "new.io",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.157.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "104.18.32.47",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "normal",
+      "udp": true,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "tcp",
+        "sni": "",
+        "fp": "firefox",
+        "alpn": "http/1.1",
+        "flow": "xtls-rprx-vision",
+        "host_in": "de.altergate.ru",
+        "port": 52006,
+        "ws_host_header": "",
+        "service_name": "",
+        "path": "",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100.0,
+      "stability": 99.5,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100.0
+        }
+      }
+    },
+    "[Lastdep] 🇩🇪  🟢 Германия [VPN] #3": {
+      "pos": 35,
+      "country": "DE",
+      "country_conf": 0.75,
+      "cf_loc": "DE",
+      "out_ip": "45.145.56.213",
+      "geo": "Frankfurt am Main",
+      "city_conf": "medium",
+      "ip_type": "vpn/proxy",
+      "asn": 198883,
+      "org": "Tabunscic Anatoli",
+      "ptr": "de.premium",
       "dns_check": {
         "gemini": {
           "ip": "142.251.150.2",
@@ -1977,7 +2364,7 @@
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -2029,20 +2416,20 @@
       }
     },
     "[Lastdep] 🇩🇪  🟢 Германия [VPN] #4": {
-      "pos": 30,
+      "pos": 36,
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.112",
+      "out_ip": "45.145.56.209",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "izkotzeo4.example.com",
+      "ptr": "de.premium",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.157.2",
+          "ip": "142.251.155.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -2101,11 +2488,11 @@
       }
     },
     "[Lastdep] 🇩🇪  🟢 Германия [VPN] #5": {
-      "pos": 31,
+      "pos": 37,
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.204",
+      "out_ip": "45.145.56.211",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -2114,14 +2501,14 @@
       "ptr": "de.premium",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.154.2",
+          "ip": "142.251.155.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -2173,17 +2560,17 @@
       }
     },
     "[Lastdep] 🇩🇪  🟢 Германия [VPN] #6": {
-      "pos": 32,
+      "pos": 38,
       "country": "DE",
-      "country_conf": 1.0,
+      "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "185.126.67.18",
+      "out_ip": "45.145.56.34",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "",
+      "ptr": "germany.node",
       "dns_check": {
         "gemini": {
           "ip": "142.251.150.2",
@@ -2193,7 +2580,7 @@
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -2245,20 +2632,20 @@
       }
     },
     "[Lastdep] 🇩🇪  🟢 Германия [VPN] #7": {
-      "pos": 33,
+      "pos": 39,
       "country": "DE",
       "country_conf": 0.75,
       "cf_loc": "DE",
-      "out_ip": "45.145.56.34",
+      "out_ip": "45.145.56.204",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 198883,
       "org": "Tabunscic Anatoli",
-      "ptr": "germany.node",
+      "ptr": "de.premium",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.154.2",
+          "ip": "142.251.150.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -2317,11 +2704,11 @@
       }
     },
     "[Lastdep] 🇵🇱 ⭐ Польша [VPN] #1": {
-      "pos": 34,
+      "pos": 40,
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:3f1::2",
+      "out_ip": "2a0e:d600:0:3f0::2",
       "geo": "Warsaw",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -2330,7 +2717,7 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.154.2",
+          "ip": "142.251.157.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -2389,11 +2776,11 @@
       }
     },
     "[Lastdep] 🇵🇱 🟢 Польша [VPN] #3": {
-      "pos": 35,
+      "pos": 41,
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:39d::2",
+      "out_ip": "2a0e:d600:0:3a0::2",
       "geo": "Warsaw",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -2436,7 +2823,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 85.9,
+      "stability": 87.3,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2461,11 +2848,11 @@
       }
     },
     "[Lastdep] 🇵🇱 🟢 Польша [VPN] #4": {
-      "pos": 36,
+      "pos": 42,
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
-      "out_ip": "2a0e:d600:0:3e5::2",
+      "out_ip": "2a0e:d600:0:3db::2",
       "geo": "Warsaw",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
@@ -2474,7 +2861,7 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.155.2",
+          "ip": "142.251.154.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -2533,7 +2920,7 @@
       }
     },
     "[Lastdep] 🇵🇱 🟢 Польша [VPN] #5": {
-      "pos": 37,
+      "pos": 43,
       "country": "PL",
       "country_conf": 1.0,
       "cf_loc": "PL",
@@ -2546,7 +2933,7 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.152.2",
+          "ip": "142.251.150.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -2580,7 +2967,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 98.0,
+      "stability": 98.2,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2605,27 +2992,27 @@
       }
     },
     "[Lastdep] 🇫🇮  ⭐ Финляндия [VPN] #1": {
-      "pos": 38,
-      "country": "DE",
-      "country_conf": 0.5,
+      "pos": 44,
+      "country": "FI",
+      "country_conf": 0.75,
       "cf_loc": "FI",
-      "out_ip": "152.89.244.223",
-      "geo": "Frankfurt am Main",
+      "out_ip": "2a0b:4143:0:35e::2",
+      "geo": "Helsinki",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
-      "asn": 30823,
-      "org": "aurologic GmbH",
+      "asn": 215730,
+      "org": "H2nexus Ltd",
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.150.2",
+          "ip": "142.251.156.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -2676,15 +3063,129 @@
         }
       }
     },
+    "[Lastdep] 🇫🇮  🚀 Финляндия Напрямую [VPN]": {
+      "pos": 45,
+      "country": null,
+      "country_conf": null,
+      "cf_loc": null,
+      "out_ip": null,
+      "geo": "",
+      "city_conf": null,
+      "ip_type": null,
+      "asn": null,
+      "org": null,
+      "ptr": "",
+      "dns_check": {},
+      "type": "normal",
+      "udp": true,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "tcp",
+        "sni": "",
+        "fp": "chrome",
+        "alpn": "http/1.1",
+        "flow": "xtls-rprx-vision",
+        "host_in": "fl.setlisting.ru",
+        "port": 52006,
+        "ws_host_header": "",
+        "service_name": "",
+        "path": "",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "red",
+      "health": 0,
+      "stability": 30.0,
+      "services": {
+        "chatgpt": {
+          "status": "unknown",
+          "score": 0
+        },
+        "claude": {
+          "status": "unknown",
+          "score": 0
+        },
+        "gemini": {
+          "status": "unknown",
+          "score": 0
+        },
+        "grok": {
+          "status": "unknown",
+          "score": 0
+        },
+        "perplexity": {
+          "status": "unknown",
+          "score": 0
+        }
+      }
+    },
+    "[Lastdep] 🇫🇮  🚀 Финляндия [VPN] #2": {
+      "pos": 46,
+      "country": null,
+      "country_conf": null,
+      "cf_loc": null,
+      "out_ip": null,
+      "geo": "",
+      "city_conf": null,
+      "ip_type": null,
+      "asn": null,
+      "org": null,
+      "ptr": "",
+      "dns_check": {},
+      "type": "normal",
+      "udp": true,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "tcp",
+        "sni": "",
+        "fp": "firefox",
+        "alpn": "http/1.1",
+        "flow": "xtls-rprx-vision",
+        "host_in": "fl.setlisting.ru",
+        "port": 52006,
+        "ws_host_header": "",
+        "service_name": "",
+        "path": "",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "red",
+      "health": 0,
+      "stability": 30.0,
+      "services": {
+        "chatgpt": {
+          "status": "unknown",
+          "score": 0
+        },
+        "claude": {
+          "status": "unknown",
+          "score": 0
+        },
+        "gemini": {
+          "status": "unknown",
+          "score": 0
+        },
+        "grok": {
+          "status": "unknown",
+          "score": 0
+        },
+        "perplexity": {
+          "status": "unknown",
+          "score": 0
+        }
+      }
+    },
     "[Lastdep] 🇫🇮  🟢 Финляндия [VPN] #3": {
-      "pos": 39,
+      "pos": 47,
       "country": "FI",
       "country_conf": 0.75,
       "cf_loc": "FI",
-      "out_ip": "2a0b:4143:0:1de::2",
+      "out_ip": "2a0b:4143:0:376::2",
       "geo": "Helsinki",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 215730,
       "org": "H2nexus Ltd",
       "ptr": "",
@@ -2724,7 +3225,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 85.9,
+      "stability": 87.3,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2749,11 +3250,11 @@
       }
     },
     "[Lastdep] 🇫🇮  🟢 Финляндия [VPN] #4": {
-      "pos": 40,
+      "pos": 48,
       "country": "DE",
       "country_conf": 0.5,
       "cf_loc": "FI",
-      "out_ip": "152.89.244.228",
+      "out_ip": "152.89.244.231",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "residential?",
@@ -2762,14 +3263,14 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.151.2",
+          "ip": "142.251.155.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -2796,7 +3297,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 95.8,
+      "stability": 96.2,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2821,27 +3322,27 @@
       }
     },
     "[Lastdep] 🇫🇮  🟢 Финляндия [VPN] #5": {
-      "pos": 41,
+      "pos": 49,
       "country": "DE",
       "country_conf": 0.5,
       "cf_loc": "FI",
-      "out_ip": "152.89.244.233",
+      "out_ip": "152.89.244.226",
       "geo": "Frankfurt am Main",
       "city_conf": "medium",
       "ip_type": "residential?",
       "asn": 30823,
       "org": "aurologic GmbH",
-      "ptr": "233.244.89.152",
+      "ptr": "226.244.89.152",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.154.2",
+          "ip": "142.251.157.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -2868,7 +3369,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 81.4,
+      "stability": 83.3,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -2893,14 +3394,14 @@
       }
     },
     "[Lastdep] 🇳🇱  ⭐ Нидерланды [VPN] #1": {
-      "pos": 42,
+      "pos": 50,
       "country": "NL",
       "country_conf": 0.75,
       "cf_loc": "NL",
-      "out_ip": "2a03:6f02::1:4466",
+      "out_ip": "2a03:6f02::1:446b",
       "geo": "Amsterdam",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 9123,
       "org": "Jsc timeweb",
       "ptr": "",
@@ -2913,7 +3414,7 @@
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -2965,20 +3466,20 @@
       }
     },
     "[Lastdep] 🇳🇱  🟢 Нидерланды [VPN] #2": {
-      "pos": 43,
+      "pos": 51,
       "country": "NL",
       "country_conf": 0.75,
       "cf_loc": "NL",
-      "out_ip": "2a03:6f02::1:4469",
+      "out_ip": "2a03:6f02::1:4468",
       "geo": "Amsterdam",
       "city_conf": "medium",
-      "ip_type": "residential?",
+      "ip_type": "vpn/proxy",
       "asn": 9123,
       "org": "Jsc timeweb",
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.151.2",
+          "ip": "142.251.157.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -3012,7 +3513,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 81.4,
+      "stability": 83.3,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3024,7 +3525,7 @@
         },
         "gemini": {
           "status": "pass",
-          "score": 99.8
+          "score": 99.9
         },
         "grok": {
           "status": "pass",
@@ -3037,27 +3538,27 @@
       }
     },
     "[Lastdep] 🇳🇱  🟢 Нидерланды [VPN] #3": {
-      "pos": 44,
-      "country": "NL",
-      "country_conf": 0.75,
+      "pos": 52,
+      "country": "RU",
+      "country_conf": 0.5,
       "cf_loc": "NL",
-      "out_ip": "2a03:6f02::1:4467",
+      "out_ip": "2a03:6f02::1:446e",
       "geo": "Amsterdam",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 9123,
       "org": "Jsc timeweb",
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.151.2",
+          "ip": "142.251.155.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -3082,9 +3583,9 @@
         "reality": false
       },
       "is_new": true,
-      "light": "green",
+      "light": "red",
       "health": 100.0,
-      "stability": 81.4,
+      "stability": 83.3,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3095,8 +3596,8 @@
           "score": 100.0
         },
         "gemini": {
-          "status": "pass",
-          "score": 93.7
+          "status": "block",
+          "score": 28.1
         },
         "grok": {
           "status": "pass",
@@ -3109,11 +3610,11 @@
       }
     },
     "[Lastdep] 🇹🇷  ⭐ Турция [VPN] #1": {
-      "pos": 45,
+      "pos": 53,
       "country": "TR",
       "country_conf": 1.0,
       "cf_loc": "TR",
-      "out_ip": "38.180.171.224",
+      "out_ip": "38.180.208.145",
       "geo": "Istanbul",
       "city_conf": "medium",
       "ip_type": "residential?",
@@ -3122,14 +3623,14 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.151.2",
+          "ip": "142.251.156.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -3156,7 +3657,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 97.9,
+      "stability": 98.1,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3181,11 +3682,11 @@
       }
     },
     "[Lastdep] 🇹🇷 🟢 Турция [VPN] #2": {
-      "pos": 46,
+      "pos": 54,
       "country": "TR",
       "country_conf": 1.0,
       "cf_loc": "TR",
-      "out_ip": "38.180.208.145",
+      "out_ip": "38.180.171.224",
       "geo": "Istanbul",
       "city_conf": "medium",
       "ip_type": "residential?",
@@ -3194,14 +3695,14 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.155.2",
+          "ip": "142.251.156.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -3228,7 +3729,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 81.4,
+      "stability": 83.3,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3253,20 +3754,20 @@
       }
     },
     "[Lastdep] 🇹🇷 🟢 Турция [VPN] #3": {
-      "pos": 47,
+      "pos": 55,
       "country": "TR",
       "country_conf": 1.0,
       "cf_loc": "TR",
-      "out_ip": "38.180.171.224",
+      "out_ip": "38.180.208.147",
       "geo": "Istanbul",
       "city_conf": "medium",
-      "ip_type": "vpn/proxy",
+      "ip_type": "residential?",
       "asn": 58061,
       "org": "Scalaxy B.V.",
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.153.2",
+          "ip": "142.251.152.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -3300,7 +3801,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 99.3,
+      "stability": 99.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3325,17 +3826,17 @@
       }
     },
     "[Lastdep] 🇪🇪  ⭐ Эстония [VPN] #1": {
-      "pos": 48,
+      "pos": 56,
       "country": "EE",
       "country_conf": 1.0,
       "cf_loc": "EE",
-      "out_ip": "95.85.245.81",
+      "out_ip": "144.31.170.41",
       "geo": "Tallinn",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 209693,
       "org": "Oc Networks Limited",
-      "ptr": "vds15720.1cent.network",
+      "ptr": "vds15734.1cent.network",
       "dns_check": {
         "gemini": {
           "ip": "142.251.150.2",
@@ -3397,27 +3898,27 @@
       }
     },
     "[Lastdep] 🇪🇪  🟢 Эстония [VPN] #2": {
-      "pos": 49,
+      "pos": 57,
       "country": "EE",
       "country_conf": 1.0,
       "cf_loc": "EE",
-      "out_ip": "95.85.245.84",
+      "out_ip": "95.85.245.227",
       "geo": "Tallinn",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 209693,
       "org": "Oc Networks Limited",
-      "ptr": "vds15727.1cent.network",
+      "ptr": "vds16931.1cent.network",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.153.2",
+          "ip": "142.251.154.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -3444,7 +3945,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 81.4,
+      "stability": 83.3,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3469,27 +3970,27 @@
       }
     },
     "[Lastdep] 🇪🇪  🟢 Эстония [VPN] #3": {
-      "pos": 50,
+      "pos": 58,
       "country": "EE",
       "country_conf": 1.0,
       "cf_loc": "EE",
-      "out_ip": "144.31.170.96",
+      "out_ip": "95.85.245.227",
       "geo": "Tallinn",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 209693,
       "org": "Oc Networks Limited",
-      "ptr": "vds15748.1cent.network",
+      "ptr": "vds16931.1cent.network",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.150.2",
+          "ip": "142.251.157.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -3516,7 +4017,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 99.3,
+      "stability": 99.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3541,11 +4042,11 @@
       }
     },
     "[Lastdep] 🇺🇸 ⭐ США [VPN] #1": {
-      "pos": 51,
+      "pos": 59,
       "country": "US",
       "country_conf": 1.0,
       "cf_loc": "US",
-      "out_ip": "185.161.70.75",
+      "out_ip": "185.161.70.19",
       "geo": "New York",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -3554,7 +4055,7 @@
       "ptr": "usa.io",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.154.2",
+          "ip": "142.251.157.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -3613,11 +4114,11 @@
       }
     },
     "[Lastdep] 🇺🇸 🟢 США [VPN] #2": {
-      "pos": 52,
+      "pos": 60,
       "country": "US",
       "country_conf": 1.0,
       "cf_loc": "US",
-      "out_ip": "185.161.70.75",
+      "out_ip": "185.161.70.62",
       "geo": "New York",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -3626,7 +4127,7 @@
       "ptr": "usa.io",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.157.2",
+          "ip": "142.251.151.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -3660,7 +4161,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 96.3,
+      "stability": 96.7,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3685,11 +4186,11 @@
       }
     },
     "[Lastdep] 🇺🇸 🟢 США [VPN] #3": {
-      "pos": 53,
+      "pos": 61,
       "country": "US",
       "country_conf": 1.0,
       "cf_loc": "US",
-      "out_ip": "185.161.70.77",
+      "out_ip": "185.161.70.78",
       "geo": "New York",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -3698,14 +4199,14 @@
       "ptr": "usa.io",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.155.2",
+          "ip": "142.251.156.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -3732,7 +4233,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 99.3,
+      "stability": 99.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3757,7 +4258,7 @@
       }
     },
     "[Lastdep] 🇫🇮 🕹️ Финляндия [Игры] #1": {
-      "pos": 54,
+      "pos": 62,
       "country": "FI",
       "country_conf": 1.0,
       "cf_loc": "FI",
@@ -3768,150 +4269,6 @@
       "asn": 24940,
       "org": "Hetzner Online GmbH",
       "ptr": "static.50.43.217.95.clients.your-server.de",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.154.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": "104.18.32.47",
-          "asn": 13335,
-          "org": "Cloudflare, Inc.",
-          "expected": "OpenAI/CDN",
-          "verdict": "honest"
-        }
-      },
-      "type": "normal",
-      "udp": true,
-      "tech": {
-        "proto": "vless",
-        "security": "tls",
-        "transport": "tcp",
-        "sni": "",
-        "fp": "firefox",
-        "alpn": "http/1.1",
-        "flow": "xtls-rprx-vision",
-        "host_in": "5.188.156.115",
-        "port": 52006,
-        "ws_host_header": "",
-        "service_name": "",
-        "path": "",
-        "reality": false
-      },
-      "is_new": true,
-      "light": "yellow",
-      "health": 79.0,
-      "stability": 54.8,
-      "services": {
-        "chatgpt": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "claude": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "gemini": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "grok": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "perplexity": {
-          "status": "pass",
-          "score": 100.0
-        }
-      }
-    },
-    "[Lastdep] 🇫🇮 🕹️ Финляндия [Игры] #2": {
-      "pos": 55,
-      "country": "FI",
-      "country_conf": 1.0,
-      "cf_loc": "FI",
-      "out_ip": "95.217.47.125",
-      "geo": "Helsinki",
-      "city_conf": "medium",
-      "ip_type": "datacenter",
-      "asn": 24940,
-      "org": "Hetzner Online GmbH",
-      "ptr": "static.125.47.217.95.clients.your-server.de",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.157.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": "172.64.155.209",
-          "asn": 13335,
-          "org": "Cloudflare, Inc.",
-          "expected": "OpenAI/CDN",
-          "verdict": "honest"
-        }
-      },
-      "type": "normal",
-      "udp": true,
-      "tech": {
-        "proto": "vless",
-        "security": "tls",
-        "transport": "tcp",
-        "sni": "",
-        "fp": "firefox",
-        "alpn": "http/1.1",
-        "flow": "xtls-rprx-vision",
-        "host_in": "5.188.156.115",
-        "port": 52006,
-        "ws_host_header": "",
-        "service_name": "",
-        "path": "",
-        "reality": false
-      },
-      "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 76.3,
-      "services": {
-        "chatgpt": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "claude": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "gemini": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "grok": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "perplexity": {
-          "status": "pass",
-          "score": 100.0
-        }
-      }
-    },
-    "[Lastdep] 🇱🇻 🕹️ Латвия [Игры]": {
-      "pos": 56,
-      "country": "LV",
-      "country_conf": 1.0,
-      "cf_loc": "LV",
-      "out_ip": "185.28.47.120",
-      "geo": "Riga",
-      "city_conf": "medium",
-      "ip_type": "datacenter",
-      "asn": 52048,
-      "org": "SIA RixHost",
-      "ptr": "",
       "dns_check": {
         "gemini": {
           "ip": "142.251.152.2",
@@ -3946,9 +4303,9 @@
         "reality": false
       },
       "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 99.5,
+      "light": "yellow",
+      "health": 93.7,
+      "stability": 59.3,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -3972,18 +4329,147 @@
         }
       }
     },
+    "[Lastdep] 🇫🇮 🕹️ Финляндия [Игры] #2": {
+      "pos": 63,
+      "country": "FI",
+      "country_conf": 1.0,
+      "cf_loc": "FI",
+      "out_ip": "95.217.47.125",
+      "geo": "Helsinki",
+      "city_conf": "medium",
+      "ip_type": "datacenter",
+      "asn": 24940,
+      "org": "Hetzner Online GmbH",
+      "ptr": "static.125.47.217.95.clients.your-server.de",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.153.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "104.18.32.47",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "normal",
+      "udp": true,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "tcp",
+        "sni": "",
+        "fp": "firefox",
+        "alpn": "http/1.1",
+        "flow": "xtls-rprx-vision",
+        "host_in": "5.188.156.115",
+        "port": 52006,
+        "ws_host_header": "",
+        "service_name": "",
+        "path": "",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100.0,
+      "stability": 78.7,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100.0
+        }
+      }
+    },
+    "[Lastdep] 🇱🇻 🕹️ Латвия [Игры]": {
+      "pos": 64,
+      "country": null,
+      "country_conf": null,
+      "cf_loc": null,
+      "out_ip": null,
+      "geo": "",
+      "city_conf": null,
+      "ip_type": null,
+      "asn": null,
+      "org": null,
+      "ptr": "",
+      "dns_check": {},
+      "type": "normal",
+      "udp": true,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "tcp",
+        "sni": "",
+        "fp": "firefox",
+        "alpn": "http/1.1",
+        "flow": "xtls-rprx-vision",
+        "host_in": "5.188.156.115",
+        "port": 52006,
+        "ws_host_header": "",
+        "service_name": "",
+        "path": "",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "red",
+      "health": 30.0,
+      "stability": 49.8,
+      "services": {
+        "chatgpt": {
+          "status": "unknown",
+          "score": 100.0
+        },
+        "claude": {
+          "status": "unknown",
+          "score": 100.0
+        },
+        "gemini": {
+          "status": "unknown",
+          "score": 100.0
+        },
+        "grok": {
+          "status": "unknown",
+          "score": 100.0
+        },
+        "perplexity": {
+          "status": "unknown",
+          "score": 100.0
+        }
+      }
+    },
     "[Lastdep] 🇪🇪 🕹️ Эстония [Игры]": {
-      "pos": 57,
+      "pos": 65,
       "country": "EE",
       "country_conf": 1.0,
       "cf_loc": "EE",
-      "out_ip": "95.85.245.227",
+      "out_ip": "95.85.245.84",
       "geo": "Tallinn",
       "city_conf": "medium",
       "ip_type": "vpn/proxy",
       "asn": 209693,
       "org": "Oc Networks Limited",
-      "ptr": "vds16931.1cent.network",
+      "ptr": "vds15727.1cent.network",
       "dns_check": {
         "gemini": {
           "ip": "142.251.154.2",
@@ -4045,20 +4531,20 @@
       }
     },
     "[Lastdep] 🇸🇪 🕹️ Швеция [Игры]": {
-      "pos": 58,
+      "pos": 66,
       "country": "FI",
       "country_conf": 0.38,
       "cf_loc": "FI",
-      "out_ip": "132.243.231.121",
+      "out_ip": "132.243.231.119",
       "geo": "Frankfurt am Main",
       "city_conf": "low",
       "ip_type": "residential?",
       "asn": 213702,
       "org": "QWINS LTD",
-      "ptr": "vm143615.hosted-by.qwins.co",
+      "ptr": "vm143605.hosted-by.qwins.co",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.154.2",
+          "ip": "142.251.150.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -4117,7 +4603,7 @@
       }
     },
     "[Lastdep] 🇦🇹 Австрия [VPN]": {
-      "pos": 59,
+      "pos": 67,
       "country": "AT",
       "country_conf": 0.62,
       "cf_loc": "AT",
@@ -4189,7 +4675,7 @@
       }
     },
     "[Lastdep] 🇰🇿 Казахстан [VPN]": {
-      "pos": 60,
+      "pos": 68,
       "country": "KZ",
       "country_conf": 1.0,
       "cf_loc": "KZ",
@@ -4209,7 +4695,7 @@
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -4235,8 +4721,8 @@
       },
       "is_new": true,
       "light": "yellow",
-      "health": 99.8,
-      "stability": 41.0,
+      "health": 99.9,
+      "stability": 46.9,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -4261,11 +4747,11 @@
       }
     },
     "[Lastdep] 🇦🇲 Армения [VPN]": {
-      "pos": 61,
+      "pos": 69,
       "country": "PH",
       "country_conf": 0.38,
       "cf_loc": "AM",
-      "out_ip": "45.130.254.12",
+      "out_ip": "45.130.254.11",
       "geo": "Butuan",
       "city_conf": "low",
       "ip_type": "vpn/proxy",
@@ -4274,14 +4760,14 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.152.2",
+          "ip": "142.251.154.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -4333,7 +4819,7 @@
       }
     },
     "[Lastdep] 🇧🇾 Беларусь [VPN]": {
-      "pos": 62,
+      "pos": 70,
       "country": null,
       "country_conf": null,
       "cf_loc": null,
@@ -4364,8 +4850,8 @@
       },
       "is_new": true,
       "light": "red",
-      "health": 29.9,
-      "stability": 21.9,
+      "health": 9.0,
+      "stability": 10.9,
       "services": {
         "chatgpt": {
           "status": "unknown",
@@ -4390,7 +4876,7 @@
       }
     },
     "[Lastdep] 🇬🇧 Великобритания [VPN]": {
-      "pos": 63,
+      "pos": 71,
       "country": "RO",
       "country_conf": 1.0,
       "cf_loc": "RO",
@@ -4403,7 +4889,7 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.152.2",
+          "ip": "142.251.156.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -4462,7 +4948,7 @@
       }
     },
     "[Lastdep] 🇪🇸 Испания [VPN]": {
-      "pos": 64,
+      "pos": 72,
       "country": "ES",
       "country_conf": 1.0,
       "cf_loc": "ES",
@@ -4475,7 +4961,7 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.156.2",
+          "ip": "142.251.153.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -4534,33 +5020,18 @@
       }
     },
     "[Lastdep] 🇳🇬 Нигерия [VPN]": {
-      "pos": 65,
-      "country": "NG",
-      "country_conf": 1.0,
-      "cf_loc": "NG",
-      "out_ip": "185.255.123.246",
-      "geo": "Lagos",
-      "city_conf": "medium",
-      "ip_type": "datacenter",
-      "asn": 136258,
-      "org": "BrainStorm Network, Inc",
+      "pos": 73,
+      "country": null,
+      "country_conf": null,
+      "cf_loc": null,
+      "out_ip": null,
+      "geo": "",
+      "city_conf": null,
+      "ip_type": null,
+      "asn": null,
+      "org": null,
       "ptr": "",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.150.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": "172.64.155.209",
-          "asn": 13335,
-          "org": "Cloudflare, Inc.",
-          "expected": "OpenAI/CDN",
-          "verdict": "honest"
-        }
-      },
+      "dns_check": {},
       "type": "normal",
       "udp": true,
       "tech": {
@@ -4579,34 +5050,34 @@
         "reality": false
       },
       "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 86.6,
+      "light": "red",
+      "health": 30.0,
+      "stability": 43.3,
       "services": {
         "chatgpt": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "claude": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "gemini": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "grok": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         },
         "perplexity": {
-          "status": "pass",
+          "status": "unknown",
           "score": 100.0
         }
       }
     },
     "[Lastdep] 🇮🇪 Ирландия [VPN]": {
-      "pos": 66,
+      "pos": 74,
       "country": "IE",
       "country_conf": 1.0,
       "cf_loc": "IE",
@@ -4619,14 +5090,14 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.151.2",
+          "ip": "142.251.150.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -4678,7 +5149,7 @@
       }
     },
     "[Lastdep] 🇷🇴 Румыния [VPN]": {
-      "pos": 67,
+      "pos": 75,
       "country": "GB",
       "country_conf": 1.0,
       "cf_loc": "GB",
@@ -4691,7 +5162,7 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.156.2",
+          "ip": "142.251.157.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -4750,7 +5221,7 @@
       }
     },
     "[Lastdep] 🇫🇷 Франция [VPN]": {
-      "pos": 68,
+      "pos": 76,
       "country": "FR",
       "country_conf": 0.75,
       "cf_loc": "FR",
@@ -4763,7 +5234,7 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.157.2",
+          "ip": "142.251.154.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -4822,7 +5293,7 @@
       }
     },
     "[Lastdep] 🇨🇭 Швейцария [VPN]": {
-      "pos": 69,
+      "pos": 77,
       "country": "CH",
       "country_conf": 0.75,
       "cf_loc": "CH",
@@ -4835,14 +5306,14 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.154.2",
+          "ip": "142.251.151.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -4894,7 +5365,7 @@
       }
     },
     "[Lastdep] 🇳🇴 Норвегия [VPN]": {
-      "pos": 70,
+      "pos": 78,
       "country": "NO",
       "country_conf": 1.0,
       "cf_loc": "NO",
@@ -4941,7 +5412,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 91.5,
+      "stability": 92.4,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -4966,7 +5437,7 @@
       }
     },
     "[Lastdep] 🇨🇿 Чехия [VPN]": {
-      "pos": 71,
+      "pos": 79,
       "country": "CZ",
       "country_conf": 1.0,
       "cf_loc": "CZ",
@@ -4979,14 +5450,14 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.150.2",
+          "ip": "142.251.154.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -5013,7 +5484,7 @@
       "is_new": true,
       "light": "green",
       "health": 100.0,
-      "stability": 98.1,
+      "stability": 98.3,
       "services": {
         "chatgpt": {
           "status": "pass",
@@ -5038,7 +5509,7 @@
       }
     },
     "[Lastdep] 🇹🇭 Тайланд [VPN]": {
-      "pos": 72,
+      "pos": 80,
       "country": "TH",
       "country_conf": 0.62,
       "cf_loc": "SG",
@@ -5051,7 +5522,7 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.155.2",
+          "ip": "142.251.153.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -5110,7 +5581,7 @@
       }
     },
     "[Lastdep] 🇮🇳 Индия [VPN]": {
-      "pos": 73,
+      "pos": 81,
       "country": "IN",
       "country_conf": 0.5,
       "cf_loc": "IN",
@@ -5123,14 +5594,14 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.154.2",
+          "ip": "142.251.153.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "172.64.155.209",
+          "ip": "104.18.32.47",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -5182,11 +5653,11 @@
       }
     },
     "[Lastdep] 🇦🇪 ОАЭ [VPN]": {
-      "pos": 74,
+      "pos": 82,
       "country": "AE",
       "country_conf": 1.0,
       "cf_loc": "AE",
-      "out_ip": "38.180.11.117",
+      "out_ip": "176.97.66.214",
       "geo": "Dubai",
       "city_conf": "medium",
       "ip_type": "datacenter",
@@ -5195,14 +5666,14 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.156.2",
+          "ip": "142.251.157.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
           "verdict": "honest"
         },
         "chatgpt": {
-          "ip": "104.18.32.47",
+          "ip": "172.64.155.209",
           "asn": 13335,
           "org": "Cloudflare, Inc.",
           "expected": "OpenAI/CDN",
@@ -5254,7 +5725,7 @@
       }
     },
     "[Lastdep] 🇨🇦 Канада [VPN]": {
-      "pos": 75,
+      "pos": 83,
       "country": "CA",
       "country_conf": 1.0,
       "cf_loc": "CA",
@@ -5265,148 +5736,6 @@
       "asn": 215540,
       "org": "Global Connectivity Solutions Llp",
       "ptr": "134838.ip-ptr.tech",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.156.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": null,
-          "asn": null,
-          "verdict": "unknown"
-        }
-      },
-      "type": "normal",
-      "udp": true,
-      "tech": {
-        "proto": "vless",
-        "security": "tls",
-        "transport": "tcp",
-        "sni": "",
-        "fp": "chrome",
-        "alpn": "http/1.1",
-        "flow": "xtls-rprx-vision",
-        "host_in": "5.188.156.115",
-        "port": 52006,
-        "ws_host_header": "",
-        "service_name": "",
-        "path": "",
-        "reality": false
-      },
-      "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 99.5,
-      "services": {
-        "chatgpt": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "claude": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "gemini": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "grok": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "perplexity": {
-          "status": "pass",
-          "score": 100.0
-        }
-      }
-    },
-    "[Lastdep] 🇦🇷  Аргентина [VPN]": {
-      "pos": 76,
-      "country": "AR",
-      "country_conf": 1.0,
-      "cf_loc": "AR",
-      "out_ip": "149.33.19.235",
-      "geo": "Buenos Aires",
-      "city_conf": "medium",
-      "ip_type": "vpn/proxy",
-      "asn": 58061,
-      "org": "Scalaxy B.V.",
-      "ptr": "",
-      "dns_check": {
-        "gemini": {
-          "ip": "142.251.150.2",
-          "asn": 15169,
-          "org": "Google LLC",
-          "expected": "Google",
-          "verdict": "honest"
-        },
-        "chatgpt": {
-          "ip": "104.18.32.47",
-          "asn": 13335,
-          "org": "Cloudflare, Inc.",
-          "expected": "OpenAI/CDN",
-          "verdict": "honest"
-        }
-      },
-      "type": "normal",
-      "udp": true,
-      "tech": {
-        "proto": "vless",
-        "security": "tls",
-        "transport": "tcp",
-        "sni": "",
-        "fp": "chrome",
-        "alpn": "http/1.1",
-        "flow": "xtls-rprx-vision",
-        "host_in": "5.188.156.115",
-        "port": 52006,
-        "ws_host_header": "",
-        "service_name": "",
-        "path": "",
-        "reality": false
-      },
-      "is_new": true,
-      "light": "green",
-      "health": 100.0,
-      "stability": 98.5,
-      "services": {
-        "chatgpt": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "claude": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "gemini": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "grok": {
-          "status": "pass",
-          "score": 100.0
-        },
-        "perplexity": {
-          "status": "pass",
-          "score": 100.0
-        }
-      }
-    },
-    "[Lastdep] 🇸🇬  Сингапур [VPN]": {
-      "pos": 77,
-      "country": "SG",
-      "country_conf": 1.0,
-      "cf_loc": "SG",
-      "out_ip": "176.98.191.100",
-      "geo": "Singapore",
-      "city_conf": "medium",
-      "ip_type": "vpn/proxy",
-      "asn": 216024,
-      "org": "Aleksei Fedorov Pr Krusevac",
-      "ptr": "singapour.ru",
       "dns_check": {
         "gemini": {
           "ip": "142.251.154.2",
@@ -5467,8 +5796,152 @@
         }
       }
     },
+    "[Lastdep] 🇦🇷  Аргентина [VPN]": {
+      "pos": 84,
+      "country": "AR",
+      "country_conf": 1.0,
+      "cf_loc": "AR",
+      "out_ip": "149.33.19.235",
+      "geo": "Buenos Aires",
+      "city_conf": "medium",
+      "ip_type": "vpn/proxy",
+      "asn": 58061,
+      "org": "Scalaxy B.V.",
+      "ptr": "",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.153.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "172.64.155.209",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "normal",
+      "udp": true,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "tcp",
+        "sni": "",
+        "fp": "chrome",
+        "alpn": "http/1.1",
+        "flow": "xtls-rprx-vision",
+        "host_in": "5.188.156.115",
+        "port": 52006,
+        "ws_host_header": "",
+        "service_name": "",
+        "path": "",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100.0,
+      "stability": 98.7,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100.0
+        }
+      }
+    },
+    "[Lastdep] 🇸🇬  Сингапур [VPN]": {
+      "pos": 85,
+      "country": "SG",
+      "country_conf": 1.0,
+      "cf_loc": "SG",
+      "out_ip": "176.98.191.100",
+      "geo": "Singapore",
+      "city_conf": "medium",
+      "ip_type": "vpn/proxy",
+      "asn": 216024,
+      "org": "Aleksei Fedorov Pr Krusevac",
+      "ptr": "singapour.ru",
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.152.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "104.18.32.47",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
+      "type": "normal",
+      "udp": true,
+      "tech": {
+        "proto": "vless",
+        "security": "tls",
+        "transport": "tcp",
+        "sni": "",
+        "fp": "chrome",
+        "alpn": "http/1.1",
+        "flow": "xtls-rprx-vision",
+        "host_in": "5.188.156.115",
+        "port": 52006,
+        "ws_host_header": "",
+        "service_name": "",
+        "path": "",
+        "reality": false
+      },
+      "is_new": true,
+      "light": "green",
+      "health": 100.0,
+      "stability": 99.5,
+      "services": {
+        "chatgpt": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "claude": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "gemini": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "grok": {
+          "status": "pass",
+          "score": 100.0
+        },
+        "perplexity": {
+          "status": "pass",
+          "score": 100.0
+        }
+      }
+    },
     "[Lastdep] 🇧🇷 Бразилия [VPN]": {
-      "pos": 78,
+      "pos": 86,
       "country": "BR",
       "country_conf": 1.0,
       "cf_loc": "BR",
@@ -5481,7 +5954,7 @@
       "ptr": "",
       "dns_check": {
         "gemini": {
-          "ip": "142.251.152.2",
+          "ip": "142.251.155.2",
           "asn": 15169,
           "org": "Google LLC",
           "expected": "Google",
@@ -5540,18 +6013,33 @@
       }
     },
     "[Lastdep] 🇯🇵 Япония [VPN]": {
-      "pos": 79,
-      "country": null,
-      "country_conf": null,
-      "cf_loc": null,
-      "out_ip": null,
-      "geo": "",
-      "city_conf": null,
-      "ip_type": null,
-      "asn": null,
-      "org": null,
+      "pos": 87,
+      "country": "JP",
+      "country_conf": 1.0,
+      "cf_loc": "JP",
+      "out_ip": "38.180.202.71",
+      "geo": "Tokyo",
+      "city_conf": "medium",
+      "ip_type": "datacenter",
+      "asn": 9009,
+      "org": "M247 Europe SRL",
       "ptr": "",
-      "dns_check": {},
+      "dns_check": {
+        "gemini": {
+          "ip": "142.251.154.2",
+          "asn": 15169,
+          "org": "Google LLC",
+          "expected": "Google",
+          "verdict": "honest"
+        },
+        "chatgpt": {
+          "ip": "104.18.32.47",
+          "asn": 13335,
+          "org": "Cloudflare, Inc.",
+          "expected": "OpenAI/CDN",
+          "verdict": "honest"
+        }
+      },
       "type": "normal",
       "udp": true,
       "tech": {
@@ -5570,28 +6058,28 @@
         "reality": false
       },
       "is_new": true,
-      "light": "red",
-      "health": 30.0,
-      "stability": 49.8,
+      "light": "yellow",
+      "health": 79.0,
+      "stability": 54.8,
       "services": {
         "chatgpt": {
-          "status": "unknown",
+          "status": "pass",
           "score": 100.0
         },
         "claude": {
-          "status": "unknown",
+          "status": "pass",
           "score": 100.0
         },
         "gemini": {
-          "status": "unknown",
+          "status": "pass",
           "score": 100.0
         },
         "grok": {
-          "status": "unknown",
+          "status": "pass",
           "score": 100.0
         },
         "perplexity": {
-          "status": "unknown",
+          "status": "pass",
           "score": 100.0
         }
       }
