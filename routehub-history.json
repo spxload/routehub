@@ -116,8 +116,8 @@
     "last_seen": 1780521635
   },
   "[Lastdep] 🇰🇿 Казахстан [VPN]": {
-    "health": 91.0,
-    "stability": 19.1,
+    "health": 97.3,
+    "stability": 27.2,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -126,11 +126,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247716,
-        "ok": false,
-        "country": null
-      },
       {
         "t": 1780255589,
         "ok": false,
@@ -225,11 +220,16 @@
         "t": 1780540685,
         "ok": true,
         "country": "KZ"
+      },
+      {
+        "t": 1780547397,
+        "ok": true,
+        "country": "KZ"
       }
     ],
-    "last_t": 1780540685,
+    "last_t": 1780547397,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇫🇮  ⭐ Финляндия [VPN] #1": {
     "health": 100.0,
@@ -242,11 +242,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240880,
-        "ok": true,
-        "country": "FI"
-      },
       {
         "t": 1780247636,
         "ok": true,
@@ -341,11 +336,16 @@
         "t": 1780540645,
         "ok": true,
         "country": "FI"
+      },
+      {
+        "t": 1780547356,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540645,
+    "last_t": 1780547356,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇦🇪 ОАЭ [VPN]": {
     "health": 100.0,
@@ -358,11 +358,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247715,
-        "ok": true,
-        "country": "AE"
-      },
       {
         "t": 1780255589,
         "ok": true,
@@ -457,11 +452,16 @@
         "t": 1780540715,
         "ok": true,
         "country": "AE"
+      },
+      {
+        "t": 1780547427,
+        "ok": true,
+        "country": "AE"
       }
     ],
-    "last_t": 1780540715,
+    "last_t": 1780547427,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇷🇺 🙏 Россия [Обход - МТС]": {
     "health": 100.0,
@@ -474,11 +474,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247569,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780255428,
         "ok": true,
@@ -573,11 +568,16 @@
         "t": 1780540588,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547292,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540588,
+    "last_t": 1780547292,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇷🇺 💫 Россия [VPN] #1": {
     "health": 0.0,
@@ -590,11 +590,6 @@
       "perplexity": 0.0
     },
     "samples": [
-      {
-        "t": 1780255465,
-        "ok": true,
-        "country": "RU"
-      },
       {
         "t": 1780261494,
         "ok": false,
@@ -689,15 +684,20 @@
         "t": 1780540585,
         "ok": false,
         "country": null
+      },
+      {
+        "t": 1780547288,
+        "ok": false,
+        "country": null
       }
     ],
-    "last_t": 1780540585,
+    "last_t": 1780547288,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇪🇪  🟢 Эстония [VPN] #2": {
     "health": 100.0,
-    "stability": 74.4,
+    "stability": 77.0,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -706,11 +706,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240909,
-        "ok": true,
-        "country": "EE"
-      },
       {
         "t": 1780247659,
         "ok": true,
@@ -805,15 +800,20 @@
         "t": 1780540664,
         "ok": true,
         "country": "EE"
+      },
+      {
+        "t": 1780547370,
+        "ok": true,
+        "country": "EE"
       }
     ],
-    "last_t": 1780540664,
+    "last_t": 1780547370,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪  ⭐ Германия [VPN] #1": {
     "health": 100.0,
-    "stability": 98.3,
+    "stability": 98.5,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -822,11 +822,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240862,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780247622,
         "ok": true,
@@ -921,15 +916,20 @@
         "t": 1780540631,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547335,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540631,
+    "last_t": 1780547335,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇹🇷  🙏 Турция [Обход]": {
     "health": 100.0,
-    "stability": 93.2,
+    "stability": 93.9,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -938,11 +938,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247589,
-        "ok": true,
-        "country": "TR"
-      },
       {
         "t": 1780255446,
         "ok": true,
@@ -1037,11 +1032,16 @@
         "t": 1780540611,
         "ok": true,
         "country": "TR"
+      },
+      {
+        "t": 1780547311,
+        "ok": true,
+        "country": "TR"
       }
     ],
-    "last_t": 1780540611,
+    "last_t": 1780547311,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇺🇸 ⭐ США [VPN] #1": {
     "health": 100.0,
@@ -1054,11 +1054,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240913,
-        "ok": true,
-        "country": "US"
-      },
       {
         "t": 1780247665,
         "ok": true,
@@ -1153,11 +1148,16 @@
         "t": 1780540665,
         "ok": true,
         "country": "US"
+      },
+      {
+        "t": 1780547375,
+        "ok": true,
+        "country": "US"
       }
     ],
-    "last_t": 1780540665,
+    "last_t": 1780547375,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇧🇪 Бельгия [VPN]": {
     "health": 100.0,
@@ -1287,11 +1287,6 @@
     },
     "samples": [
       {
-        "t": 1780240869,
-        "ok": true,
-        "country": "DE"
-      },
-      {
         "t": 1780247628,
         "ok": true,
         "country": "DE"
@@ -1385,15 +1380,20 @@
         "t": 1780540640,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547348,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540640,
+    "last_t": 1780547348,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇫🇮  🟢 Финляндия [VPN] #5": {
     "health": 100.0,
-    "stability": 74.5,
+    "stability": 77.0,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -1402,11 +1402,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240886,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780247645,
         "ok": true,
@@ -1501,11 +1496,16 @@
         "t": 1780540650,
         "ok": true,
         "country": "FI"
+      },
+      {
+        "t": 1780547361,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540650,
+    "last_t": 1780547361,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇳🇱  ⭐ Нидерланды [VPN] #1": {
     "health": 100.0,
@@ -1513,16 +1513,11 @@
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
-      "gemini": 99.4,
+      "gemini": 99.8,
       "grok": 100.0,
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240892,
-        "ok": true,
-        "country": "NL"
-      },
       {
         "t": 1780247647,
         "ok": true,
@@ -1617,11 +1612,16 @@
         "t": 1780540650,
         "ok": true,
         "country": "NL"
+      },
+      {
+        "t": 1780547356,
+        "ok": true,
+        "country": "NL"
       }
     ],
-    "last_t": 1780540650,
+    "last_t": 1780547356,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇹🇭 Тайланд [VPN]": {
     "health": 100.0,
@@ -1634,11 +1634,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247707,
-        "ok": true,
-        "country": "TH"
-      },
       {
         "t": 1780255580,
         "ok": true,
@@ -1733,11 +1728,16 @@
         "t": 1780540710,
         "ok": true,
         "country": "TH"
+      },
+      {
+        "t": 1780547422,
+        "ok": true,
+        "country": "TH"
       }
     ],
-    "last_t": 1780540710,
+    "last_t": 1780547422,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇦🇲 Армения [VPN]": {
     "health": 100.0,
@@ -1750,11 +1750,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247681,
-        "ok": true,
-        "country": "PH"
-      },
       {
         "t": 1780255546,
         "ok": true,
@@ -1849,11 +1844,16 @@
         "t": 1780540684,
         "ok": true,
         "country": "PH"
+      },
+      {
+        "t": 1780547396,
+        "ok": true,
+        "country": "PH"
       }
     ],
-    "last_t": 1780540684,
+    "last_t": 1780547396,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇫🇷 Франция [VPN]": {
     "health": 100.0,
@@ -1866,11 +1866,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247695,
-        "ok": true,
-        "country": "FR"
-      },
       {
         "t": 1780255572,
         "ok": true,
@@ -1965,15 +1960,20 @@
         "t": 1780540695,
         "ok": true,
         "country": "FR"
+      },
+      {
+        "t": 1780547407,
+        "ok": true,
+        "country": "FR"
       }
     ],
-    "last_t": 1780540695,
+    "last_t": 1780547407,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇺🇸 🟢 США [VPN] #3": {
     "health": 100.0,
-    "stability": 99.0,
+    "stability": 99.1,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -1982,11 +1982,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240919,
-        "ok": true,
-        "country": "US"
-      },
       {
         "t": 1780247668,
         "ok": true,
@@ -2081,11 +2076,16 @@
         "t": 1780540670,
         "ok": true,
         "country": "US"
+      },
+      {
+        "t": 1780547381,
+        "ok": true,
+        "country": "US"
       }
     ],
-    "last_t": 1780540670,
+    "last_t": 1780547381,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇵🇱 🟢 Польша [VPN] #4": {
     "health": 100.0,
@@ -2098,11 +2098,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240900,
-        "ok": true,
-        "country": "PL"
-      },
       {
         "t": 1780247642,
         "ok": true,
@@ -2197,11 +2192,16 @@
         "t": 1780540643,
         "ok": true,
         "country": "PL"
+      },
+      {
+        "t": 1780547348,
+        "ok": true,
+        "country": "PL"
       }
     ],
-    "last_t": 1780540643,
+    "last_t": 1780547348,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇯🇵 Япония [VPN]": {
     "health": 100.0,
@@ -2214,11 +2214,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247780,
-        "ok": true,
-        "country": "JP"
-      },
       {
         "t": 1780255641,
         "ok": true,
@@ -2313,15 +2308,20 @@
         "t": 1780540729,
         "ok": true,
         "country": "JP"
+      },
+      {
+        "t": 1780547441,
+        "ok": true,
+        "country": "JP"
       }
     ],
-    "last_t": 1780540729,
+    "last_t": 1780547441,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇪🇪  🟢 Эстония [VPN] #3": {
     "health": 100.0,
-    "stability": 99.0,
+    "stability": 99.1,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -2330,11 +2330,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240909,
-        "ok": true,
-        "country": "EE"
-      },
       {
         "t": 1780247658,
         "ok": true,
@@ -2429,28 +2424,28 @@
         "t": 1780540664,
         "ok": true,
         "country": "EE"
+      },
+      {
+        "t": 1780547375,
+        "ok": true,
+        "country": "EE"
       }
     ],
-    "last_t": 1780540664,
+    "last_t": 1780547375,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇳🇱  🟢 Нидерланды [VPN] #2": {
     "health": 100.0,
-    "stability": 74.5,
+    "stability": 77.0,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
-      "gemini": 91.8,
+      "gemini": 97.5,
       "grok": 100.0,
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240894,
-        "ok": true,
-        "country": "NL"
-      },
       {
         "t": 1780247648,
         "ok": true,
@@ -2545,11 +2540,16 @@
         "t": 1780540655,
         "ok": true,
         "country": "NL"
+      },
+      {
+        "t": 1780547360,
+        "ok": true,
+        "country": "NL"
       }
     ],
-    "last_t": 1780540655,
+    "last_t": 1780547360,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪 🙏 Германия [Обход - МТС]": {
     "health": 100.0,
@@ -2562,11 +2562,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247569,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780255428,
         "ok": true,
@@ -2661,11 +2656,16 @@
         "t": 1780540588,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547292,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540588,
+    "last_t": 1780547292,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇱🇻 🕹️ Латвия [Игры]": {
     "health": 100.0,
@@ -2678,11 +2678,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247668,
-        "ok": true,
-        "country": "LV"
-      },
       {
         "t": 1780255533,
         "ok": true,
@@ -2777,15 +2772,20 @@
         "t": 1780540675,
         "ok": true,
         "country": "LV"
+      },
+      {
+        "t": 1780547387,
+        "ok": true,
+        "country": "LV"
       }
     ],
-    "last_t": 1780540675,
+    "last_t": 1780547387,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇵🇱 🙏 Польша [Обход]": {
     "health": 100.0,
-    "stability": 93.9,
+    "stability": 94.5,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -2794,11 +2794,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247582,
-        "ok": true,
-        "country": "PL"
-      },
       {
         "t": 1780255442,
         "ok": true,
@@ -2893,15 +2888,20 @@
         "t": 1780540600,
         "ok": true,
         "country": "PL"
+      },
+      {
+        "t": 1780547305,
+        "ok": true,
+        "country": "PL"
       }
     ],
-    "last_t": 1780540600,
+    "last_t": 1780547305,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇵🇱 🟢 Польша [VPN] #3": {
     "health": 100.0,
-    "stability": 80.7,
+    "stability": 82.6,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -2910,11 +2910,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240873,
-        "ok": true,
-        "country": "PL"
-      },
       {
         "t": 1780247631,
         "ok": false,
@@ -3009,11 +3004,16 @@
         "t": 1780540642,
         "ok": true,
         "country": "PL"
+      },
+      {
+        "t": 1780547348,
+        "ok": true,
+        "country": "PL"
       }
     ],
-    "last_t": 1780540642,
+    "last_t": 1780547348,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪  🚀 Германия [VPN] #2": {
     "health": 100.0,
@@ -3026,11 +3026,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240857,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780247618,
         "ok": true,
@@ -3125,11 +3120,16 @@
         "t": 1780540631,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547338,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540631,
+    "last_t": 1780547338,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇦🇹 Австрия [VPN]": {
     "health": 100.0,
@@ -3142,11 +3142,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247679,
-        "ok": true,
-        "country": "AT"
-      },
       {
         "t": 1780255559,
         "ok": true,
@@ -3241,28 +3236,28 @@
         "t": 1780540705,
         "ok": true,
         "country": "AT"
+      },
+      {
+        "t": 1780547394,
+        "ok": true,
+        "country": "AT"
       }
     ],
-    "last_t": 1780540705,
+    "last_t": 1780547394,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇳🇱  🟢 Нидерланды [VPN] #3": {
     "health": 100.0,
-    "stability": 74.5,
+    "stability": 77.0,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
-      "gemini": 100.0,
+      "gemini": 30.0,
       "grok": 100.0,
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240897,
-        "ok": true,
-        "country": "NL"
-      },
       {
         "t": 1780247648,
         "ok": true,
@@ -3357,11 +3352,16 @@
         "t": 1780540657,
         "ok": true,
         "country": "NL"
+      },
+      {
+        "t": 1780547366,
+        "ok": true,
+        "country": "RU"
       }
     ],
-    "last_t": 1780540657,
+    "last_t": 1780547366,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇨🇭 Швейцария [VPN]": {
     "health": 100.0,
@@ -3374,11 +3374,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247696,
-        "ok": true,
-        "country": "CH"
-      },
       {
         "t": 1780255570,
         "ok": true,
@@ -3473,15 +3468,20 @@
         "t": 1780540697,
         "ok": true,
         "country": "CH"
+      },
+      {
+        "t": 1780547407,
+        "ok": true,
+        "country": "CH"
       }
     ],
-    "last_t": 1780540697,
+    "last_t": 1780547407,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇨🇿 Чехия [VPN]": {
     "health": 100.0,
-    "stability": 97.4,
+    "stability": 97.7,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -3490,11 +3490,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247731,
-        "ok": true,
-        "country": "CZ"
-      },
       {
         "t": 1780255608,
         "ok": true,
@@ -3589,11 +3584,16 @@
         "t": 1780540706,
         "ok": true,
         "country": "CZ"
+      },
+      {
+        "t": 1780547418,
+        "ok": true,
+        "country": "CZ"
       }
     ],
-    "last_t": 1780540706,
+    "last_t": 1780547418,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪  🚀 Германия Напрямую [VPN]": {
     "health": 100.0,
@@ -3606,11 +3606,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240858,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780247619,
         "ok": true,
@@ -3705,15 +3700,20 @@
         "t": 1780540633,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547339,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540633,
+    "last_t": 1780547339,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇳🇬 Нигерия [VPN]": {
     "health": 100.0,
-    "stability": 81.5,
+    "stability": 83.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -3722,11 +3722,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247686,
-        "ok": false,
-        "country": null
-      },
       {
         "t": 1780255552,
         "ok": false,
@@ -3821,11 +3816,16 @@
         "t": 1780540698,
         "ok": true,
         "country": "NG"
+      },
+      {
+        "t": 1780547410,
+        "ok": true,
+        "country": "NG"
       }
     ],
-    "last_t": 1780540698,
+    "last_t": 1780547410,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪  🟢 Германия [VPN] #5": {
     "health": 100.0,
@@ -3838,11 +3838,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240863,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780247623,
         "ok": true,
@@ -3937,11 +3932,16 @@
         "t": 1780540638,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547340,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540638,
+    "last_t": 1780547340,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇪🇪 🕹️ Эстония [Игры]": {
     "health": 100.0,
@@ -3954,11 +3954,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247667,
-        "ok": true,
-        "country": "EE"
-      },
       {
         "t": 1780255533,
         "ok": true,
@@ -4053,11 +4048,16 @@
         "t": 1780540673,
         "ok": true,
         "country": "EE"
+      },
+      {
+        "t": 1780547384,
+        "ok": true,
+        "country": "EE"
       }
     ],
-    "last_t": 1780540673,
+    "last_t": 1780547384,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇵🇱 🙏 Польша [Обход - МТС]": {
     "health": 100.0,
@@ -4070,11 +4070,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247568,
-        "ok": true,
-        "country": "PL"
-      },
       {
         "t": 1780255426,
         "ok": true,
@@ -4169,15 +4164,20 @@
         "t": 1780540588,
         "ok": true,
         "country": "PL"
+      },
+      {
+        "t": 1780547296,
+        "ok": true,
+        "country": "PL"
       }
     ],
-    "last_t": 1780540588,
+    "last_t": 1780547296,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇷🇺 🙏 Россия [Обход]": {
-    "health": 78.9,
-    "stability": 27.6,
+    "health": 23.7,
+    "stability": 13.8,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -4186,11 +4186,6 @@
       "perplexity": 0.0
     },
     "samples": [
-      {
-        "t": 1780247574,
-        "ok": false,
-        "country": null
-      },
       {
         "t": 1780255430,
         "ok": false,
@@ -4285,11 +4280,16 @@
         "t": 1780540598,
         "ok": true,
         "country": "RU"
+      },
+      {
+        "t": 1780547297,
+        "ok": false,
+        "country": null
       }
     ],
-    "last_t": 1780540598,
+    "last_t": 1780547297,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇫🇮 🙏 Финляндия [Обход - МТС]": {
     "health": 100.0,
@@ -4302,11 +4302,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247567,
-        "ok": true,
-        "country": "FI"
-      },
       {
         "t": 1780255426,
         "ok": true,
@@ -4401,15 +4396,20 @@
         "t": 1780540587,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547296,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540587,
+    "last_t": 1780547296,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇫🇮  🟢 Финляндия [VPN] #3": {
     "health": 100.0,
-    "stability": 80.7,
+    "stability": 82.6,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -4418,11 +4418,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240880,
-        "ok": true,
-        "country": "FI"
-      },
       {
         "t": 1780247637,
         "ok": false,
@@ -4517,15 +4512,20 @@
         "t": 1780540648,
         "ok": true,
         "country": "FI"
+      },
+      {
+        "t": 1780547360,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540648,
+    "last_t": 1780547360,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇹🇷 🟢 Турция [VPN] #3": {
     "health": 100.0,
-    "stability": 99.0,
+    "stability": 99.1,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -4534,11 +4534,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240913,
-        "ok": true,
-        "country": "TR"
-      },
       {
         "t": 1780247658,
         "ok": true,
@@ -4633,28 +4628,28 @@
         "t": 1780540660,
         "ok": true,
         "country": "TR"
+      },
+      {
+        "t": 1780547371,
+        "ok": true,
+        "country": "TR"
       }
     ],
-    "last_t": 1780540660,
+    "last_t": 1780547371,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇳🇱 🙏 Нидерланды [Обход]": {
     "health": 100.0,
-    "stability": 90.7,
+    "stability": 91.6,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
-      "gemini": 100.0,
+      "gemini": 30.0,
       "grok": 100.0,
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247591,
-        "ok": true,
-        "country": "NL"
-      },
       {
         "t": 1780255444,
         "ok": true,
@@ -4749,11 +4744,16 @@
         "t": 1780540601,
         "ok": true,
         "country": "NL"
+      },
+      {
+        "t": 1780547309,
+        "ok": true,
+        "country": "RU"
       }
     ],
-    "last_t": 1780540601,
+    "last_t": 1780547309,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪  🟢 Германия [VPN] #6": {
     "health": 100.0,
@@ -4766,11 +4766,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240870,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780247626,
         "ok": true,
@@ -4865,15 +4860,20 @@
         "t": 1780540640,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547344,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540640,
+    "last_t": 1780547344,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇵🇱 🟢 Польша [VPN] #5": {
     "health": 100.0,
-    "stability": 97.2,
+    "stability": 97.5,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -4882,11 +4882,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240893,
-        "ok": true,
-        "country": "PL"
-      },
       {
         "t": 1780247636,
         "ok": true,
@@ -4981,11 +4976,16 @@
         "t": 1780540647,
         "ok": true,
         "country": "PL"
+      },
+      {
+        "t": 1780547350,
+        "ok": true,
+        "country": "PL"
       }
     ],
-    "last_t": 1780540647,
+    "last_t": 1780547350,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇵🇱 ⭐ Польша [VPN] #1": {
     "health": 100.0,
@@ -4998,11 +4998,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240875,
-        "ok": true,
-        "country": "PL"
-      },
       {
         "t": 1780247632,
         "ok": true,
@@ -5097,15 +5092,20 @@
         "t": 1780540640,
         "ok": true,
         "country": "PL"
+      },
+      {
+        "t": 1780547346,
+        "ok": true,
+        "country": "PL"
       }
     ],
-    "last_t": 1780540640,
+    "last_t": 1780547346,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇹🇷 🟢 Турция [VPN] #2": {
     "health": 100.0,
-    "stability": 74.5,
+    "stability": 77.0,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -5114,11 +5114,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240906,
-        "ok": true,
-        "country": "TR"
-      },
       {
         "t": 1780247657,
         "ok": true,
@@ -5213,11 +5208,16 @@
         "t": 1780540659,
         "ok": true,
         "country": "TR"
+      },
+      {
+        "t": 1780547373,
+        "ok": true,
+        "country": "TR"
       }
     ],
-    "last_t": 1780540659,
+    "last_t": 1780547373,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇸🇬  Сингапур [VPN]": {
     "health": 100.0,
@@ -5230,11 +5230,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247723,
-        "ok": true,
-        "country": "SG"
-      },
       {
         "t": 1780255602,
         "ok": true,
@@ -5329,11 +5324,16 @@
         "t": 1780540721,
         "ok": true,
         "country": "SG"
+      },
+      {
+        "t": 1780547433,
+        "ok": true,
+        "country": "SG"
       }
     ],
-    "last_t": 1780540721,
+    "last_t": 1780547433,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪  🟢 Германия [VPN] #4": {
     "health": 100.0,
@@ -5346,11 +5346,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240862,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780247622,
         "ok": true,
@@ -5445,11 +5440,16 @@
         "t": 1780540634,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547339,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540634,
+    "last_t": 1780547339,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇺🇸 🙏 США [Обход]": {
     "health": 100.0,
@@ -5462,11 +5462,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247605,
-        "ok": true,
-        "country": "US"
-      },
       {
         "t": 1780255455,
         "ok": true,
@@ -5561,15 +5556,20 @@
         "t": 1780540613,
         "ok": true,
         "country": "US"
+      },
+      {
+        "t": 1780547317,
+        "ok": true,
+        "country": "US"
       }
     ],
-    "last_t": 1780540613,
+    "last_t": 1780547317,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇳🇴 Норвегия [VPN]": {
     "health": 100.0,
-    "stability": 88.3,
+    "stability": 89.5,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -5578,11 +5578,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247697,
-        "ok": true,
-        "country": "NO"
-      },
       {
         "t": 1780255570,
         "ok": true,
@@ -5677,11 +5672,16 @@
         "t": 1780540703,
         "ok": true,
         "country": "NO"
+      },
+      {
+        "t": 1780547414,
+        "ok": true,
+        "country": "NO"
       }
     ],
-    "last_t": 1780540703,
+    "last_t": 1780547414,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇮🇳 Индия [VPN]": {
     "health": 100.0,
@@ -5694,11 +5694,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247709,
-        "ok": true,
-        "country": "IN"
-      },
       {
         "t": 1780255586,
         "ok": true,
@@ -5793,11 +5788,16 @@
         "t": 1780540711,
         "ok": true,
         "country": "IN"
+      },
+      {
+        "t": 1780547422,
+        "ok": true,
+        "country": "IN"
       }
     ],
-    "last_t": 1780540711,
+    "last_t": 1780547422,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇪🇪  ⭐ Эстония [VPN] #1": {
     "health": 100.0,
@@ -5810,11 +5810,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240904,
-        "ok": true,
-        "country": "EE"
-      },
       {
         "t": 1780247656,
         "ok": true,
@@ -5909,11 +5904,16 @@
         "t": 1780540657,
         "ok": true,
         "country": "EE"
+      },
+      {
+        "t": 1780547366,
+        "ok": true,
+        "country": "EE"
       }
     ],
-    "last_t": 1780540657,
+    "last_t": 1780547366,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪  🟢 Германия [VPN] #3": {
     "health": 100.0,
@@ -5926,11 +5926,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240861,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780247622,
         "ok": true,
@@ -6025,15 +6020,20 @@
         "t": 1780540634,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547339,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540634,
+    "last_t": 1780547339,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇪🇪 🙏 Эстония [Обход]": {
     "health": 100.0,
-    "stability": 96.7,
+    "stability": 97.0,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -6042,11 +6042,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247590,
-        "ok": true,
-        "country": "EE"
-      },
       {
         "t": 1780255444,
         "ok": true,
@@ -6141,11 +6136,16 @@
         "t": 1780540600,
         "ok": true,
         "country": "EE"
+      },
+      {
+        "t": 1780547309,
+        "ok": true,
+        "country": "EE"
       }
     ],
-    "last_t": 1780540600,
+    "last_t": 1780547309,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇫🇮 🕹️ Финляндия [Игры] #1": {
     "health": 100.0,
@@ -6158,11 +6158,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247667,
-        "ok": true,
-        "country": "FI"
-      },
       {
         "t": 1780255528,
         "ok": true,
@@ -6257,15 +6252,20 @@
         "t": 1780540671,
         "ok": true,
         "country": "FI"
+      },
+      {
+        "t": 1780547386,
+        "ok": true,
+        "country": "FI"
       }
     ],
-    "last_t": 1780540671,
+    "last_t": 1780547386,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇫🇮  🟢 Финляндия [VPN] #4": {
     "health": 100.0,
-    "stability": 94.2,
+    "stability": 94.8,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -6274,11 +6274,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240885,
-        "ok": true,
-        "country": "FI"
-      },
       {
         "t": 1780247645,
         "ok": true,
@@ -6373,15 +6368,20 @@
         "t": 1780540648,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547357,
+        "ok": true,
+        "country": "FI"
       }
     ],
-    "last_t": 1780540648,
+    "last_t": 1780547357,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪 🙏 Германия [Обход]": {
     "health": 100.0,
-    "stability": 96.8,
+    "stability": 97.1,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -6390,11 +6390,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247586,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780255438,
         "ok": true,
@@ -6489,15 +6484,20 @@
         "t": 1780540598,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547302,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540598,
+    "last_t": 1780547302,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇺🇸 🟢 США [VPN] #2": {
     "health": 100.0,
-    "stability": 94.9,
+    "stability": 95.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -6506,11 +6506,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240917,
-        "ok": true,
-        "country": "US"
-      },
       {
         "t": 1780247668,
         "ok": true,
@@ -6605,15 +6600,20 @@
         "t": 1780540668,
         "ok": true,
         "country": "US"
+      },
+      {
+        "t": 1780547379,
+        "ok": true,
+        "country": "US"
       }
     ],
-    "last_t": 1780540668,
+    "last_t": 1780547379,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇫🇮 🙏 Финляндия [Обход]": {
     "health": 100.0,
-    "stability": 97.7,
+    "stability": 97.9,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -6622,11 +6622,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247589,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780255440,
         "ok": true,
@@ -6721,15 +6716,20 @@
         "t": 1780540600,
         "ok": true,
         "country": "FI"
+      },
+      {
+        "t": 1780547305,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540600,
+    "last_t": 1780547305,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇦🇷  Аргентина [VPN]": {
     "health": 100.0,
-    "stability": 97.9,
+    "stability": 98.1,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -6738,11 +6738,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247717,
-        "ok": true,
-        "country": "AR"
-      },
       {
         "t": 1780255607,
         "ok": true,
@@ -6837,11 +6832,16 @@
         "t": 1780540724,
         "ok": true,
         "country": "AR"
+      },
+      {
+        "t": 1780547434,
+        "ok": true,
+        "country": "AR"
       }
     ],
-    "last_t": 1780540724,
+    "last_t": 1780547434,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇬🇧 Великобритания [VPN]": {
     "health": 100.0,
@@ -6854,11 +6854,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247683,
-        "ok": true,
-        "country": "RO"
-      },
       {
         "t": 1780255561,
         "ok": true,
@@ -6953,11 +6948,16 @@
         "t": 1780540685,
         "ok": true,
         "country": "RO"
+      },
+      {
+        "t": 1780547398,
+        "ok": true,
+        "country": "RO"
       }
     ],
-    "last_t": 1780540685,
+    "last_t": 1780547398,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇨🇦 Канада [VPN]": {
     "health": 100.0,
@@ -6970,11 +6970,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247708,
-        "ok": true,
-        "country": "CA"
-      },
       {
         "t": 1780255585,
         "ok": true,
@@ -7069,15 +7064,20 @@
         "t": 1780540715,
         "ok": true,
         "country": "CA"
+      },
+      {
+        "t": 1780547423,
+        "ok": true,
+        "country": "CA"
       }
     ],
-    "last_t": 1780540715,
+    "last_t": 1780547423,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇹🇷  ⭐ Турция [VPN] #1": {
     "health": 100.0,
-    "stability": 97.1,
+    "stability": 97.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -7086,11 +7086,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780240899,
-        "ok": true,
-        "country": "TR"
-      },
       {
         "t": 1780247654,
         "ok": true,
@@ -7185,11 +7180,16 @@
         "t": 1780540656,
         "ok": true,
         "country": "TR"
+      },
+      {
+        "t": 1780547368,
+        "ok": true,
+        "country": "TR"
       }
     ],
-    "last_t": 1780540656,
+    "last_t": 1780547368,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇷🇴 Румыния [VPN]": {
     "health": 100.0,
@@ -7202,11 +7202,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247691,
-        "ok": true,
-        "country": "GB"
-      },
       {
         "t": 1780255564,
         "ok": true,
@@ -7301,15 +7296,20 @@
         "t": 1780540695,
         "ok": true,
         "country": "GB"
+      },
+      {
+        "t": 1780547406,
+        "ok": true,
+        "country": "GB"
       }
     ],
-    "last_t": 1780540695,
+    "last_t": 1780547406,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇪🇪 ⭐🚀 Эстония [VPN]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -7318,11 +7318,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247602,
-        "ok": true,
-        "country": "EE"
-      },
       {
         "t": 1780255459,
         "ok": true,
@@ -7417,15 +7412,20 @@
         "t": 1780540621,
         "ok": true,
         "country": "EE"
+      },
+      {
+        "t": 1780547322,
+        "ok": true,
+        "country": "EE"
       }
     ],
-    "last_t": 1780540621,
+    "last_t": 1780547322,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇫🇮  ⭐ 🚀 Финляндия [VPN]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -7434,11 +7434,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247601,
-        "ok": true,
-        "country": "FI"
-      },
       {
         "t": 1780255457,
         "ok": true,
@@ -7533,15 +7528,20 @@
         "t": 1780540616,
         "ok": true,
         "country": "FI"
+      },
+      {
+        "t": 1780547321,
+        "ok": true,
+        "country": "FI"
       }
     ],
-    "last_t": 1780540616,
+    "last_t": 1780547321,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇮🇪 Ирландия [VPN]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -7550,11 +7550,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247690,
-        "ok": true,
-        "country": "IE"
-      },
       {
         "t": 1780255557,
         "ok": true,
@@ -7649,15 +7644,20 @@
         "t": 1780540694,
         "ok": true,
         "country": "IE"
+      },
+      {
+        "t": 1780547406,
+        "ok": true,
+        "country": "IE"
       }
     ],
-    "last_t": 1780540694,
+    "last_t": 1780547406,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇸🇪 🕹️ Швеция [Игры]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -7666,11 +7666,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247673,
-        "ok": true,
-        "country": "FI"
-      },
       {
         "t": 1780255539,
         "ok": true,
@@ -7765,15 +7760,20 @@
         "t": 1780540676,
         "ok": true,
         "country": "FI"
+      },
+      {
+        "t": 1780547388,
+        "ok": true,
+        "country": "FI"
       }
     ],
-    "last_t": 1780540676,
+    "last_t": 1780547388,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇵🇱  ⭐ 🚀 Польша [VPN]": {
     "health": 100.0,
-    "stability": 97.5,
+    "stability": 97.8,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -7782,11 +7782,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247600,
-        "ok": true,
-        "country": "PL"
-      },
       {
         "t": 1780255457,
         "ok": true,
@@ -7881,15 +7876,20 @@
         "t": 1780540616,
         "ok": true,
         "country": "PL"
+      },
+      {
+        "t": 1780547321,
+        "ok": true,
+        "country": "PL"
       }
     ],
-    "last_t": 1780540616,
+    "last_t": 1780547321,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇹🇷 ⭐ 🚀 Турция [VPN]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -7898,11 +7898,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247613,
-        "ok": true,
-        "country": "TR"
-      },
       {
         "t": 1780255470,
         "ok": true,
@@ -7997,15 +7992,20 @@
         "t": 1780540623,
         "ok": true,
         "country": "TR"
+      },
+      {
+        "t": 1780547329,
+        "ok": true,
+        "country": "TR"
       }
     ],
-    "last_t": 1780540623,
+    "last_t": 1780547329,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇧🇾 Беларусь [VPN]": {
-    "health": 97.4,
-    "stability": 30.6,
+    "health": 99.2,
+    "stability": 37.5,
     "service_scores": {
       "chatgpt": 0.0,
       "claude": 0.0,
@@ -8014,11 +8014,6 @@
       "perplexity": 0.0
     },
     "samples": [
-      {
-        "t": 1780247677,
-        "ok": true,
-        "country": "BY"
-      },
       {
         "t": 1780255543,
         "ok": true,
@@ -8113,15 +8108,20 @@
         "t": 1780540683,
         "ok": true,
         "country": "BY"
+      },
+      {
+        "t": 1780547395,
+        "ok": true,
+        "country": "BY"
       }
     ],
-    "last_t": 1780540683,
+    "last_t": 1780547395,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪  ⭐ 🚀 Германия [VPN]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -8130,11 +8130,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247598,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780255454,
         "ok": true,
@@ -8229,15 +8224,20 @@
         "t": 1780540610,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547317,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540610,
+    "last_t": 1780547317,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇪🇸 Испания [VPN]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -8246,11 +8246,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247687,
-        "ok": true,
-        "country": "ES"
-      },
       {
         "t": 1780255552,
         "ok": true,
@@ -8345,15 +8340,20 @@
         "t": 1780540687,
         "ok": true,
         "country": "ES"
+      },
+      {
+        "t": 1780547399,
+        "ok": true,
+        "country": "ES"
       }
     ],
-    "last_t": 1780540687,
+    "last_t": 1780547399,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇧🇷 Бразилия [VPN]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -8362,11 +8362,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247731,
-        "ok": true,
-        "country": "BR"
-      },
       {
         "t": 1780255610,
         "ok": true,
@@ -8461,15 +8456,20 @@
         "t": 1780540732,
         "ok": true,
         "country": "BR"
+      },
+      {
+        "t": 1780547438,
+        "ok": true,
+        "country": "BR"
       }
     ],
-    "last_t": 1780540732,
+    "last_t": 1780547438,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇩🇪  ⭐ 🚀 Германия Напрямую [VPN]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -8478,11 +8478,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247601,
-        "ok": true,
-        "country": "DE"
-      },
       {
         "t": 1780255455,
         "ok": true,
@@ -8577,28 +8572,28 @@
         "t": 1780540611,
         "ok": true,
         "country": "DE"
+      },
+      {
+        "t": 1780547317,
+        "ok": true,
+        "country": "DE"
       }
     ],
-    "last_t": 1780540611,
+    "last_t": 1780547317,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇳🇱 ⭐ 🚀 Нидерланды [VPN]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
-      "gemini": 99.8,
+      "gemini": 99.9,
       "grok": 100.0,
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247610,
-        "ok": true,
-        "country": "NL"
-      },
       {
         "t": 1780255468,
         "ok": true,
@@ -8693,15 +8688,20 @@
         "t": 1780540622,
         "ok": true,
         "country": "NL"
+      },
+      {
+        "t": 1780547328,
+        "ok": true,
+        "country": "NL"
       }
     ],
-    "last_t": 1780540622,
+    "last_t": 1780547328,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇺🇸 ⭐ 🚀 США [VPN]": {
     "health": 100.0,
-    "stability": 99.3,
+    "stability": 99.4,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -8710,11 +8710,6 @@
       "perplexity": 100.0
     },
     "samples": [
-      {
-        "t": 1780247614,
-        "ok": true,
-        "country": "US"
-      },
       {
         "t": 1780255469,
         "ok": true,
@@ -8809,11 +8804,16 @@
         "t": 1780540625,
         "ok": true,
         "country": "US"
+      },
+      {
+        "t": 1780547330,
+        "ok": true,
+        "country": "US"
       }
     ],
-    "last_t": 1780540625,
+    "last_t": 1780547330,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇷🇺 🟢 Россия [VPN] #1": {
     "health": 0.0,
@@ -8884,11 +8884,16 @@
         "t": 1780540625,
         "ok": false,
         "country": null
+      },
+      {
+        "t": 1780547330,
+        "ok": false,
+        "country": null
       }
     ],
-    "last_t": 1780540625,
+    "last_t": 1780547330,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇷🇺 🟢 Россия [VPN] #2": {
     "health": 0.0,
@@ -8959,11 +8964,16 @@
         "t": 1780540625,
         "ok": false,
         "country": null
+      },
+      {
+        "t": 1780547330,
+        "ok": false,
+        "country": null
       }
     ],
-    "last_t": 1780540625,
+    "last_t": 1780547330,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇷🇺 🟢 Россия [VPN] #3": {
     "health": 0.0,
@@ -9034,15 +9044,20 @@
         "t": 1780540629,
         "ok": false,
         "country": null
+      },
+      {
+        "t": 1780547331,
+        "ok": false,
+        "country": null
       }
     ],
-    "last_t": 1780540629,
+    "last_t": 1780547331,
     "first_seen": 1780521635,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇷🇺 🚀 Россия [VPN] #2": {
     "health": 0.0,
-    "stability": 15.0,
+    "stability": 7.5,
     "service_scores": {},
     "samples": [
       {
@@ -9054,15 +9069,20 @@
         "t": 1780540585,
         "ok": false,
         "country": null
+      },
+      {
+        "t": 1780547288,
+        "ok": false,
+        "country": null
       }
     ],
-    "last_t": 1780540585,
+    "last_t": 1780547288,
     "first_seen": 1780530503,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   },
   "[Lastdep] 🇫🇮 🕹️ Финляндия [Игры] #2": {
     "health": 100.0,
-    "stability": 67.6,
+    "stability": 70.8,
     "service_scores": {
       "chatgpt": 100.0,
       "claude": 100.0,
@@ -9080,10 +9100,15 @@
         "t": 1780540674,
         "ok": true,
         "country": "FI"
+      },
+      {
+        "t": 1780547383,
+        "ok": true,
+        "country": "FI"
       }
     ],
-    "last_t": 1780540674,
+    "last_t": 1780547383,
     "first_seen": 1780530503,
-    "last_seen": 1780540576
+    "last_seen": 1780547279
   }
 }
