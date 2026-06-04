@@ -2,29 +2,33 @@
 # =====================================================================
 #  publish_nodes.py — публикует декодированный список узлов подписки
 #  Lastdep в СЕКРЕТНЫЙ Gist, чтобы Loon брал узлы по ссылке БЕЗ MitM
-#  и без скрипта заголовков (header-подмена на устройстве была
-#  нестабильна). Заголовки запроса — как у routehub-server.py
-#  (UA Shadowrocket/3274, X-HWID), иначе провайдер отдаёт формат,
-#  который не парсится.
+#  и без скрипта заголовков. Заголовки запроса — как у
+#  routehub-server.py (UA Shadowrocket/3274, X-HWID), иначе провайдер
+#  отдаёт формат, который не парсится.
 #
 #  Запускается в GitHub Actions отдельным шагом. Секреты — через env:
 #    SUBSCRIPTION_URL, SUB_HWID, GIST_TOKEN (scope gist), GIST_ID.
 #
-#  ВАЖНО — что и как публикуем:
-#   * SKIP_GRPC: Loon НЕ поддерживает VLESS поверх gRPC (док. Loon:
-#     VLESS = ws/http/vision/reality, grpc нет). Такие узлы Loon молча
-#     не импортирует -> они «фантомы» (в подписке есть, в Loon нет).
-#     Поэтому grpc-узлы выкидываем, чтобы счётчик совпадал с Loon.
-#     Если в новой сборке Loon появится поддержка grpc — поставить False.
-#   * Сортировка по ИМЕНИ: имена начинаются с флага страны, поэтому
-#     сортировка строкой группирует узлы по стране визуально (и игровые
-#     узлы попадают в свою страну, а не валятся в самый низ списка).
+#  ВАЖНО:
+#   * SKIP_GRPC=False: grpc-узлы ОСТАВЛЯЕМ (решение Дианы — вдруг Loon
+#     добавит поддержку gRPC). Сейчас Loon их молча не импортирует, т.е.
+#     в гисте их видно, а в Loon нет (это ожидаемо, не баг).
+#   * Умная сортировка (только ВИДИМЫЙ порядок в Loon):
+#       - Германия первой (на ней приоритет AI);
+#       - остальные страны — по числу [VPN]-узлов (больше -> выше);
+#       - внутри страны — по имени.
+#     Группировка идёт по ФЛАГУ в имени (что видно глазами). Реальную
+#     страну для выбора AI-узла знает скрипт-селектор (серверный GeoIP),
+#     имя может не совпадать с реальным выходом — это норма.
+#   * ИТОГОВЫЙ выбор AI-узла внутри страны (по отклику И скорости
+#     закачки) делает скрипт на телефоне (Этап D + спидтест H); здесь —
+#     только порядок отображения.
 #   * Имена/теги сохраняются — фильтры [VPN]/[Игры]/[Обход] работают.
-#   * Формат — base64 списка vless-ссылок (стандартная подписка V2Ray,
-#     Loon читает напрямую). UUID = ключи доступа -> Gist СЕКРЕТНЫЙ.
+#   * Формат — base64 списка vless-ссылок. UUID = ключи -> Gist СЕКРЕТНЫЙ.
 # =====================================================================
 
 import os, sys, base64
+from collections import Counter
 from urllib.parse import urlparse, unquote
 
 try:
@@ -33,7 +37,8 @@ except ImportError:
     print("ОШИБКА: нужен requests"); sys.exit(1)
 
 NODE_PREFIXES = ('vless://', 'vmess://', 'trojan://', 'ss://')
-SKIP_GRPC = True   # Loon не поддерживает VLESS+gRPC -> не публикуем такие узлы
+SKIP_GRPC = False            # grpc оставляем (вдруг Loon добавит поддержку)
+DE_FLAG = '\U0001F1E9\U0001F1EA'   # 🇩🇪
 
 
 def fetch_subscription(url, hwid):
@@ -49,7 +54,6 @@ def fetch_subscription(url, hwid):
     body = ''.join(r.text.split())
     if not body:
         return ''
-    # подписка обычно base64 — декодируем, если внутри ссылки на узлы
     try:
         norm = body.replace('-', '+').replace('_', '/')
         norm += '=' * (-len(norm) % 4)
@@ -63,6 +67,15 @@ def fetch_subscription(url, hwid):
 
 def node_name(uri):
     return unquote(uri.split('#', 1)[1]) if '#' in uri else ''
+
+
+def flag_of(name):
+    # Флаг = 2 символа Regional Indicator (U+1F1E6..U+1F1FF) в начале имени.
+    s = name.lstrip()
+    pair = s[:2]
+    if len(pair) == 2 and all(0x1F1E6 <= ord(c) <= 0x1F1FF for c in pair):
+        return pair
+    return None
 
 
 def main():
@@ -80,13 +93,27 @@ def main():
     all_lines = [l.strip() for l in text.splitlines()
                  if l.strip().startswith(NODE_PREFIXES)]
     if not all_lines:
-        # защита: не затираем рабочий Gist пустотой при сбое выдачи
         print('Узлов в подписке не найдено — Gist НЕ перезаписываю.'); sys.exit(1)
 
     grpc_n = sum(1 for l in all_lines if 'type=grpc' in l)
     lines = [l for l in all_lines if not (SKIP_GRPC and 'type=grpc' in l)]
-    # сортировка по имени -> группировка по флагу/стране, игровые не в самом низу
-    lines.sort(key=node_name)
+
+    # Число [VPN]-узлов по флагу — для порядка стран (больше узлов -> выше).
+    vpn_by_flag = Counter(flag_of(node_name(l)) for l in lines
+                          if '[VPN]' in node_name(l) and flag_of(node_name(l)))
+
+    def sort_key(l):
+        nm = node_name(l)
+        fl = flag_of(nm)
+        if fl is None:
+            country = (2, 0, 'zzz')          # без флага -> в конец
+        elif fl == DE_FLAG:
+            country = (0, 0, '')             # Германия первой
+        else:
+            country = (1, -vpn_by_flag.get(fl, 0), fl)  # дальше по числу узлов
+        return (country, nm)
+
+    lines.sort(key=sort_key)
 
     sub = '\n'.join(lines)
     content_b64 = base64.b64encode(sub.encode('utf-8')).decode('ascii')
@@ -100,7 +127,7 @@ def main():
         json=payload, timeout=30)
     if r.status_code == 200:
         print(f'OK: опубликовано узлов {len(lines)} '
-              f'(всего в подписке {len(all_lines)}, пропущено grpc {grpc_n}), Gist {gist_id}.')
+              f'(grpc внутри: {grpc_n}, Loon их не покажет), Gist {gist_id}.')
     else:
         print(f'ОШИБКА Gist: HTTP {r.status_code} {r.text[:200]}'); sys.exit(1)
 
