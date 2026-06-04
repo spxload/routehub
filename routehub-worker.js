@@ -11,7 +11,7 @@
 //   - реестр        : devices.json (free/bound/conflict + nonce)
 //
 // env (Cloudflare -> Worker -> Settings -> Variables and Secrets):
-//   GIST_TOKEN  (secret) — токен GitHub со scope gist (НИКОГДА на телефоне)
+//   GIST_TOKEN  (secret) — classic-токен GitHub со scope gist (НИКОГДА на телефоне)
 //   GIST_ID            — id секретного гиста (тот же, что у publish_nodes.py)
 //   GH_USER            — владелец гиста (для raw-ссылок), напр. spxload
 //   MASTER_FILE        — имя файла-эталона в гисте (lastdep-nodes.txt)
@@ -125,11 +125,17 @@ async function handleConfig(url, env) {
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
 
-  // подмена ссылки на узлы (персональный список) в [Remote Proxy]
+  // 1) подмена ссылки на узлы (персональный список) в [Remote Proxy]
   conf = conf.replace(/^Lastdep = .*$/m,
     'Lastdep = ' + rawNodesUrl(env, key) + ',udp=true,enabled=true');
-  // впечатать ключ устройства в аргумент спидтест-скрипта
-  conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key);
+  // 2) bare-имена скриптов RouteHub -> полные raw-URL (тот же репо, что CONFIG_URL)
+  const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
+  conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
+  // 3) на время Этапа D включить строку спидтеста (в базовом конфиге enabled=false).
+  //    На D.9 enabled=true пропишется в сам routehub.conf, этот форс уберём.
+  conf = conf.replace(/(tag=RH-Speed[^\n]*?)enabled=false/, '$1enabled=true');
+  // 4) ключ устройства + адрес воркера -> аргумент спидтест-скрипта ("<key>|<origin>")
+  conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin);
 
   return new Response(conf, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
