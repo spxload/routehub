@@ -51,6 +51,14 @@ jobs:
           VERIFY_AI: ${{ vars.VERIFY_AI || '1' }}
         run: python routehub-server.py
 
+      - name: Publish nodes to Gist
+        env:
+          SUBSCRIPTION_URL: ${{ secrets.SUBSCRIPTION_URL }}
+          SUB_HWID: ${{ secrets.SUB_HWID }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+        run: python publish_nodes.py
+
       - name: Commit results
         run: |
           git config user.name "github-actions[bot]"
