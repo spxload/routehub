@@ -10,16 +10,22 @@
 #  Запускается в GitHub Actions отдельным шагом. Секреты — через env:
 #    SUBSCRIPTION_URL, SUB_HWID, GIST_TOKEN (scope gist), GIST_ID.
 #
-#  В Gist пишется ПОЛНЫЙ список узлов (имена/теги сохраняются, чтобы
-#  фильтры [VPN]/[Игры]/[Обход] в Loon работали). Мёртвые узлы НЕ
-#  убираются — их отсекает url-test в Loon (и это защита от whitelist
-#  РКН: узел жив, просто маршрут whitelist). Формат — base64 списка
-#  vless-ссылок (стандартная подписка V2Ray, Loon читает напрямую).
-#  UUID узлов = ключи доступа: поэтому Gist СЕКРЕТНЫЙ, не публичный.
+#  ВАЖНО — что и как публикуем:
+#   * SKIP_GRPC: Loon НЕ поддерживает VLESS поверх gRPC (док. Loon:
+#     VLESS = ws/http/vision/reality, grpc нет). Такие узлы Loon молча
+#     не импортирует -> они «фантомы» (в подписке есть, в Loon нет).
+#     Поэтому grpc-узлы выкидываем, чтобы счётчик совпадал с Loon.
+#     Если в новой сборке Loon появится поддержка grpc — поставить False.
+#   * Сортировка по ИМЕНИ: имена начинаются с флага страны, поэтому
+#     сортировка строкой группирует узлы по стране визуально (и игровые
+#     узлы попадают в свою страну, а не валятся в самый низ списка).
+#   * Имена/теги сохраняются — фильтры [VPN]/[Игры]/[Обход] работают.
+#   * Формат — base64 списка vless-ссылок (стандартная подписка V2Ray,
+#     Loon читает напрямую). UUID = ключи доступа -> Gist СЕКРЕТНЫЙ.
 # =====================================================================
 
 import os, sys, base64
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 try:
     import requests
@@ -27,6 +33,7 @@ except ImportError:
     print("ОШИБКА: нужен requests"); sys.exit(1)
 
 NODE_PREFIXES = ('vless://', 'vmess://', 'trojan://', 'ss://')
+SKIP_GRPC = True   # Loon не поддерживает VLESS+gRPC -> не публикуем такие узлы
 
 
 def fetch_subscription(url, hwid):
@@ -54,6 +61,10 @@ def fetch_subscription(url, hwid):
     return r.text
 
 
+def node_name(uri):
+    return unquote(uri.split('#', 1)[1]) if '#' in uri else ''
+
+
 def main():
     url = os.environ.get('SUBSCRIPTION_URL', '').strip()
     hwid = os.environ.get('SUB_HWID', '').strip()
@@ -66,11 +77,16 @@ def main():
         print('GIST_TOKEN/GIST_ID не заданы — публикация пропущена.'); return
 
     text = fetch_subscription(url, hwid)
-    lines = [l.strip() for l in text.splitlines()
-             if l.strip().startswith(NODE_PREFIXES)]
-    if not lines:
+    all_lines = [l.strip() for l in text.splitlines()
+                 if l.strip().startswith(NODE_PREFIXES)]
+    if not all_lines:
         # защита: не затираем рабочий Gist пустотой при сбое выдачи
         print('Узлов в подписке не найдено — Gist НЕ перезаписываю.'); sys.exit(1)
+
+    grpc_n = sum(1 for l in all_lines if 'type=grpc' in l)
+    lines = [l for l in all_lines if not (SKIP_GRPC and 'type=grpc' in l)]
+    # сортировка по имени -> группировка по флагу/стране, игровые не в самом низу
+    lines.sort(key=node_name)
 
     sub = '\n'.join(lines)
     content_b64 = base64.b64encode(sub.encode('utf-8')).decode('ascii')
@@ -83,7 +99,8 @@ def main():
                  'User-Agent': 'routehub-publish'},
         json=payload, timeout=30)
     if r.status_code == 200:
-        print(f'OK: опубликовано узлов {len(lines)} в Gist {gist_id}.')
+        print(f'OK: опубликовано узлов {len(lines)} '
+              f'(всего в подписке {len(all_lines)}, пропущено grpc {grpc_n}), Gist {gist_id}.')
     else:
         print(f'ОШИБКА Gist: HTTP {r.status_code} {r.text[:200]}'); sys.exit(1)
 
