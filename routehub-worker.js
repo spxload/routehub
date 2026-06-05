@@ -9,16 +9,13 @@
 //   - эталон узлов  : MASTER_FILE (lastdep-nodes.txt, base64 подписки)
 //   - узлы по ключу : nodes-kN.txt (base64; создаёт/пересобирает Worker)
 //   - реестр        : devices.json (free/bound/conflict + nonce)
+//   - диагностика   : debug-kN.json (ВРЕМЕННО на Этапе D)
 //
 // ВАЖНО: содержимое подписки — base64 от «\n»-склеенных vless-ссылок
-//   (так пишет publish_nodes.py). И эталон, и nodes-kN — base64, чтобы
-//   Loon декодировал их одинаково.
-//   Имена сопоставляются по НОРМАЛИЗОВАННОМУ виду (схлопнутые пробелы),
-//   т.к. Loon нормализует пробелы в именах узлов при импорте.
+//   (так пишет publish_nodes.py). Имена сопоставляются по нормализованному
+//   виду (схлопнутые пробелы), т.к. Loon нормализует пробелы в именах.
 //
-// env (Cloudflare -> Worker -> Settings -> Variables and Secrets):
-//   GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
-//
+// env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // Токен GitHub существует только здесь. На телефоне — keyed-URL + nonce.
 // =============================================================
 
@@ -118,8 +115,6 @@ async function handleConfig(url, env) {
   const reg = ensureRegistry(files);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
 
-  // гарантируем, что nodes-kN.txt существует (иначе ссылка в конфиге мертва).
-  // копия эталона — уже base64, Loon декодирует.
   const nodesFile = 'nodes-' + key + '.txt';
   const patch = {};
   if (!fileContent(files, nodesFile)) {
@@ -134,21 +129,18 @@ async function handleConfig(url, env) {
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
 
-  // 1) подмена ссылки на узлы (персональный список) в [Remote Proxy]
+  // 1) персональный список узлов в [Remote Proxy]
   conf = conf.replace(/^Lastdep = .*$/m,
     'Lastdep = ' + rawNodesUrl(env, key) + ',udp=true,enabled=true');
-  // 2) bare-имена скриптов RouteHub -> полные raw-URL (тот же репо, что CONFIG_URL)
+  // 2) bare-имена скриптов RouteHub -> полные raw-URL
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
-  // 3) на время Этапа D включить строку спидтеста (в базовом конфиге enabled=false).
-  //    На D.9 enabled=true пропишется в сам routehub.conf, этот форс уберём.
+  // 3) на время Этапа D включить строку спидтеста (база: enabled=false)
   conf = conf.replace(/(tag=RH-Speed[^\n]*?)enabled=false/, '$1enabled=true');
-  // 4) ключ устройства + адрес воркера -> аргумент спидтест-скрипта ("<key>|<origin>")
+  // 4) ключ + адрес воркера -> аргумент спидтеста ("<key>|<origin>")
   conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin);
 
-  return new Response(conf, {
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-  });
+  return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 
 // --- POST /speed ---
@@ -182,7 +174,7 @@ async function handleSpeed(req, env) {
     return jsonResp({ error: 'key in conflict' }, 409);
   }
 
-  // карта измеренной скорости по НОРМАЛИЗОВАННОМУ базовому имени
+  // карта измеренной скорости по нормализованному базовому имени
   const sp = new Map();
   for (const s of speeds) {
     if (!s || !s.name) continue;
@@ -196,28 +188,39 @@ async function handleSpeed(req, env) {
   const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
 
-  const tested = [], untested = [], bypass = [];
+  const tested = [], untested = [], bypass = [], masterKeys = [];
   for (const line of master) {
     const name = decodeName(fragOf(line));
     const tag = tagOf(name);
     if (tag === 'bypass') { bypass.push(line); continue; }
-    const m = sp.get(matchKey(name));
+    const k = matchKey(name);
+    if (tag === 'vpn' || tag === 'game') masterKeys.push(k);
+    const m = sp.get(k);
     if (m && (tag === 'vpn' || tag === 'game')) {
       const metric = m.down + '\u2193 ' + m.rtt + 'ms';          // "45↓ 38ms"
-      const newName = norm(stripMetric(name)) + METRIC_SEP + metric; // чистое имя + метрика
+      const newName = norm(stripMetric(name)) + METRIC_SEP + metric;
       tested.push({ line: withFrag(line, encodeURIComponent(newName)), down: m.down, rtt: m.rtt });
     } else {
-      untested.push(line); // непротестированные — без метрики, в исходном порядке
+      untested.push(line);
     }
   }
-  // быстрейшие первыми: down по убыванию, при равенстве — rtt по возрастанию
   tested.sort(function (a, b) { return (b.down - a.down) || (a.rtt - b.rtt); });
 
   const out = tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
 
-  // nodes-kN тоже base64 (Loon декодирует так же, как эталон)
+  // ВРЕМЕННАЯ диагностика (Этап D): что прислал телефон и сколько совпало
+  const sentKeys = Array.from(sp.keys());
+  const unmatched = sentKeys.filter(function (x) { return masterKeys.indexOf(x) < 0; }).slice(0, 12);
+  const dbg = {
+    ts: now, sent: sentKeys.length, master_vpn_game: masterKeys.length, tested: tested.length,
+    sample_sent: sentKeys.slice(0, 6),
+    sample_master: masterKeys.slice(0, 6),
+    unmatched_sent: unmatched,
+  };
+
   await gistPatch(env, {
     ['nodes-' + key + '.txt']: b64encode(out),
+    ['debug-' + key + '.json']: JSON.stringify(dbg, null, 2),
     'devices.json': JSON.stringify(reg, null, 2),
   });
 
