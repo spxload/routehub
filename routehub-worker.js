@@ -1,18 +1,21 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.4.9 (2026-06-05)
+// VERSION: worker v0.4.11 (2026-06-05)
 //
 // GET  /config?key=kN  -> персональный routehub.conf (узлы = nodes-kN.txt)
 // POST /speed          -> приём {key,nonce,wifi[],cell[]}, пересборка nodes-kN
 //
-// Имя узла получает ОБЕ метки: "база · 📶<wifi>↓ 📱<cell>↓" (что измерено).
-// Сортировка по Wi-Fi скорости (домашняя сеть — основная); правильный узел
-//   под текущую сеть выбирает скрипт-селектор по локальному кэшу (D.5).
+// Элемент wifi/cell: {name,down,rtt} (хороший) ИЛИ {name,dead:true} (нерабочий).
+// Имя: "база · 📶<wifi>↓ 📱<cell>↓"; мёртвая сеть -> 📶⛔/📱⛔ вместо скорости.
+// Сортировка по Wi-Fi скорости (мёртвые/без метрики — вниз).
 // Хранилище: один секретный gist (GIST_ID). Имена матчатся по norm().
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
 const METRIC_SEP = ' \u00B7 ';
+const DEAD = '\u26D4';            // ⛔
+const ICON_WIFI = '\uD83D\uDCF6'; // 📶
+const ICON_CELL = '\uD83D\uDCF1'; // 📱
 const GIST_API = 'https://api.github.com/gists/';
 const KEY_RE = /^k\d+$/;
 
@@ -106,7 +109,8 @@ function toMap(arr) {
   if (Array.isArray(arr)) {
     for (const s of arr) {
       if (!s || !s.name) continue;
-      m.set(matchKey(String(s.name)), { down: Math.max(0, Math.round(+s.down || 0)), rtt: Math.max(0, Math.round(+s.rtt || 0)) });
+      if (s.dead) m.set(matchKey(String(s.name)), { dead: true });
+      else m.set(matchKey(String(s.name)), { down: Math.max(0, Math.round(+s.down || 0)), rtt: Math.max(0, Math.round(+s.rtt || 0)) });
     }
   }
   return m;
@@ -147,6 +151,8 @@ async function handleSpeed(req, env) {
   const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
 
+  function part(icon, m) { return m.dead ? (icon + DEAD) : (icon + m.down + '\u2193'); }
+
   const tested = [], untested = [], bypass = [], masterKeys = [];
   for (const line of master) {
     const name = decodeName(fragOf(line));
@@ -157,11 +163,11 @@ async function handleSpeed(req, env) {
     const w = wifi.get(k), c = cell.get(k);
     if ((w || c) && (tag === 'vpn' || tag === 'game')) {
       const parts = [];
-      if (w) parts.push('\uD83D\uDCF6' + w.down + '\u2193');   // 📶 wifi
-      if (c) parts.push('\uD83D\uDCF1' + c.down + '\u2193');   // 📱 cell
+      if (w) parts.push(part(ICON_WIFI, w));
+      if (c) parts.push(part(ICON_CELL, c));
       const newName = norm(stripMetric(name)) + METRIC_SEP + parts.join(' ');
-      const d = w ? w.down : (c ? c.down : 0);
-      const rt = w ? w.rtt : (c ? c.rtt : 99999);
+      const d = (w && !w.dead) ? w.down : ((c && !c.dead) ? c.down : 0);
+      const rt = (w && !w.dead) ? w.rtt : ((c && !c.dead) ? c.rtt : 99999);
       tested.push({ line: withFrag(line, encodeURIComponent(newName)), down: d, rtt: rt });
     } else {
       untested.push(line);
