@@ -1,21 +1,21 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.4.6 (2026-06-05)';
+var VERSION = 'speedtest v0.4.7 (2026-06-05)';
 //
-// Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>".
+// Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>|<opts>".
+//   opts содержит 'cellall', если у профиля в devices.json cell_unlim=true.
 // Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА).
-// Замер ступенчатый: 4 МБ; если быстро (<1.5с) — догон 12 МБ (точнее на
-//   быстрых каналах, разгон TCP амортизируется). Отклик — проба bytes=1.
-// Wi-Fi: меряем ВСЕ узлы (безлимит); сотовая: 5 (дорогой трафик).
+// Замер ступенчатый: 4 МБ; если быстро (<1.5с) — догон 12 МБ.
+// Wi-Fi: меряем ВСЕ узлы; сотовая: 5, либо ВСЕ при cell_unlim.
 // Обходные [Обход] не меряются. Кэш чистится от мусорных ключей.
 // =============================================================
 
-var BATCH_WIFI = 80;
+var BATCH_ALL = 80;               // фактически "все" (узлов ~64)
 var BATCH_CELL = 5;
 var CACHE_MS = 24 * 3600 * 1000;
-var DOWN_BYTES = 4000000;         // базовая выборка
-var DOWN_BIG = 12000000;          // догон для быстрых узлов
-var FAST_SEC = 1.5;               // порог "быстро" -> делаем догон
+var DOWN_BYTES = 4000000;
+var DOWN_BIG = 12000000;
+var FAST_SEC = 1.5;
 var RTT_BYTES = 1;
 var RTT_TIMEOUT = 10000;
 var DOWN_TIMEOUT = 25000;
@@ -36,7 +36,6 @@ function nameOf(el) {
   if (el && typeof el === 'object') return el.name || el.policy || el.policyName || el.title || el.tag || '';
   return '';
 }
-// валидное имя: содержит тег в скобках и не короче 5 символов
 function looksLikeNode(n) { return typeof n === 'string' && n.length >= 5 && n.indexOf('[') >= 0; }
 
 function main() {
@@ -47,8 +46,9 @@ function main() {
 
   var arg = (typeof $argument === 'string') ? $argument : '';
   var p = arg.split('|');
-  var KEY = p[0] || '', ORIGIN = p[1] || '';
+  var KEY = p[0] || '', ORIGIN = p[1] || '', OPTS = p[2] || '';
   if (!/^k\d+$/.test(KEY) || !/^https?:\/\//.test(ORIGIN)) { console.log('RH-Speed: битый argument [' + arg + ']'); finish(); return; }
+  var cellAll = OPTS.indexOf('cellall') >= 0;
 
   var NONCE = $persistentStore.read(K_NONCE);
   if (!NONCE) { NONCE = Date.now().toString(36) + Math.random().toString(36).slice(2, 10); $persistentStore.write(NONCE, K_NONCE); }
@@ -56,8 +56,8 @@ function main() {
   var ssid = '';
   try { var cfg = JSON.parse($config.getConfig()); ssid = cfg && cfg.ssid ? String(cfg.ssid) : ''; } catch (e) {}
   var net = ssid ? 'wifi' : 'cell';
-  var BATCH = (net === 'wifi') ? BATCH_WIFI : BATCH_CELL;
-  console.log('RH-Speed: ssid=[' + ssid + '] net=' + net + ' batch=' + BATCH);
+  var BATCH = (net === 'wifi' || cellAll) ? BATCH_ALL : BATCH_CELL;
+  console.log('RH-Speed: ssid=[' + ssid + '] net=' + net + ' cellAll=' + cellAll + ' batch=' + BATCH);
   var RKEY = (net === 'wifi') ? 'rh_speed_wifi' : 'rh_speed_cell';
   var results = readJSON(RKEY, {});
 
@@ -81,7 +81,6 @@ function main() {
     });
   }
 
-  // одна закачка bytes -> callback(mbps|null, sec)
   function rateOf(name, bytes, cb) {
     var s0 = Date.now();
     $httpClient.get({ url: DOWN_HOST + '?bytes=' + bytes + '&t=' + Date.now(), node: name, timeout: DOWN_TIMEOUT },
