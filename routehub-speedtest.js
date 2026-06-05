@@ -1,17 +1,20 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.4.3 (2026-06-05)';   // <-- видно в логе: обновился ли скрипт
+var VERSION = 'speedtest v0.4.4 (2026-06-05)';   // <-- видно в логе: обновился ли скрипт
 // ВЕРСИЯ С ДИАГНОСТИКОЙ (Этап D).
 //
 // Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>".
 // Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА, парсим!) ->
-//   меряет батч (отклик + закачка ЧЕРЕЗ узел) -> копит локально ->
+//   меряет батч (отклик bytes=1 + закачка ЧЕРЕЗ узел) -> копит локально ->
 //   POST {key,nonce,speeds} на Worker. Обходные [Обход] не меряются.
+// ВАЖНО: проба bytes=0 даёт пустое тело -> Loon -> "Empty response data";
+//   поэтому отклик меряем на bytes=1 (непустое тело).
 // =============================================================
 
 var BATCH = 6;
 var CACHE_MS = 24 * 3600 * 1000;
 var DOWN_BYTES = 4000000;
+var RTT_BYTES = 1;
 var RTT_TIMEOUT = 10000;          // мс
 var DOWN_TIMEOUT = 20000;         // мс
 var LOCK_MS = 10 * 60 * 1000;
@@ -31,7 +34,6 @@ function writeJSON(key, obj) {
 function finish() { try { $persistentStore.write('', K_LOCK); } catch (e) {} $done(); }
 function baseName(n) { var i = n.indexOf(METRIC_SEP); return (i >= 0 ? n.slice(0, i) : n).trim(); }
 
-// имя узла из элемента подполитики (строка или объект с разными полями)
 function nameOf(el) {
   if (typeof el === 'string') return el;
   if (el && typeof el === 'object') return el.name || el.policy || el.policyName || el.title || el.tag || '';
@@ -79,7 +81,8 @@ function main() {
 
   function measureNode(name, cb) {
     var t0 = Date.now();
-    $httpClient.get({ url: DOWN_HOST + '?bytes=0&t=' + Date.now(), node: name, timeout: RTT_TIMEOUT },
+    // отклик: bytes=1 (непустое тело, иначе "Empty response data")
+    $httpClient.get({ url: DOWN_HOST + '?bytes=' + RTT_BYTES + '&t=' + Date.now(), node: name, timeout: RTT_TIMEOUT },
       function (e) {
         if (e) { console.log('  x RTT [' + name + ']: ' + e); cb(null); return; }
         var rtt = Date.now() - t0, s0 = Date.now();
@@ -107,7 +110,6 @@ function main() {
   }
 
   $config.getSubPolicies(POOL_GROUP, function (subs) {
-    // getSubPolicies отдаёт JSON-СТРОКУ -> парсим
     var arr = subs;
     if (typeof arr === 'string') { try { arr = JSON.parse(arr); } catch (e) { console.log('RH-Speed: parse subs err ' + e); arr = []; } }
     if (!Array.isArray(arr) || !arr.length) { console.log('RH-Speed: пул пуст/не массив'); finish(); return; }
