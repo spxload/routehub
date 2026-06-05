@@ -1,13 +1,14 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.4.8 (2026-06-05)';
+var VERSION = 'speedtest v0.4.9 (2026-06-05)';
 //
 // Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>|<opts>".
 // Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА).
-// Отклик: min из RTT_SAMPLES проб bytes=1 (убирает холодные всплески;
-//   это НЕ чистый пинг — включает TCP+TLS, поэтому выше реального пинга).
+// Отклик: min из RTT_SAMPLES проб bytes=1 (НЕ чистый пинг — включает TCP+TLS).
 // Скорость: ступенчато 4 МБ -> 12 МБ на быстрых.
 // Wi-Fi: все узлы; сотовая: 5, либо все при cell_unlim (devices.json).
+// ОТПРАВКА: шлём ОБА кэша (wifi+cell) -> Worker впишет обе метки в имя.
+//   POST только после реального замера (нет переотправки «всё свежее»).
 // =============================================================
 
 var BATCH_ALL = 80;
@@ -17,7 +18,7 @@ var DOWN_BYTES = 4000000;
 var DOWN_BIG = 12000000;
 var FAST_SEC = 1.5;
 var RTT_BYTES = 1;
-var RTT_SAMPLES = 3;              // проб отклика на узел -> берём минимум
+var RTT_SAMPLES = 3;
 var RTT_TIMEOUT = 10000;
 var DOWN_TIMEOUT = 25000;
 var LOCK_MS = 10 * 60 * 1000;
@@ -38,6 +39,12 @@ function nameOf(el) {
   return '';
 }
 function looksLikeNode(n) { return typeof n === 'string' && n.length >= 5 && n.indexOf('[') >= 0; }
+
+function buildArr(cacheKey) {
+  var c = readJSON(cacheKey, {}); var out = [];
+  for (var nm in c) { if (c.hasOwnProperty(nm) && looksLikeNode(nm)) out.push({ name: nm, down: c[nm].down, rtt: c[nm].rtt }); }
+  return out;
+}
 
 function main() {
   console.log('RH-Speed ' + VERSION);
@@ -66,23 +73,22 @@ function main() {
   for (var bad in results) { if (results.hasOwnProperty(bad) && !looksLikeNode(bad)) { delete results[bad]; removed++; } }
   if (removed) { writeJSON(RKEY, results); console.log('RH-Speed: кэш почищен, удалено ' + removed); }
 
+  // отправка ОБОИХ кэшей (wifi+cell) — обе метки в имя
   function send() {
-    var speeds = [];
-    for (var nm in results) { if (results.hasOwnProperty(nm)) speeds.push({ name: nm, down: results[nm].down, rtt: results[nm].rtt }); }
-    if (!speeds.length) { console.log('RH-Speed: нет данных для отправки'); finish(); return; }
+    var wifi = buildArr('rh_speed_wifi'), cell = buildArr('rh_speed_cell');
+    if (!wifi.length && !cell.length) { console.log('RH-Speed: нет данных'); finish(); return; }
     $httpClient.post({
       url: ORIGIN + '/speed',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: KEY, nonce: NONCE, speeds: speeds }),
+      body: JSON.stringify({ key: KEY, nonce: NONCE, wifi: wifi, cell: cell }),
       timeout: 15000
     }, function (e, r) {
       if (e) console.log('RH-Speed: POST ошибка ' + e);
-      else console.log('RH-Speed: отправлено ' + speeds.length + ' (' + net + '), статус ' + (r && r.status));
+      else console.log('RH-Speed: отправлено wifi=' + wifi.length + ' cell=' + cell.length + ', статус ' + (r && r.status));
       finish();
     });
   }
 
-  // min из RTT_SAMPLES проб bytes=1
   function rttProbe(name, n, best, cb) {
     if (n <= 0) { cb(best); return; }
     var t0 = Date.now();
@@ -146,7 +152,7 @@ function main() {
       if (!r || (Date.now() - (r.ts || 0)) > CACHE_MS) due.push(nm);
       if (due.length >= BATCH) break;
     }
-    if (!due.length) { console.log('RH-Speed: всё свежее, только отправка'); send(); return; }
+    if (!due.length) { console.log('RH-Speed: всё свежее, замер не нужен'); finish(); return; }
     console.log('RH-Speed: меряю ' + due.length + ' узлов (' + net + ')');
     chain(due, 0);
   });
