@@ -1,5 +1,6 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
+// VERSION: worker v0.4.3 (2026-06-05)
 //
 // Эндпоинты:
 //   GET  /config?key=kN  -> персональный routehub.conf (узлы = nodes-kN.txt)
@@ -7,19 +8,14 @@
 //
 // Хранилище: ОДИН секретный gist (GIST_ID):
 //   - эталон узлов  : MASTER_FILE (lastdep-nodes.txt, base64 подписки)
-//   - узлы по ключу : nodes-kN.txt (base64; создаёт/пересобирает Worker)
-//   - реестр        : devices.json (free/bound/conflict + nonce)
-//   - диагностика   : debug-kN.json (ВРЕМЕННО на Этапе D)
+//   - узлы по ключу : nodes-kN.txt (base64)
+//   - реестр        : devices.json ; диагностика: debug-kN.json (ВРЕМЕННО)
 //
-// ВАЖНО: содержимое подписки — base64 от «\n»-склеенных vless-ссылок
-//   (так пишет publish_nodes.py). Имена сопоставляются по нормализованному
-//   виду (схлопнутые пробелы), т.к. Loon нормализует пробелы в именах.
-//
+// Имена сопоставляются по нормализованному виду (схлопнутые пробелы).
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
-// Токен GitHub существует только здесь. На телефоне — keyed-URL + nonce.
 // =============================================================
 
-const METRIC_SEP = ' \u00B7 ';            // " · " — разделитель имя/метрика
+const METRIC_SEP = ' \u00B7 ';
 const GIST_API = 'https://api.github.com/gists/';
 const KEY_RE = /^k\d+$/;
 
@@ -30,12 +26,10 @@ function ghHeaders(token) {
     'Accept': 'application/vnd.github+json',
   };
 }
-
 function rawNodesUrl(env, key) {
   return 'https://gist.githubusercontent.com/' + env.GH_USER + '/' + env.GIST_ID +
          '/raw/nodes-' + key + '.txt';
 }
-
 function jsonResp(obj, status) {
   return new Response(JSON.stringify(obj), {
     status: status || 200,
@@ -64,26 +58,15 @@ function fileContent(files, name) {
   return files[name] && typeof files[name].content === 'string' ? files[name].content : null;
 }
 
-// --- base64 (содержимое ASCII: vless-ссылки с percent-encoded именами) ---
+// --- base64 ---
 function b64decode(s) { try { return atob((s || '').replace(/\s+/g, '')); } catch (e) { return ''; } }
 function b64encode(s) { return btoa(s); }
 
 // --- разбор имён узлов ---
-function fragOf(line) {
-  const i = line.indexOf('#');
-  return i >= 0 ? line.slice(i + 1) : '';
-}
-function withFrag(line, frag) {
-  const i = line.indexOf('#');
-  const head = i >= 0 ? line.slice(0, i) : line;
-  return head + '#' + frag;
-}
+function fragOf(line) { const i = line.indexOf('#'); return i >= 0 ? line.slice(i + 1) : ''; }
+function withFrag(line, frag) { const i = line.indexOf('#'); const head = i >= 0 ? line.slice(0, i) : line; return head + '#' + frag; }
 function decodeName(frag) { try { return decodeURIComponent(frag); } catch (e) { return frag; } }
-function stripMetric(name) {
-  const i = name.indexOf(METRIC_SEP);
-  return (i >= 0 ? name.slice(0, i) : name);
-}
-// Loon нормализует пробелы в именах -> сопоставляем по схлопнутому виду
+function stripMetric(name) { const i = name.indexOf(METRIC_SEP); return (i >= 0 ? name.slice(0, i) : name); }
 function norm(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 function matchKey(name) { return norm(stripMetric(name)); }
 function tagOf(name) {
@@ -96,7 +79,7 @@ function tagOf(name) {
 // --- реестр ---
 function ensureRegistry(files) {
   const raw = fileContent(files, 'devices.json');
-  if (raw) { try { return JSON.parse(raw); } catch (e) { /* битый — пересоздаём */ } }
+  if (raw) { try { return JSON.parse(raw); } catch (e) {} }
   return { k1: { status: 'free' } };
 }
 function ensureFreeSpare(reg) {
@@ -117,12 +100,8 @@ async function handleConfig(url, env) {
 
   const nodesFile = 'nodes-' + key + '.txt';
   const patch = {};
-  if (!fileContent(files, nodesFile)) {
-    patch[nodesFile] = fileContent(files, env.MASTER_FILE) || '';
-  }
-  if (!fileContent(files, 'devices.json')) {
-    patch['devices.json'] = JSON.stringify(reg, null, 2);
-  }
+  if (!fileContent(files, nodesFile)) patch[nodesFile] = fileContent(files, env.MASTER_FILE) || '';
+  if (!fileContent(files, 'devices.json')) patch['devices.json'] = JSON.stringify(reg, null, 2);
   if (Object.keys(patch).length) await gistPatch(env, patch);
 
   const cr = await fetch(env.CONFIG_URL, { headers: { 'User-Agent': 'routehub-worker' } });
@@ -130,11 +109,12 @@ async function handleConfig(url, env) {
   let conf = await cr.text();
 
   // 1) персональный список узлов в [Remote Proxy]
-  conf = conf.replace(/^Lastdep = .*$/m,
-    'Lastdep = ' + rawNodesUrl(env, key) + ',udp=true,enabled=true');
-  // 2) bare-имена скриптов RouteHub -> полные raw-URL
+  conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + rawNodesUrl(env, key) + ',udp=true,enabled=true');
+  // 2) bare-имена скриптов RouteHub -> полные raw-URL + сбиватель кэша (Loon кэширует скрипты)
+  //    ?v=<ts> заставляет Loon перечитать скрипт после правок. ВРЕМЕННО (Этап D).
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
-  conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
+  const cb = '?v=' + Date.now();
+  conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1' + cb);
   // 3) на время Этапа D включить строку спидтеста (база: enabled=false)
   conf = conf.replace(/(tag=RH-Speed[^\n]*?)enabled=false/, '$1enabled=true');
   // 4) ключ + адрес воркера -> аргумент спидтеста ("<key>|<origin>")
@@ -174,7 +154,6 @@ async function handleSpeed(req, env) {
     return jsonResp({ error: 'key in conflict' }, 409);
   }
 
-  // карта измеренной скорости по нормализованному базовому имени
   const sp = new Map();
   for (const s of speeds) {
     if (!s || !s.name) continue;
@@ -184,7 +163,6 @@ async function handleSpeed(req, env) {
     });
   }
 
-  // эталон в гисте — base64: декодируем в список vless-ссылок
   const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
 
@@ -197,7 +175,7 @@ async function handleSpeed(req, env) {
     if (tag === 'vpn' || tag === 'game') masterKeys.push(k);
     const m = sp.get(k);
     if (m && (tag === 'vpn' || tag === 'game')) {
-      const metric = m.down + '\u2193 ' + m.rtt + 'ms';          // "45↓ 38ms"
+      const metric = m.down + '\u2193 ' + m.rtt + 'ms';
       const newName = norm(stripMetric(name)) + METRIC_SEP + metric;
       tested.push({ line: withFrag(line, encodeURIComponent(newName)), down: m.down, rtt: m.rtt });
     } else {
@@ -208,14 +186,11 @@ async function handleSpeed(req, env) {
 
   const out = tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
 
-  // ВРЕМЕННАЯ диагностика (Этап D): что прислал телефон и сколько совпало
   const sentKeys = Array.from(sp.keys());
   const unmatched = sentKeys.filter(function (x) { return masterKeys.indexOf(x) < 0; }).slice(0, 12);
   const dbg = {
     ts: now, sent: sentKeys.length, master_vpn_game: masterKeys.length, tested: tested.length,
-    sample_sent: sentKeys.slice(0, 6),
-    sample_master: masterKeys.slice(0, 6),
-    unmatched_sent: unmatched,
+    sample_sent: sentKeys.slice(0, 6), sample_master: masterKeys.slice(0, 6), unmatched_sent: unmatched,
   };
 
   await gistPatch(env, {
