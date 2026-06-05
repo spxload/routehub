@@ -1,44 +1,43 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.4.5 (2026-06-05)';   // видно в логе: обновился ли скрипт
+var VERSION = 'speedtest v0.4.6 (2026-06-05)';
 //
 // Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>".
-// Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА, парсим!) ->
-//   меряет батч (отклик bytes=1 + закачка ЧЕРЕЗ узел) -> копит локально ->
-//   POST {key,nonce,speeds} на Worker. Обходные [Обход] не меряются.
-// Кэш чистится от мусорных ключей (без тега '[') — наследие ранних багов.
+// Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА).
+// Замер ступенчатый: 4 МБ; если быстро (<1.5с) — догон 12 МБ (точнее на
+//   быстрых каналах, разгон TCP амортизируется). Отклик — проба bytes=1.
+// Wi-Fi: меряем ВСЕ узлы (безлимит); сотовая: 5 (дорогой трафик).
+// Обходные [Обход] не меряются. Кэш чистится от мусорных ключей.
 // =============================================================
 
-var BATCH = 10;
+var BATCH_WIFI = 80;
+var BATCH_CELL = 5;
 var CACHE_MS = 24 * 3600 * 1000;
-var DOWN_BYTES = 4000000;
+var DOWN_BYTES = 4000000;         // базовая выборка
+var DOWN_BIG = 12000000;          // догон для быстрых узлов
+var FAST_SEC = 1.5;               // порог "быстро" -> делаем догон
 var RTT_BYTES = 1;
-var RTT_TIMEOUT = 10000;          // мс
-var DOWN_TIMEOUT = 20000;         // мс
+var RTT_TIMEOUT = 10000;
+var DOWN_TIMEOUT = 25000;
 var LOCK_MS = 10 * 60 * 1000;
-var POOL_GROUP = 'RH-\u0410\u0412\u0422\u041E';   // RH-АВТО
+var POOL_GROUP = 'RH-\u0410\u0412\u0422\u041E';
 var DOWN_HOST = 'https://speed.cloudflare.com/__down';
 var METRIC_SEP = ' \u00B7 ';
 
 var K_NONCE = 'rh_nonce';
 var K_LOCK = 'rh_speed_lock';
 
-function readJSON(key, def) {
-  try { var s = $persistentStore.read(key); return s ? JSON.parse(s) : def; } catch (e) { return def; }
-}
-function writeJSON(key, obj) {
-  try { $persistentStore.write(JSON.stringify(obj), key); return true; } catch (e) { return false; }
-}
+function readJSON(key, def) { try { var s = $persistentStore.read(key); return s ? JSON.parse(s) : def; } catch (e) { return def; } }
+function writeJSON(key, obj) { try { $persistentStore.write(JSON.stringify(obj), key); return true; } catch (e) { return false; } }
 function finish() { try { $persistentStore.write('', K_LOCK); } catch (e) {} $done(); }
 function baseName(n) { var i = n.indexOf(METRIC_SEP); return (i >= 0 ? n.slice(0, i) : n).trim(); }
-
 function nameOf(el) {
   if (typeof el === 'string') return el;
   if (el && typeof el === 'object') return el.name || el.policy || el.policyName || el.title || el.tag || '';
   return '';
 }
-// валидное имя узла нашей подписки содержит тег в скобках ([VPN]/[Игры]/[Обход])
-function looksLikeNode(n) { return typeof n === 'string' && n.indexOf('[') >= 0; }
+// валидное имя: содержит тег в скобках и не короче 5 символов
+function looksLikeNode(n) { return typeof n === 'string' && n.length >= 5 && n.indexOf('[') >= 0; }
 
 function main() {
   console.log('RH-Speed ' + VERSION);
@@ -49,9 +48,7 @@ function main() {
   var arg = (typeof $argument === 'string') ? $argument : '';
   var p = arg.split('|');
   var KEY = p[0] || '', ORIGIN = p[1] || '';
-  if (!/^k\d+$/.test(KEY) || !/^https?:\/\//.test(ORIGIN)) {
-    console.log('RH-Speed: битый argument [' + arg + ']'); finish(); return;
-  }
+  if (!/^k\d+$/.test(KEY) || !/^https?:\/\//.test(ORIGIN)) { console.log('RH-Speed: битый argument [' + arg + ']'); finish(); return; }
 
   var NONCE = $persistentStore.read(K_NONCE);
   if (!NONCE) { NONCE = Date.now().toString(36) + Math.random().toString(36).slice(2, 10); $persistentStore.write(NONCE, K_NONCE); }
@@ -59,11 +56,11 @@ function main() {
   var ssid = '';
   try { var cfg = JSON.parse($config.getConfig()); ssid = cfg && cfg.ssid ? String(cfg.ssid) : ''; } catch (e) {}
   var net = ssid ? 'wifi' : 'cell';
-  console.log('RH-Speed: ssid=[' + ssid + '] net=' + net);
+  var BATCH = (net === 'wifi') ? BATCH_WIFI : BATCH_CELL;
+  console.log('RH-Speed: ssid=[' + ssid + '] net=' + net + ' batch=' + BATCH);
   var RKEY = (net === 'wifi') ? 'rh_speed_wifi' : 'rh_speed_cell';
   var results = readJSON(RKEY, {});
 
-  // чистка мусорных ключей (наследие ранних багов: одиночные символы)
   var removed = 0;
   for (var bad in results) { if (results.hasOwnProperty(bad) && !looksLikeNode(bad)) { delete results[bad]; removed++; } }
   if (removed) { writeJSON(RKEY, results); console.log('RH-Speed: кэш почищен, удалено ' + removed); }
@@ -84,23 +81,36 @@ function main() {
     });
   }
 
+  // одна закачка bytes -> callback(mbps|null, sec)
+  function rateOf(name, bytes, cb) {
+    var s0 = Date.now();
+    $httpClient.get({ url: DOWN_HOST + '?bytes=' + bytes + '&t=' + Date.now(), node: name, timeout: DOWN_TIMEOUT },
+      function (e, r) {
+        if (e || !r || r.status !== 200) { cb(null, 0); return; }
+        var sec = (Date.now() - s0) / 1000;
+        cb(sec > 0 ? Math.round((bytes * 8 / 1e6) / sec) : 0, sec);
+      });
+  }
+
   function measureNode(name, cb) {
     var t0 = Date.now();
     $httpClient.get({ url: DOWN_HOST + '?bytes=' + RTT_BYTES + '&t=' + Date.now(), node: name, timeout: RTT_TIMEOUT },
       function (e) {
         if (e) { console.log('  x RTT [' + name + ']: ' + e); cb(null); return; }
-        var rtt = Date.now() - t0, s0 = Date.now();
-        $httpClient.get({ url: DOWN_HOST + '?bytes=' + DOWN_BYTES + '&t=' + Date.now(), node: name, timeout: DOWN_TIMEOUT },
-          function (e2, r2) {
-            if (e2 || !r2 || r2.status !== 200) {
-              console.log('  ~ DOWN [' + name + ']: ' + (e2 || ('status ' + (r2 && r2.status))) + ' (rtt ' + rtt + ')');
-              cb({ down: 0, rtt: rtt }); return;
-            }
-            var sec = (Date.now() - s0) / 1000;
-            var down = sec > 0 ? Math.round((DOWN_BYTES * 8 / 1e6) / sec) : 0;
-            console.log('  ok [' + name + '] ' + down + ' Mbps ' + rtt + 'ms');
-            cb({ down: down, rtt: rtt });
-          });
+        var rtt = Date.now() - t0;
+        rateOf(name, DOWN_BYTES, function (mbps1, sec1) {
+          if (mbps1 === null) { console.log('  ~ DOWN [' + name + ']: fail (rtt ' + rtt + ')'); cb({ down: 0, rtt: rtt }); return; }
+          if (sec1 < FAST_SEC) {
+            rateOf(name, DOWN_BIG, function (mbps2) {
+              var down = (mbps2 === null) ? mbps1 : mbps2;
+              console.log('  ok [' + name + '] ' + down + ' Mbps ' + rtt + 'ms');
+              cb({ down: down, rtt: rtt });
+            });
+          } else {
+            console.log('  ok [' + name + '] ' + mbps1 + ' Mbps ' + rtt + 'ms');
+            cb({ down: mbps1, rtt: rtt });
+          }
+        });
       });
   }
 
