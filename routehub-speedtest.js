@@ -1,12 +1,11 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-// ВЕРСИЯ С ДИАГНОСТИКОЙ (Этап D): подробный лог ssid/пула/ошибок проб.
+// ВЕРСИЯ С ДИАГНОСТИКОЙ (Этап D).
 //
 // Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>".
-// За запуск: определяет сеть -> берёт пул [VPN]+[Игры] из RH-АВТО ->
-//   меряет батч (отклик + скорость закачки ЧЕРЕЗ узел) -> копит локально ->
-//   POST {key,nonce,speeds} на Worker.
-// Обходные [Обход] не меряются.
+// За запуск: пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-строка!) ->
+//   меряет батч (отклик + закачка ЧЕРЕЗ узел) -> копит локально ->
+//   POST {key,nonce,speeds} на Worker. Обходные [Обход] не меряются.
 // =============================================================
 
 var BATCH = 6;
@@ -31,6 +30,13 @@ function writeJSON(key, obj) {
 function finish() { try { $persistentStore.write('', K_LOCK); } catch (e) {} $done(); }
 function baseName(n) { var i = n.indexOf(METRIC_SEP); return (i >= 0 ? n.slice(0, i) : n).trim(); }
 
+// имя узла из элемента подполитики (строка или объект с разными полями)
+function nameOf(el) {
+  if (typeof el === 'string') return el;
+  if (el && typeof el === 'object') return el.name || el.policy || el.policyName || el.title || el.tag || '';
+  return '';
+}
+
 function main() {
   var lockTs = parseInt($persistentStore.read(K_LOCK) || '0', 10) || 0;
   if (lockTs && (Date.now() - lockTs) < LOCK_MS) { console.log('RH-Speed: занято, выход'); $done(); return; }
@@ -39,16 +45,15 @@ function main() {
   var arg = (typeof $argument === 'string') ? $argument : '';
   var p = arg.split('|');
   var KEY = p[0] || '', ORIGIN = p[1] || '';
-  console.log('RH-Speed: argument=[' + arg + ']');
   if (!/^k\d+$/.test(KEY) || !/^https?:\/\//.test(ORIGIN)) {
-    console.log('RH-Speed: битый argument'); finish(); return;
+    console.log('RH-Speed: битый argument [' + arg + ']'); finish(); return;
   }
 
   var NONCE = $persistentStore.read(K_NONCE);
   if (!NONCE) { NONCE = Date.now().toString(36) + Math.random().toString(36).slice(2, 10); $persistentStore.write(NONCE, K_NONCE); }
 
   var ssid = '';
-  try { var cfg = JSON.parse($config.getConfig()); ssid = cfg && cfg.ssid ? String(cfg.ssid) : ''; } catch (e) { console.log('RH-Speed: getConfig err ' + e); }
+  try { var cfg = JSON.parse($config.getConfig()); ssid = cfg && cfg.ssid ? String(cfg.ssid) : ''; } catch (e) {}
   var net = ssid ? 'wifi' : 'cell';
   console.log('RH-Speed: ssid=[' + ssid + '] net=' + net);
   var RKEY = (net === 'wifi') ? 'rh_speed_wifi' : 'rh_speed_cell';
@@ -73,13 +78,13 @@ function main() {
   function measureNode(name, cb) {
     var t0 = Date.now();
     $httpClient.get({ url: DOWN_HOST + '?bytes=0&t=' + Date.now(), node: name, timeout: RTT_TIMEOUT },
-      function (e, r) {
-        if (e) { console.log('  x RTT err [' + name + ']: ' + e); cb(null); return; }
+      function (e) {
+        if (e) { console.log('  x RTT [' + name + ']: ' + e); cb(null); return; }
         var rtt = Date.now() - t0, s0 = Date.now();
         $httpClient.get({ url: DOWN_HOST + '?bytes=' + DOWN_BYTES + '&t=' + Date.now(), node: name, timeout: DOWN_TIMEOUT },
           function (e2, r2) {
             if (e2 || !r2 || r2.status !== 200) {
-              console.log('  ~ DOWN err [' + name + ']: ' + (e2 || ('status ' + (r2 && r2.status))) + ' (rtt ' + rtt + ')');
+              console.log('  ~ DOWN [' + name + ']: ' + (e2 || ('status ' + (r2 && r2.status))) + ' (rtt ' + rtt + ')');
               cb({ down: 0, rtt: rtt }); return;
             }
             var sec = (Date.now() - s0) / 1000;
@@ -100,11 +105,16 @@ function main() {
   }
 
   $config.getSubPolicies(POOL_GROUP, function (subs) {
-    if (!subs || !subs.length) { console.log('RH-Speed: пул пуст (' + POOL_GROUP + ')'); finish(); return; }
-    console.log('RH-Speed: пул=' + subs.length + ' пример=' + JSON.stringify(subs.slice(0, 3)));
+    // getSubPolicies отдаёт JSON-СТРОКУ -> парсим
+    var arr = subs;
+    if (typeof arr === 'string') { try { arr = JSON.parse(arr); } catch (e) { console.log('RH-Speed: parse subs err ' + e); arr = []; } }
+    if (!Array.isArray(arr) || !arr.length) { console.log('RH-Speed: пул пуст/не массив'); finish(); return; }
+    console.log('RH-Speed: пул=' + arr.length + ' el0=' + JSON.stringify(arr[0]));
+
     var due = [];
-    for (var i = 0; i < subs.length; i++) {
-      var nm = subs[i];
+    for (var i = 0; i < arr.length; i++) {
+      var nm = nameOf(arr[i]);
+      if (!nm) continue;
       if (nm.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) continue; // [Обход
       var r = results[baseName(nm)];
       if (!r || (Date.now() - (r.ts || 0)) > CACHE_MS) due.push(nm);
