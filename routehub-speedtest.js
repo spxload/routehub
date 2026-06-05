@@ -1,9 +1,10 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
+var VERSION = 'speedtest v0.4.3 (2026-06-05)';   // <-- видно в логе: обновился ли скрипт
 // ВЕРСИЯ С ДИАГНОСТИКОЙ (Этап D).
 //
 // Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>".
-// За запуск: пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-строка!) ->
+// Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА, парсим!) ->
 //   меряет батч (отклик + закачка ЧЕРЕЗ узел) -> копит локально ->
 //   POST {key,nonce,speeds} на Worker. Обходные [Обход] не меряются.
 // =============================================================
@@ -38,6 +39,7 @@ function nameOf(el) {
 }
 
 function main() {
+  console.log('RH-Speed ' + VERSION);
   var lockTs = parseInt($persistentStore.read(K_LOCK) || '0', 10) || 0;
   if (lockTs && (Date.now() - lockTs) < LOCK_MS) { console.log('RH-Speed: занято, выход'); $done(); return; }
   $persistentStore.write(String(Date.now()), K_LOCK);
