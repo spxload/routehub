@@ -1,26 +1,25 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.4.11 (2026-06-05)';
+var VERSION = 'speedtest v0.4.12 (2026-06-05)';
 //
 // Тип: cron (весь день, каждые 20 мин). Аргумент: "<key>|<origin>|<opts>".
+//   opts (через запятую): cellall — сотовая мерит все; ewma — сглаживание.
 // Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА).
 // Отклик: min из RTT_SAMPLES проб bytes=1. Скорость: 4 МБ -> 12 МБ на быстрых.
-// НАДЁЖНОСТЬ:
-//   * сбой/0 НЕ кэшируется как «готово», хорошее значение не затирается;
-//   * сбойный перемеряется по RETRY_MS, пока не даст down>0;
-//   * после MAX_FAILS неудач -> «мёртв»: длинный бэкофф DEAD_MS (не долбить),
-//     на сервер уходит маркер dead -> в имени 📶⛔/📱⛔ вместо скорости;
-//   * на сервер уходят только хорошие (down>0) ИЛИ мёртвые (dead) — не «в процессе».
-// Удаление мёртвых узлов — НЕ здесь (серверная живость), телефон только метит.
-// Wi-Fi: все узлы; сотовая: 5, либо все при cell_unlim. ОТПРАВКА: оба кэша.
+// EWMA (флаг ewma): сглаживание down/rtt = a*новое + (1-a)*старое — один
+//   случайный замер не дёргает рейтинг. Без флага — последнее значение.
+// НАДЁЖНОСТЬ: 0/сбой не «готов», бэкофф RETRY_MS; после MAX_FAILS -> мёртв
+//   (бэкофф DEAD_MS, маркер ⛔); на сервер только хорошие (down>0) или мёртвые.
+// Wi-Fi: все узлы; сотовая: 5, либо все при cellall. ОТПРАВКА: оба кэша.
 // =============================================================
 
 var BATCH_ALL = 80;
 var BATCH_CELL = 5;
 var CACHE_MS = 24 * 3600 * 1000;
-var RETRY_MS = 15 * 60 * 1000;        // бэкофф повтора сбойного
-var DEAD_MS = 6 * 3600 * 1000;        // бэкофф для «мёртвого» (после MAX_FAILS)
-var MAX_FAILS = 5;                    // неудач подряд -> «мёртв»
+var RETRY_MS = 15 * 60 * 1000;
+var DEAD_MS = 6 * 3600 * 1000;
+var MAX_FAILS = 5;
+var EWMA_A = 0.6;                 // вес нового замера при сглаживании
 var DOWN_BYTES = 4000000;
 var DOWN_BIG = 12000000;
 var FAST_SEC = 1.5;
@@ -56,7 +55,6 @@ function isDue(e) {
   return (Date.now() - (e.att || 0)) > wait;
 }
 
-// в отправку: хорошие (down>0, не мёртв) и мёртвые (dead); «в процессе» — нет
 function buildArr(cacheKey) {
   var c = readJSON(cacheKey, {}); var out = [];
   for (var nm in c) {
@@ -79,6 +77,7 @@ function main() {
   var KEY = p[0] || '', ORIGIN = p[1] || '', OPTS = p[2] || '';
   if (!/^k\d+$/.test(KEY) || !/^https?:\/\//.test(ORIGIN)) { console.log('RH-Speed: битый argument [' + arg + ']'); finish(); return; }
   var cellAll = OPTS.indexOf('cellall') >= 0;
+  var useEwma = OPTS.indexOf('ewma') >= 0;
 
   var NONCE = $persistentStore.read(K_NONCE);
   if (!NONCE) { NONCE = Date.now().toString(36) + Math.random().toString(36).slice(2, 10); $persistentStore.write(NONCE, K_NONCE); }
@@ -87,7 +86,7 @@ function main() {
   try { var cfg = JSON.parse($config.getConfig()); ssid = cfg && cfg.ssid ? String(cfg.ssid) : ''; } catch (e) {}
   var net = ssid ? 'wifi' : 'cell';
   var BATCH = (net === 'wifi' || cellAll) ? BATCH_ALL : BATCH_CELL;
-  console.log('RH-Speed: ssid=[' + ssid + '] net=' + net + ' cellAll=' + cellAll + ' batch=' + BATCH);
+  console.log('RH-Speed: ssid=[' + ssid + '] net=' + net + ' cellAll=' + cellAll + ' ewma=' + useEwma + ' batch=' + BATCH);
   var RKEY = (net === 'wifi') ? 'rh_speed_wifi' : 'rh_speed_cell';
   var results = readJSON(RKEY, {});
 
@@ -154,7 +153,12 @@ function main() {
     var fullName = list[i], base = baseName(fullName), prev = results[base] || {};
     measureNode(fullName, function (res) {
       if (res && res.down > 0) {
-        results[base] = { down: res.down, rtt: res.rtt, ts: Date.now(), att: Date.now(), fails: 0 };
+        var nd = res.down, nr = res.rtt;
+        if (useEwma && prev.down > 0 && prev.ts > 0) {
+          nd = Math.round(EWMA_A * res.down + (1 - EWMA_A) * prev.down);
+          nr = Math.round(EWMA_A * res.rtt + (1 - EWMA_A) * prev.rtt);
+        }
+        results[base] = { down: nd, rtt: nr, ts: Date.now(), att: Date.now(), fails: 0 };
       } else {
         var f = (prev.fails || 0) + 1;
         results[base] = { down: prev.down || 0, rtt: prev.rtt || 0, ts: prev.ts || 0, att: Date.now(), fails: f };
