@@ -1,15 +1,18 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.4.14 (2026-06-05)
+// VERSION: worker v0.4.15 (2026-06-05)
 //
 // GET  /config?key=kN  -> персональный routehub.conf (узлы = nodes-kN.txt)
-// POST /speed          -> приём {key,nonce,wifi[],cell[]}, пересборка nodes-kN
+// POST /speed          -> приём {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json,
+//                         пересборка nodes-kN из объединённого состояния
 // GET  /whoami         -> детект сети БЕЗ геолокации: читает request.cf
 //                         (asn/asOrganization реального IP запроса) -> {net,aso,...}
-//                         ВАЖНО: запрос должен идти мимо VPN (node:"DIRECT"),
-//                         иначе вернётся оператор узла, а не сети доступа.
+//                         ВАЖНО: запрос должен идти мимо VPN (node:"DIRECT").
 //
-// Имя узла: "база · 🛜<wifi>↓ 📱<cell>↓"; при show_rtt + " <rtt>ms"; мёртвая -> ⛔.
+// MERGE (ключевое, v0.4.15): метки хранятся в metrics-kN.json {key:{w,c}}. POST
+//   обновляет только присланные сети (wifi/cell), вторая сохраняется. Сотовый
+//   прогон НЕ затирает Wi-Fi-метки (и наоборот). nodes-kN рендерится из merge.
+// Имя: "база · 🛜<wifi>↓ 📱<cell>↓"; при show_rtt + " <rtt>ms"; мёртвая -> ⛔.
 // Флаги профиля в devices.json (Worker сам дописывает = false): cell_unlim, ewma,
 //   show_rtt, auto_refresh.
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
@@ -22,7 +25,6 @@ const ICON_CELL = '\uD83D\uDCF1';      // 📱
 const GIST_API = 'https://api.github.com/gists/';
 const KEY_RE = /^k\d+$/;
 const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
-// признаки мобильного оператора в asOrganization (нижний регистр)
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
 
@@ -95,7 +97,6 @@ function ensureFlags(reg) {
   return ch;
 }
 
-// детект сети без геолокации: оператор IP, с которого ПРЯМО пришёл запрос
 function handleWhoami(req) {
   const cf = req.cf || {};
   const ip = req.headers.get('CF-Connecting-IP') || '';
@@ -136,16 +137,9 @@ async function handleConfig(url, env) {
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 
-function toMap(arr) {
-  const m = new Map();
-  if (Array.isArray(arr)) {
-    for (const s of arr) {
-      if (!s || !s.name) continue;
-      if (s.dead) m.set(matchKey(String(s.name)), { dead: true });
-      else m.set(matchKey(String(s.name)), { down: Math.max(0, Math.round(+s.down || 0)), rtt: Math.max(0, Math.round(+s.rtt || 0)) });
-    }
-  }
-  return m;
+// {name,down,rtt} | {name,dead:true}  ->  {down,rtt} | {dead:true}
+function metricOf(s) {
+  return s.dead ? { dead: true } : { down: Math.max(0, Math.round(+s.down || 0)), rtt: Math.max(0, Math.round(+s.rtt || 0)) };
 }
 
 async function handleSpeed(req, env) {
@@ -180,8 +174,25 @@ async function handleSpeed(req, env) {
   }
 
   const showRtt = !!e.show_rtt;
-  const wifi = toMap(data.wifi);
-  const cell = toMap(data.cell);
+
+  // --- MERGE: объединённое состояние меток ---
+  const metricsFile = 'metrics-' + key + '.json';
+  let state = {};
+  const sraw = fileContent(files, metricsFile);
+  if (sraw) { try { state = JSON.parse(sraw) || {}; } catch (er) { state = {}; } }
+  let sentW = 0, sentC = 0;
+  function apply(arr, slot) {
+    if (!Array.isArray(arr)) return;
+    for (const s of arr) {
+      if (!s || !s.name) continue;
+      const k = matchKey(String(s.name));
+      if (!state[k]) state[k] = {};
+      state[k][slot] = metricOf(s);
+      if (slot === 'w') sentW++; else sentC++;
+    }
+  }
+  apply(data.wifi, 'w');
+  apply(data.cell, 'c');
 
   const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
@@ -191,22 +202,22 @@ async function handleSpeed(req, env) {
     return icon + m.down + '\u2193' + (showRtt && m.rtt ? (' ' + m.rtt + 'ms') : '');
   }
 
-  const tested = [], untested = [], bypass = [], masterKeys = [];
+  const tested = [], untested = [], bypass = [];
+  let labeled = 0;
   for (const line of master) {
     const name = decodeName(fragOf(line));
     const tag = tagOf(name);
     if (tag === 'bypass') { bypass.push(line); continue; }
-    const k = matchKey(name);
-    if (tag === 'vpn' || tag === 'game') masterKeys.push(k);
-    const w = wifi.get(k), c = cell.get(k);
-    if ((w || c) && (tag === 'vpn' || tag === 'game')) {
+    const st = (tag === 'vpn' || tag === 'game') ? state[matchKey(name)] : null;
+    if (st && (st.w || st.c)) {
       const parts = [];
-      if (w) parts.push(part(ICON_WIFI, w));
-      if (c) parts.push(part(ICON_CELL, c));
+      if (st.w) parts.push(part(ICON_WIFI, st.w));
+      if (st.c) parts.push(part(ICON_CELL, st.c));
       const newName = norm(stripMetric(name)) + METRIC_SEP + parts.join(' ');
-      const d = (w && !w.dead) ? w.down : ((c && !c.dead) ? c.down : 0);
-      const rt = (w && !w.dead) ? w.rtt : ((c && !c.dead) ? c.rtt : 99999);
+      const d = (st.w && !st.w.dead) ? st.w.down : ((st.c && !st.c.dead) ? st.c.down : 0);
+      const rt = (st.w && !st.w.dead) ? st.w.rtt : ((st.c && !st.c.dead) ? st.c.rtt : 99999);
       tested.push({ line: withFrag(line, encodeURIComponent(newName)), down: d, rtt: rt });
+      labeled++;
     } else {
       untested.push(line);
     }
@@ -215,17 +226,16 @@ async function handleSpeed(req, env) {
 
   const out = tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
 
-  const sentKeys = Array.from(new Set(Array.from(wifi.keys()).concat(Array.from(cell.keys()))));
-  const unmatched = sentKeys.filter(function (x) { return masterKeys.indexOf(x) < 0; }).slice(0, 12);
-  const dbg = { ts: now, wifi: wifi.size, cell: cell.size, master_vpn_game: masterKeys.length, tested: tested.length, show_rtt: showRtt, unmatched_sent: unmatched };
+  const dbg = { ts: now, sent_wifi: sentW, sent_cell: sentC, state_nodes: Object.keys(state).length, labeled: labeled, show_rtt: showRtt };
 
   await gistPatch(env, {
+    [metricsFile]: JSON.stringify(state),
     ['nodes-' + key + '.txt']: b64encode(out),
     ['debug-' + key + '.json']: JSON.stringify(dbg, null, 2),
     'devices.json': JSON.stringify(reg, null, 2),
   });
 
-  return jsonResp({ ok: true, key: key, status: e.status, tested: tested.length, wifi: wifi.size, cell: cell.size });
+  return jsonResp({ ok: true, key: key, status: e.status, labeled: labeled, sent_wifi: sentW, sent_cell: sentC });
 }
 
 export default {
