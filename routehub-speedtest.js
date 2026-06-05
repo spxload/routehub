@@ -1,17 +1,15 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.4.4 (2026-06-05)';   // <-- видно в логе: обновился ли скрипт
-// ВЕРСИЯ С ДИАГНОСТИКОЙ (Этап D).
+var VERSION = 'speedtest v0.4.5 (2026-06-05)';   // видно в логе: обновился ли скрипт
 //
 // Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>".
 // Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА, парсим!) ->
 //   меряет батч (отклик bytes=1 + закачка ЧЕРЕЗ узел) -> копит локально ->
 //   POST {key,nonce,speeds} на Worker. Обходные [Обход] не меряются.
-// ВАЖНО: проба bytes=0 даёт пустое тело -> Loon -> "Empty response data";
-//   поэтому отклик меряем на bytes=1 (непустое тело).
+// Кэш чистится от мусорных ключей (без тега '[') — наследие ранних багов.
 // =============================================================
 
-var BATCH = 6;
+var BATCH = 10;
 var CACHE_MS = 24 * 3600 * 1000;
 var DOWN_BYTES = 4000000;
 var RTT_BYTES = 1;
@@ -39,6 +37,8 @@ function nameOf(el) {
   if (el && typeof el === 'object') return el.name || el.policy || el.policyName || el.title || el.tag || '';
   return '';
 }
+// валидное имя узла нашей подписки содержит тег в скобках ([VPN]/[Игры]/[Обход])
+function looksLikeNode(n) { return typeof n === 'string' && n.indexOf('[') >= 0; }
 
 function main() {
   console.log('RH-Speed ' + VERSION);
@@ -63,6 +63,11 @@ function main() {
   var RKEY = (net === 'wifi') ? 'rh_speed_wifi' : 'rh_speed_cell';
   var results = readJSON(RKEY, {});
 
+  // чистка мусорных ключей (наследие ранних багов: одиночные символы)
+  var removed = 0;
+  for (var bad in results) { if (results.hasOwnProperty(bad) && !looksLikeNode(bad)) { delete results[bad]; removed++; } }
+  if (removed) { writeJSON(RKEY, results); console.log('RH-Speed: кэш почищен, удалено ' + removed); }
+
   function send() {
     var speeds = [];
     for (var nm in results) { if (results.hasOwnProperty(nm)) speeds.push({ name: nm, down: results[nm].down, rtt: results[nm].rtt }); }
@@ -81,7 +86,6 @@ function main() {
 
   function measureNode(name, cb) {
     var t0 = Date.now();
-    // отклик: bytes=1 (непустое тело, иначе "Empty response data")
     $httpClient.get({ url: DOWN_HOST + '?bytes=' + RTT_BYTES + '&t=' + Date.now(), node: name, timeout: RTT_TIMEOUT },
       function (e) {
         if (e) { console.log('  x RTT [' + name + ']: ' + e); cb(null); return; }
@@ -113,12 +117,12 @@ function main() {
     var arr = subs;
     if (typeof arr === 'string') { try { arr = JSON.parse(arr); } catch (e) { console.log('RH-Speed: parse subs err ' + e); arr = []; } }
     if (!Array.isArray(arr) || !arr.length) { console.log('RH-Speed: пул пуст/не массив'); finish(); return; }
-    console.log('RH-Speed: пул=' + arr.length + ' el0=' + JSON.stringify(arr[0]));
+    console.log('RH-Speed: пул=' + arr.length);
 
     var due = [];
     for (var i = 0; i < arr.length; i++) {
       var nm = nameOf(arr[i]);
-      if (!nm) continue;
+      if (!looksLikeNode(nm)) continue;
       if (nm.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) continue; // [Обход
       var r = results[baseName(nm)];
       if (!r || (Date.now() - (r.ts || 0)) > CACHE_MS) due.push(nm);
