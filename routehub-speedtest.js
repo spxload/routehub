@@ -1,22 +1,23 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.4.7 (2026-06-05)';
+var VERSION = 'speedtest v0.4.8 (2026-06-05)';
 //
 // Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>|<opts>".
-//   opts содержит 'cellall', если у профиля в devices.json cell_unlim=true.
 // Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА).
-// Замер ступенчатый: 4 МБ; если быстро (<1.5с) — догон 12 МБ.
-// Wi-Fi: меряем ВСЕ узлы; сотовая: 5, либо ВСЕ при cell_unlim.
-// Обходные [Обход] не меряются. Кэш чистится от мусорных ключей.
+// Отклик: min из RTT_SAMPLES проб bytes=1 (убирает холодные всплески;
+//   это НЕ чистый пинг — включает TCP+TLS, поэтому выше реального пинга).
+// Скорость: ступенчато 4 МБ -> 12 МБ на быстрых.
+// Wi-Fi: все узлы; сотовая: 5, либо все при cell_unlim (devices.json).
 // =============================================================
 
-var BATCH_ALL = 80;               // фактически "все" (узлов ~64)
+var BATCH_ALL = 80;
 var BATCH_CELL = 5;
 var CACHE_MS = 24 * 3600 * 1000;
 var DOWN_BYTES = 4000000;
 var DOWN_BIG = 12000000;
 var FAST_SEC = 1.5;
 var RTT_BYTES = 1;
+var RTT_SAMPLES = 3;              // проб отклика на узел -> берём минимум
 var RTT_TIMEOUT = 10000;
 var DOWN_TIMEOUT = 25000;
 var LOCK_MS = 10 * 60 * 1000;
@@ -81,6 +82,17 @@ function main() {
     });
   }
 
+  // min из RTT_SAMPLES проб bytes=1
+  function rttProbe(name, n, best, cb) {
+    if (n <= 0) { cb(best); return; }
+    var t0 = Date.now();
+    $httpClient.get({ url: DOWN_HOST + '?bytes=' + RTT_BYTES + '&t=' + Date.now(), node: name, timeout: RTT_TIMEOUT },
+      function (e) {
+        if (!e) { var d = Date.now() - t0; if (best === null || d < best) best = d; }
+        rttProbe(name, n - 1, best, cb);
+      });
+  }
+
   function rateOf(name, bytes, cb) {
     var s0 = Date.now();
     $httpClient.get({ url: DOWN_HOST + '?bytes=' + bytes + '&t=' + Date.now(), node: name, timeout: DOWN_TIMEOUT },
@@ -92,25 +104,22 @@ function main() {
   }
 
   function measureNode(name, cb) {
-    var t0 = Date.now();
-    $httpClient.get({ url: DOWN_HOST + '?bytes=' + RTT_BYTES + '&t=' + Date.now(), node: name, timeout: RTT_TIMEOUT },
-      function (e) {
-        if (e) { console.log('  x RTT [' + name + ']: ' + e); cb(null); return; }
-        var rtt = Date.now() - t0;
-        rateOf(name, DOWN_BYTES, function (mbps1, sec1) {
-          if (mbps1 === null) { console.log('  ~ DOWN [' + name + ']: fail (rtt ' + rtt + ')'); cb({ down: 0, rtt: rtt }); return; }
-          if (sec1 < FAST_SEC) {
-            rateOf(name, DOWN_BIG, function (mbps2) {
-              var down = (mbps2 === null) ? mbps1 : mbps2;
-              console.log('  ok [' + name + '] ' + down + ' Mbps ' + rtt + 'ms');
-              cb({ down: down, rtt: rtt });
-            });
-          } else {
-            console.log('  ok [' + name + '] ' + mbps1 + ' Mbps ' + rtt + 'ms');
-            cb({ down: mbps1, rtt: rtt });
-          }
-        });
+    rttProbe(name, RTT_SAMPLES, null, function (rtt) {
+      if (rtt === null) { console.log('  x RTT [' + name + ']: нет ответа'); cb(null); return; }
+      rateOf(name, DOWN_BYTES, function (mbps1, sec1) {
+        if (mbps1 === null) { console.log('  ~ DOWN [' + name + ']: fail (rtt ' + rtt + ')'); cb({ down: 0, rtt: rtt }); return; }
+        if (sec1 < FAST_SEC) {
+          rateOf(name, DOWN_BIG, function (mbps2) {
+            var down = (mbps2 === null) ? mbps1 : mbps2;
+            console.log('  ok [' + name + '] ' + down + ' Mbps ' + rtt + 'ms');
+            cb({ down: down, rtt: rtt });
+          });
+        } else {
+          console.log('  ok [' + name + '] ' + mbps1 + ' Mbps ' + rtt + 'ms');
+          cb({ down: mbps1, rtt: rtt });
+        }
       });
+    });
   }
 
   function chain(list, i) {
