@@ -1,70 +1,58 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-// Тип: cron. Расписание задаёт routehub.conf (окно Wi-Fi 2-6 ночью).
-//   Аргумент впечатывает Worker:  $argument = "<key>|<origin>"
-//   (key=kN, origin=https://...workers.dev)
+// ВЕРСИЯ С ДИАГНОСТИКОЙ (Этап D): подробный лог ssid/пула/ошибок проб.
 //
-// За один запуск:
-//   1) определяет сеть (Wi-Fi / сотовая) по ssid;
-//   2) берёт пул узлов [VPN]+[Игры] из группы RH-АВТО (getSubPolicies);
-//   3) меряет батч узлов (отклик + скорость закачки ЧЕРЕЗ сам узел);
-//   4) копит результаты локально (отдельно Wi-Fi и сотовая);
-//   5) POST {key,nonce,speeds} на Worker -> он пересобирает nodes-kN.
-//
-// Надёжность (Раздел 17): флаг-блокировка с протуханием, try/catch на
-//   JSON.parse, промежуточное сохранение поузлово, ошибка узла не роняет прогон.
-// Обходные [Обход] НЕ меряются (в RH-АВТО их нет; платный трафик).
+// Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>".
+// За запуск: определяет сеть -> берёт пул [VPN]+[Игры] из RH-АВТО ->
+//   меряет батч (отклик + скорость закачки ЧЕРЕЗ узел) -> копит локально ->
+//   POST {key,nonce,speeds} на Worker.
+// Обходные [Обход] не меряются.
 // =============================================================
 
-// ---- параметры (позже вынесем в [Argument]) ----
-var BATCH = 6;                    // узлов за прогон
-var CACHE_MS = 24 * 3600 * 1000;  // не перемерять чаще раза в сутки
-var DOWN_BYTES = 4000000;         // 4 МБ на замер
-var RTT_TIMEOUT = 8000;           // мс
+var BATCH = 6;
+var CACHE_MS = 24 * 3600 * 1000;
+var DOWN_BYTES = 4000000;
+var RTT_TIMEOUT = 10000;          // мс
 var DOWN_TIMEOUT = 20000;         // мс
-var LOCK_MS = 10 * 60 * 1000;     // протухание блокировки
-var POOL_GROUP = 'RH-\u0410\u0412\u0422\u041E';   // RH-АВТО (пул [VPN]+[Игры])
+var LOCK_MS = 10 * 60 * 1000;
+var POOL_GROUP = 'RH-\u0410\u0412\u0422\u041E';   // RH-АВТО
 var DOWN_HOST = 'https://speed.cloudflare.com/__down';
-var METRIC_SEP = ' \u00B7 ';      // такой же разделитель, как у Worker
+var METRIC_SEP = ' \u00B7 ';
 
-// ---- ключи хранилища ----
 var K_NONCE = 'rh_nonce';
 var K_LOCK = 'rh_speed_lock';
 
 function readJSON(key, def) {
-  try { var s = $persistentStore.read(key); return s ? JSON.parse(s) : def; }
-  catch (e) { return def; }
+  try { var s = $persistentStore.read(key); return s ? JSON.parse(s) : def; } catch (e) { return def; }
 }
 function writeJSON(key, obj) {
   try { $persistentStore.write(JSON.stringify(obj), key); return true; } catch (e) { return false; }
 }
 function finish() { try { $persistentStore.write('', K_LOCK); } catch (e) {} $done(); }
-// базовое имя (без нашей метрики) — стабильный ключ кэша при смене имён
 function baseName(n) { var i = n.indexOf(METRIC_SEP); return (i >= 0 ? n.slice(0, i) : n).trim(); }
 
 function main() {
-  // блокировка
   var lockTs = parseInt($persistentStore.read(K_LOCK) || '0', 10) || 0;
   if (lockTs && (Date.now() - lockTs) < LOCK_MS) { console.log('RH-Speed: занято, выход'); $done(); return; }
   $persistentStore.write(String(Date.now()), K_LOCK);
 
-  // аргумент: key|origin
   var arg = (typeof $argument === 'string') ? $argument : '';
   var p = arg.split('|');
   var KEY = p[0] || '', ORIGIN = p[1] || '';
+  console.log('RH-Speed: argument=[' + arg + ']');
   if (!/^k\d+$/.test(KEY) || !/^https?:\/\//.test(ORIGIN)) {
-    console.log('RH-Speed: битый argument: ' + arg); finish(); return;
+    console.log('RH-Speed: битый argument'); finish(); return;
   }
 
-  // nonce устройства
   var NONCE = $persistentStore.read(K_NONCE);
   if (!NONCE) { NONCE = Date.now().toString(36) + Math.random().toString(36).slice(2, 10); $persistentStore.write(NONCE, K_NONCE); }
 
-  // сеть
-  var net = 'cell';
-  try { var cfg = JSON.parse($config.getConfig()); if (cfg && cfg.ssid && String(cfg.ssid).length) net = 'wifi'; } catch (e) {}
+  var ssid = '';
+  try { var cfg = JSON.parse($config.getConfig()); ssid = cfg && cfg.ssid ? String(cfg.ssid) : ''; } catch (e) { console.log('RH-Speed: getConfig err ' + e); }
+  var net = ssid ? 'wifi' : 'cell';
+  console.log('RH-Speed: ssid=[' + ssid + '] net=' + net);
   var RKEY = (net === 'wifi') ? 'rh_speed_wifi' : 'rh_speed_cell';
-  var results = readJSON(RKEY, {}); // {baseName:{down,rtt,ts}}
+  var results = readJSON(RKEY, {});
 
   function send() {
     var speeds = [];
@@ -84,16 +72,20 @@ function main() {
 
   function measureNode(name, cb) {
     var t0 = Date.now();
-    // отклик: лёгкий запрос через узел (bytes=0)
-    $httpClient.get({ url: DOWN_HOST + '?bytes=0&t=' + Date.now(), node: name, timeout: RTT_TIMEOUT, alpn: 'h2' },
-      function (e) {
-        if (e) { cb(null); return; }            // узел недоступен сейчас — пропуск
+    $httpClient.get({ url: DOWN_HOST + '?bytes=0&t=' + Date.now(), node: name, timeout: RTT_TIMEOUT },
+      function (e, r) {
+        if (e) { console.log('  x RTT err [' + name + ']: ' + e); cb(null); return; }
         var rtt = Date.now() - t0, s0 = Date.now();
-        $httpClient.get({ url: DOWN_HOST + '?bytes=' + DOWN_BYTES + '&t=' + Date.now(), node: name, timeout: DOWN_TIMEOUT, alpn: 'h2' },
+        $httpClient.get({ url: DOWN_HOST + '?bytes=' + DOWN_BYTES + '&t=' + Date.now(), node: name, timeout: DOWN_TIMEOUT },
           function (e2, r2) {
-            if (e2 || !r2 || r2.status !== 200) { cb({ down: 0, rtt: rtt }); return; }
+            if (e2 || !r2 || r2.status !== 200) {
+              console.log('  ~ DOWN err [' + name + ']: ' + (e2 || ('status ' + (r2 && r2.status))) + ' (rtt ' + rtt + ')');
+              cb({ down: 0, rtt: rtt }); return;
+            }
             var sec = (Date.now() - s0) / 1000;
-            cb({ down: sec > 0 ? Math.round((DOWN_BYTES * 8 / 1e6) / sec) : 0, rtt: rtt });
+            var down = sec > 0 ? Math.round((DOWN_BYTES * 8 / 1e6) / sec) : 0;
+            console.log('  ok [' + name + '] ' + down + ' Mbps ' + rtt + 'ms');
+            cb({ down: down, rtt: rtt });
           });
       });
   }
@@ -109,6 +101,7 @@ function main() {
 
   $config.getSubPolicies(POOL_GROUP, function (subs) {
     if (!subs || !subs.length) { console.log('RH-Speed: пул пуст (' + POOL_GROUP + ')'); finish(); return; }
+    console.log('RH-Speed: пул=' + subs.length + ' пример=' + JSON.stringify(subs.slice(0, 3)));
     var due = [];
     for (var i = 0; i < subs.length; i++) {
       var nm = subs[i];
