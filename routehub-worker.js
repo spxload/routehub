@@ -1,14 +1,17 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.4.13 (2026-06-05)
+// VERSION: worker v0.4.14 (2026-06-05)
 //
 // GET  /config?key=kN  -> персональный routehub.conf (узлы = nodes-kN.txt)
 // POST /speed          -> приём {key,nonce,wifi[],cell[]}, пересборка nodes-kN
+// GET  /whoami         -> детект сети БЕЗ геолокации: читает request.cf
+//                         (asn/asOrganization реального IP запроса) -> {net,aso,...}
+//                         ВАЖНО: запрос должен идти мимо VPN (node:"DIRECT"),
+//                         иначе вернётся оператор узла, а не сети доступа.
 //
-// Имя: "база · 🛜<wifi>↓ 📱<cell>↓"; при show_rtt + " <rtt>ms"; мёртвая сеть -> ⛔.
-// Флаги профиля в devices.json (Worker сам дописывает = false каждому ключу):
-//   cell_unlim, ewma -> в opts аргумента; show_rtt -> рендер имени; auto_refresh
-//   -> для будущего авто-обновления подписки через Shortcuts (Этап D.7).
+// Имя узла: "база · 🛜<wifi>↓ 📱<cell>↓"; при show_rtt + " <rtt>ms"; мёртвая -> ⛔.
+// Флаги профиля в devices.json (Worker сам дописывает = false): cell_unlim, ewma,
+//   show_rtt, auto_refresh.
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
@@ -19,6 +22,9 @@ const ICON_CELL = '\uD83D\uDCF1';      // 📱
 const GIST_API = 'https://api.github.com/gists/';
 const KEY_RE = /^k\d+$/;
 const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
+// признаки мобильного оператора в asOrganization (нижний регистр)
+const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
+  'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
 
 function ghHeaders(token) {
   return { 'Authorization': 'token ' + token, 'User-Agent': 'routehub-worker', 'Accept': 'application/vnd.github+json' };
@@ -63,6 +69,11 @@ function tagOf(name) {
   if (name.indexOf('\u0418\u0433\u0440\u044B') >= 0) return 'game';
   return 'other';
 }
+function classifyNet(asOrg) {
+  const s = (asOrg || '').toLowerCase();
+  for (const h of CELL_HINTS) if (s.indexOf(h) >= 0) return 'cell';
+  return 'wifi';
+}
 
 function ensureRegistry(files) {
   const raw = fileContent(files, 'devices.json');
@@ -75,7 +86,6 @@ function ensureFreeSpare(reg) {
   for (const k in reg) { const n = parseInt(k.slice(1), 10); if (n > max) max = n; }
   reg['k' + (max + 1)] = { status: 'free' };
 }
-// дописать недостающие флаги (=false) каждому ключу; вернуть true, если менялось
 function ensureFlags(reg) {
   let ch = false;
   for (const k in reg) {
@@ -83,6 +93,14 @@ function ensureFlags(reg) {
     for (const f of FLAGS) if (typeof e[f] !== 'boolean') { e[f] = false; ch = true; }
   }
   return ch;
+}
+
+// детект сети без геолокации: оператор IP, с которого ПРЯМО пришёл запрос
+function handleWhoami(req) {
+  const cf = req.cf || {};
+  const ip = req.headers.get('CF-Connecting-IP') || '';
+  const aso = cf.asOrganization || '';
+  return jsonResp({ ip: ip, asn: cf.asn || null, aso: aso, country: cf.country || null, net: classifyNet(aso) });
 }
 
 async function handleConfig(url, env) {
@@ -214,6 +232,7 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     try {
+      if (req.method === 'GET' && url.pathname === '/whoami') return handleWhoami(req);
       if (req.method === 'GET' && url.pathname === '/config') return await handleConfig(url, env);
       if (req.method === 'POST' && url.pathname === '/speed') return await handleSpeed(req, env);
       return new Response('routehub-worker: not found', { status: 404 });
