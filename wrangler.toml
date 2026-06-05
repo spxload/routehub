@@ -1,0 +1,13 @@
+name = "routehub"
+main = "routehub-worker.js"
+compatibility_date = "2026-06-01"
+
+# Несекретные переменные окружения Worker.
+# Указаны здесь, чтобы wrangler deploy (Workers Builds) не стирал их при
+# деплое. СЕКРЕТ GIST_TOKEN тут НЕ хранится — он задаётся как Secret в
+# дашборде Cloudflare и сохраняется между деплоями.
+[vars]
+GIST_ID = "b14194982ad9d058c21d393d0f342147"
+GH_USER = "spxload"
+MASTER_FILE = "lastdep-nodes.txt"
+CONFIG_URL = "https://raw.githubusercontent.com/spxload/routehub/main/routehub.conf"
