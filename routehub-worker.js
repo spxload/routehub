@@ -1,15 +1,14 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.4.7 (2026-06-05)
+// VERSION: worker v0.4.9 (2026-06-05)
 //
 // GET  /config?key=kN  -> персональный routehub.conf (узлы = nodes-kN.txt)
-// POST /speed          -> приём скорости {key,nonce,speeds[]}, пересборка nodes-kN
+// POST /speed          -> приём {key,nonce,wifi[],cell[]}, пересборка nodes-kN
 //
-// Хранилище: ОДИН секретный gist (GIST_ID):
-//   эталон: MASTER_FILE (base64) ; узлы: nodes-kN.txt (base64)
-//   реестр: devices.json (free/bound/conflict + nonce + cell_unlim)
-//   диагностика: debug-kN.json (ВРЕМЕННО)
-// Имена сопоставляются по нормализованному виду (схлопнутые пробелы).
+// Имя узла получает ОБЕ метки: "база · 📶<wifi>↓ 📱<cell>↓" (что измерено).
+// Сортировка по Wi-Fi скорости (домашняя сеть — основная); правильный узел
+//   под текущую сеть выбирает скрипт-селектор по локальному кэшу (D.5).
+// Хранилище: один секретный gist (GIST_ID). Имена матчатся по norm().
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
@@ -91,19 +90,26 @@ async function handleConfig(url, env) {
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
 
-  // 1) персональный список узлов
   conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + rawNodesUrl(env, key) + ',udp=true,enabled=true');
-  // 2) bare-имена скриптов -> raw-URL + сбиватель кэша (ВРЕМЕННО Этап D)
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
   const cb = '?v=' + Date.now();
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1' + cb);
-  // 3) включить строку спидтеста на время Этапа D
   conf = conf.replace(/(tag=RH-Speed[^\n]*?)enabled=false/, '$1enabled=true');
-  // 4) аргумент спидтеста: "<key>|<origin>|<opts>"; opts=cellall при cell_unlim профиля
   const opts = (reg[key] && reg[key].cell_unlim) ? 'cellall' : '';
   conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + opts);
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+}
+
+function toMap(arr) {
+  const m = new Map();
+  if (Array.isArray(arr)) {
+    for (const s of arr) {
+      if (!s || !s.name) continue;
+      m.set(matchKey(String(s.name)), { down: Math.max(0, Math.round(+s.down || 0)), rtt: Math.max(0, Math.round(+s.rtt || 0)) });
+    }
+  }
+  return m;
 }
 
 async function handleSpeed(req, env) {
@@ -112,7 +118,6 @@ async function handleSpeed(req, env) {
 
   const key = (data && data.key) || '';
   const nonce = String((data && data.nonce) || '');
-  const speeds = data && Array.isArray(data.speeds) ? data.speeds : [];
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
   if (!nonce) return jsonResp({ error: 'no nonce' }, 400);
 
@@ -136,11 +141,8 @@ async function handleSpeed(req, env) {
     return jsonResp({ error: 'key in conflict' }, 409);
   }
 
-  const sp = new Map();
-  for (const s of speeds) {
-    if (!s || !s.name) continue;
-    sp.set(matchKey(String(s.name)), { down: Math.max(0, Math.round(+s.down || 0)), rtt: Math.max(0, Math.round(+s.rtt || 0)) });
-  }
+  const wifi = toMap(data.wifi);
+  const cell = toMap(data.cell);
 
   const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
@@ -152,11 +154,15 @@ async function handleSpeed(req, env) {
     if (tag === 'bypass') { bypass.push(line); continue; }
     const k = matchKey(name);
     if (tag === 'vpn' || tag === 'game') masterKeys.push(k);
-    const m = sp.get(k);
-    if (m && (tag === 'vpn' || tag === 'game')) {
-      const metric = m.down + '\u2193 ' + m.rtt + 'ms';
-      const newName = norm(stripMetric(name)) + METRIC_SEP + metric;
-      tested.push({ line: withFrag(line, encodeURIComponent(newName)), down: m.down, rtt: m.rtt });
+    const w = wifi.get(k), c = cell.get(k);
+    if ((w || c) && (tag === 'vpn' || tag === 'game')) {
+      const parts = [];
+      if (w) parts.push('\uD83D\uDCF6' + w.down + '\u2193');   // 📶 wifi
+      if (c) parts.push('\uD83D\uDCF1' + c.down + '\u2193');   // 📱 cell
+      const newName = norm(stripMetric(name)) + METRIC_SEP + parts.join(' ');
+      const d = w ? w.down : (c ? c.down : 0);
+      const rt = w ? w.rtt : (c ? c.rtt : 99999);
+      tested.push({ line: withFrag(line, encodeURIComponent(newName)), down: d, rtt: rt });
     } else {
       untested.push(line);
     }
@@ -165,9 +171,9 @@ async function handleSpeed(req, env) {
 
   const out = tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
 
-  const sentKeys = Array.from(sp.keys());
+  const sentKeys = Array.from(new Set(Array.from(wifi.keys()).concat(Array.from(cell.keys()))));
   const unmatched = sentKeys.filter(function (x) { return masterKeys.indexOf(x) < 0; }).slice(0, 12);
-  const dbg = { ts: now, sent: sentKeys.length, master_vpn_game: masterKeys.length, tested: tested.length, sample_master: masterKeys.slice(0, 6), unmatched_sent: unmatched };
+  const dbg = { ts: now, wifi: wifi.size, cell: cell.size, master_vpn_game: masterKeys.length, tested: tested.length, unmatched_sent: unmatched };
 
   await gistPatch(env, {
     ['nodes-' + key + '.txt']: b64encode(out),
@@ -175,7 +181,7 @@ async function handleSpeed(req, env) {
     'devices.json': JSON.stringify(reg, null, 2),
   });
 
-  return jsonResp({ ok: true, key: key, status: e.status, tested: tested.length });
+  return jsonResp({ ok: true, key: key, status: e.status, tested: tested.length, wifi: wifi.size, cell: cell.size });
 }
 
 export default {
