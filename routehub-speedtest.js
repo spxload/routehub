@@ -1,24 +1,26 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.4.10 (2026-06-05)';
+var VERSION = 'speedtest v0.4.11 (2026-06-05)';
 //
-// Тип: cron. Аргумент впечатывает Worker: $argument = "<key>|<origin>|<opts>".
+// Тип: cron (весь день, каждые 20 мин). Аргумент: "<key>|<origin>|<opts>".
 // Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА).
-// Отклик: min из RTT_SAMPLES проб bytes=1 (НЕ чистый пинг — TCP+TLS).
-// Скорость: ступенчато 4 МБ -> 12 МБ на быстрых.
-// НАДЁЖНОСТЬ: сбой/0 НЕ кэшируется как «готово» (хорошее значение не
-//   затирается нулём), сбойные узлы перемеряются по бэкоффу RETRY_MS,
-//   пока не дадут down>0. На сервер уходят только хорошие (down>0).
-//   Узел «готов» = down>0 и свежий (<CACHE_MS). Запуски вхолостую, когда
-//   всё готово. Работает одинаково при cell_unlim true/false.
-// Wi-Fi: все узлы; сотовая: 5, либо все при cell_unlim (devices.json).
-// ОТПРАВКА: оба кэша (wifi+cell) -> Worker впишет обе метки.
+// Отклик: min из RTT_SAMPLES проб bytes=1. Скорость: 4 МБ -> 12 МБ на быстрых.
+// НАДЁЖНОСТЬ:
+//   * сбой/0 НЕ кэшируется как «готово», хорошее значение не затирается;
+//   * сбойный перемеряется по RETRY_MS, пока не даст down>0;
+//   * после MAX_FAILS неудач -> «мёртв»: длинный бэкофф DEAD_MS (не долбить),
+//     на сервер уходит маркер dead -> в имени 📶⛔/📱⛔ вместо скорости;
+//   * на сервер уходят только хорошие (down>0) ИЛИ мёртвые (dead) — не «в процессе».
+// Удаление мёртвых узлов — НЕ здесь (серверная живость), телефон только метит.
+// Wi-Fi: все узлы; сотовая: 5, либо все при cell_unlim. ОТПРАВКА: оба кэша.
 // =============================================================
 
 var BATCH_ALL = 80;
 var BATCH_CELL = 5;
 var CACHE_MS = 24 * 3600 * 1000;
-var RETRY_MS = 15 * 60 * 1000;    // бэкофф повтора для сбойных/непроверенных
+var RETRY_MS = 15 * 60 * 1000;        // бэкофф повтора сбойного
+var DEAD_MS = 6 * 3600 * 1000;        // бэкофф для «мёртвого» (после MAX_FAILS)
+var MAX_FAILS = 5;                    // неудач подряд -> «мёртв»
 var DOWN_BYTES = 4000000;
 var DOWN_BIG = 12000000;
 var FAST_SEC = 1.5;
@@ -45,18 +47,24 @@ function nameOf(el) {
 }
 function looksLikeNode(n) { return typeof n === 'string' && n.length >= 5 && n.indexOf('[') >= 0; }
 
-// узел "готов": есть хорошее значение (down>0) и оно свежее
 function isFreshGood(e) { return e && e.down > 0 && e.ts > 0 && (Date.now() - e.ts) <= CACHE_MS; }
-// узел нужно (пере)мерить
 function isDue(e) {
   if (!e) return true;
   if (isFreshGood(e)) return false;
-  return (Date.now() - (e.att || 0)) > RETRY_MS;   // сбойный/просроченный — по бэкоффу
+  var dead = (e.fails || 0) >= MAX_FAILS;
+  var wait = dead ? DEAD_MS : RETRY_MS;
+  return (Date.now() - (e.att || 0)) > wait;
 }
 
+// в отправку: хорошие (down>0, не мёртв) и мёртвые (dead); «в процессе» — нет
 function buildArr(cacheKey) {
   var c = readJSON(cacheKey, {}); var out = [];
-  for (var nm in c) { if (c.hasOwnProperty(nm) && looksLikeNode(nm) && c[nm].down > 0) out.push({ name: nm, down: c[nm].down, rtt: c[nm].rtt }); }
+  for (var nm in c) {
+    if (!c.hasOwnProperty(nm) || !looksLikeNode(nm)) continue;
+    var e = c[nm];
+    if ((e.fails || 0) >= MAX_FAILS) out.push({ name: nm, dead: true });
+    else if (e.down > 0) out.push({ name: nm, down: e.down, rtt: e.rtt });
+  }
   return out;
 }
 
@@ -89,7 +97,7 @@ function main() {
 
   function send() {
     var wifi = buildArr('rh_speed_wifi'), cell = buildArr('rh_speed_cell');
-    if (!wifi.length && !cell.length) { console.log('RH-Speed: нет хороших данных'); finish(); return; }
+    if (!wifi.length && !cell.length) { console.log('RH-Speed: нет данных'); finish(); return; }
     $httpClient.post({
       url: ORIGIN + '/speed',
       headers: { 'Content-Type': 'application/json' },
@@ -146,10 +154,11 @@ function main() {
     var fullName = list[i], base = baseName(fullName), prev = results[base] || {};
     measureNode(fullName, function (res) {
       if (res && res.down > 0) {
-        results[base] = { down: res.down, rtt: res.rtt, ts: Date.now(), att: Date.now() };
+        results[base] = { down: res.down, rtt: res.rtt, ts: Date.now(), att: Date.now(), fails: 0 };
       } else {
-        // сбой/0 — НЕ затираем хорошее значение, только отметка попытки
-        results[base] = { down: prev.down || 0, rtt: prev.rtt || 0, ts: prev.ts || 0, att: Date.now() };
+        var f = (prev.fails || 0) + 1;
+        results[base] = { down: prev.down || 0, rtt: prev.rtt || 0, ts: prev.ts || 0, att: Date.now(), fails: f };
+        if (f === MAX_FAILS) console.log('  ! [' + base + '] помечен как мёртвый (' + f + ' неудач)');
       }
       writeJSON(RKEY, results);
       chain(list, i + 1);
