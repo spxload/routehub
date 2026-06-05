@@ -1,14 +1,15 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.4.11 (2026-06-05)
+// VERSION: worker v0.4.12 (2026-06-05)
 //
 // GET  /config?key=kN  -> персональный routehub.conf (узлы = nodes-kN.txt)
 // POST /speed          -> приём {key,nonce,wifi[],cell[]}, пересборка nodes-kN
 //
 // Элемент wifi/cell: {name,down,rtt} (хороший) ИЛИ {name,dead:true} (нерабочий).
-// Имя: "база · 📶<wifi>↓ 📱<cell>↓"; мёртвая сеть -> 📶⛔/📱⛔ вместо скорости.
-// Сортировка по Wi-Fi скорости (мёртвые/без метрики — вниз).
-// Хранилище: один секретный gist (GIST_ID). Имена матчатся по norm().
+// Имя: "база · 📶<wifi>↓ 📱<cell>↓"; при show_rtt -> "...↓ <rtt>ms"; мёртвая
+//   сеть -> 📶⛔/📱⛔. Сортировка по Wi-Fi скорости.
+// Флаги профиля (devices.json у ключа): cell_unlim, ewma, show_rtt.
+//   cell_unlim/ewma -> в opts аргумента спидтеста; show_rtt -> рендер имени тут.
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
@@ -98,7 +99,11 @@ async function handleConfig(url, env) {
   const cb = '?v=' + Date.now();
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1' + cb);
   conf = conf.replace(/(tag=RH-Speed[^\n]*?)enabled=false/, '$1enabled=true');
-  const opts = (reg[key] && reg[key].cell_unlim) ? 'cellall' : '';
+  // opts аргумента: флаги профиля для телефона (cell_unlim, ewma)
+  const flags = [];
+  if (reg[key] && reg[key].cell_unlim) flags.push('cellall');
+  if (reg[key] && reg[key].ewma) flags.push('ewma');
+  const opts = flags.join(',');
   conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + opts);
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
@@ -145,13 +150,17 @@ async function handleSpeed(req, env) {
     return jsonResp({ error: 'key in conflict' }, 409);
   }
 
+  const showRtt = !!(reg[key] && reg[key].show_rtt);
   const wifi = toMap(data.wifi);
   const cell = toMap(data.cell);
 
   const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
 
-  function part(icon, m) { return m.dead ? (icon + DEAD) : (icon + m.down + '\u2193'); }
+  function part(icon, m) {
+    if (m.dead) return icon + DEAD;
+    return icon + m.down + '\u2193' + (showRtt && m.rtt ? (' ' + m.rtt + 'ms') : '');
+  }
 
   const tested = [], untested = [], bypass = [], masterKeys = [];
   for (const line of master) {
@@ -179,7 +188,7 @@ async function handleSpeed(req, env) {
 
   const sentKeys = Array.from(new Set(Array.from(wifi.keys()).concat(Array.from(cell.keys()))));
   const unmatched = sentKeys.filter(function (x) { return masterKeys.indexOf(x) < 0; }).slice(0, 12);
-  const dbg = { ts: now, wifi: wifi.size, cell: cell.size, master_vpn_game: masterKeys.length, tested: tested.length, unmatched_sent: unmatched };
+  const dbg = { ts: now, wifi: wifi.size, cell: cell.size, master_vpn_game: masterKeys.length, tested: tested.length, show_rtt: showRtt, unmatched_sent: unmatched };
 
   await gistPatch(env, {
     ['nodes-' + key + '.txt']: b64encode(out),
