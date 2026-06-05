@@ -1,24 +1,24 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.4.12 (2026-06-05)
+// VERSION: worker v0.4.13 (2026-06-05)
 //
 // GET  /config?key=kN  -> персональный routehub.conf (узлы = nodes-kN.txt)
 // POST /speed          -> приём {key,nonce,wifi[],cell[]}, пересборка nodes-kN
 //
-// Элемент wifi/cell: {name,down,rtt} (хороший) ИЛИ {name,dead:true} (нерабочий).
-// Имя: "база · 📶<wifi>↓ 📱<cell>↓"; при show_rtt -> "...↓ <rtt>ms"; мёртвая
-//   сеть -> 📶⛔/📱⛔. Сортировка по Wi-Fi скорости.
-// Флаги профиля (devices.json у ключа): cell_unlim, ewma, show_rtt.
-//   cell_unlim/ewma -> в opts аргумента спидтеста; show_rtt -> рендер имени тут.
+// Имя: "база · 🛜<wifi>↓ 📱<cell>↓"; при show_rtt + " <rtt>ms"; мёртвая сеть -> ⛔.
+// Флаги профиля в devices.json (Worker сам дописывает = false каждому ключу):
+//   cell_unlim, ewma -> в opts аргумента; show_rtt -> рендер имени; auto_refresh
+//   -> для будущего авто-обновления подписки через Shortcuts (Этап D.7).
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
 const METRIC_SEP = ' \u00B7 ';
-const DEAD = '\u26D4';            // ⛔
-const ICON_WIFI = '\uD83D\uDCF6'; // 📶
-const ICON_CELL = '\uD83D\uDCF1'; // 📱
+const DEAD = '\u26D4';                 // ⛔
+const ICON_WIFI = '\uD83D\uDEDC';      // 🛜 (wireless)
+const ICON_CELL = '\uD83D\uDCF1';      // 📱
 const GIST_API = 'https://api.github.com/gists/';
 const KEY_RE = /^k\d+$/;
+const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 
 function ghHeaders(token) {
   return { 'Authorization': 'token ' + token, 'User-Agent': 'routehub-worker', 'Accept': 'application/vnd.github+json' };
@@ -75,6 +75,15 @@ function ensureFreeSpare(reg) {
   for (const k in reg) { const n = parseInt(k.slice(1), 10); if (n > max) max = n; }
   reg['k' + (max + 1)] = { status: 'free' };
 }
+// дописать недостающие флаги (=false) каждому ключу; вернуть true, если менялось
+function ensureFlags(reg) {
+  let ch = false;
+  for (const k in reg) {
+    const e = reg[k];
+    for (const f of FLAGS) if (typeof e[f] !== 'boolean') { e[f] = false; ch = true; }
+  }
+  return ch;
+}
 
 async function handleConfig(url, env) {
   const key = url.searchParams.get('key') || '';
@@ -83,11 +92,12 @@ async function handleConfig(url, env) {
   const files = await gistGet(env);
   const reg = ensureRegistry(files);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
+  const flagsChanged = ensureFlags(reg);
 
   const nodesFile = 'nodes-' + key + '.txt';
   const patch = {};
   if (!fileContent(files, nodesFile)) patch[nodesFile] = fileContent(files, env.MASTER_FILE) || '';
-  if (!fileContent(files, 'devices.json')) patch['devices.json'] = JSON.stringify(reg, null, 2);
+  if (flagsChanged || !fileContent(files, 'devices.json')) patch['devices.json'] = JSON.stringify(reg, null, 2);
   if (Object.keys(patch).length) await gistPatch(env, patch);
 
   const cr = await fetch(env.CONFIG_URL, { headers: { 'User-Agent': 'routehub-worker' } });
@@ -99,10 +109,9 @@ async function handleConfig(url, env) {
   const cb = '?v=' + Date.now();
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1' + cb);
   conf = conf.replace(/(tag=RH-Speed[^\n]*?)enabled=false/, '$1enabled=true');
-  // opts аргумента: флаги профиля для телефона (cell_unlim, ewma)
   const flags = [];
-  if (reg[key] && reg[key].cell_unlim) flags.push('cellall');
-  if (reg[key] && reg[key].ewma) flags.push('ewma');
+  if (reg[key].cell_unlim) flags.push('cellall');
+  if (reg[key].ewma) flags.push('ewma');
   const opts = flags.join(',');
   conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + opts);
 
@@ -133,12 +142,14 @@ async function handleSpeed(req, env) {
   const files = await gistGet(env);
   const reg = ensureRegistry(files);
   if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
+  ensureFlags(reg);
 
   const now = new Date().toISOString();
   const e = reg[key];
   if (e.status === 'free') {
     e.status = 'bound'; e.nonce = nonce; e.first_seen = now; e.last_seen = now;
     ensureFreeSpare(reg);
+    ensureFlags(reg);
   } else if (e.status === 'bound') {
     if (e.nonce !== nonce) {
       e.status = 'conflict';
@@ -150,7 +161,7 @@ async function handleSpeed(req, env) {
     return jsonResp({ error: 'key in conflict' }, 409);
   }
 
-  const showRtt = !!(reg[key] && reg[key].show_rtt);
+  const showRtt = !!e.show_rtt;
   const wifi = toMap(data.wifi);
   const cell = toMap(data.cell);
 
