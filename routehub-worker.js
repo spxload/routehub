@@ -6,16 +6,16 @@
 //   POST /speed          -> приём скорости {key,nonce,speeds[]}, пересборка nodes-kN
 //
 // Хранилище: ОДИН секретный gist (GIST_ID):
-//   - эталон узлов  : MASTER_FILE (lastdep-nodes.txt, кладёт publish_nodes.py)
-//   - узлы по ключу : nodes-kN.txt (создаёт/пересобирает Worker)
+//   - эталон узлов  : MASTER_FILE (lastdep-nodes.txt, base64 подписки)
+//   - узлы по ключу : nodes-kN.txt (base64; создаёт/пересобирает Worker)
 //   - реестр        : devices.json (free/bound/conflict + nonce)
 //
+// ВАЖНО: содержимое подписки — base64 от «\n»-склеенных vless-ссылок
+//   (так пишет publish_nodes.py). И эталон, и nodes-kN — base64, чтобы
+//   Loon декодировал их одинаково.
+//
 // env (Cloudflare -> Worker -> Settings -> Variables and Secrets):
-//   GIST_TOKEN  (secret) — classic-токен GitHub со scope gist (НИКОГДА на телефоне)
-//   GIST_ID            — id секретного гиста (тот же, что у publish_nodes.py)
-//   GH_USER            — владелец гиста (для raw-ссылок), напр. spxload
-//   MASTER_FILE        — имя файла-эталона в гисте (lastdep-nodes.txt)
-//   CONFIG_URL         — raw базового routehub.conf на GitHub
+//   GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 //
 // Токен GitHub существует только здесь. На телефоне — keyed-URL + nonce.
 // =============================================================
@@ -65,6 +65,10 @@ function fileContent(files, name) {
   return files[name] && typeof files[name].content === 'string' ? files[name].content : null;
 }
 
+// --- base64 (содержимое ASCII: vless-ссылки с percent-encoded именами) ---
+function b64decode(s) { try { return atob((s || '').replace(/\s+/g, '')); } catch (e) { return ''; } }
+function b64encode(s) { return btoa(s); }
+
 // --- разбор имён узлов ---
 function fragOf(line) {
   const i = line.indexOf('#');
@@ -109,13 +113,13 @@ async function handleConfig(url, env) {
   const reg = ensureRegistry(files);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
 
-  // гарантируем, что nodes-kN.txt существует (иначе ссылка в конфиге мертва)
+  // гарантируем, что nodes-kN.txt существует (иначе ссылка в конфиге мертва).
+  // копия эталона — уже base64, Loon декодирует.
   const nodesFile = 'nodes-' + key + '.txt';
   const patch = {};
   if (!fileContent(files, nodesFile)) {
     patch[nodesFile] = fileContent(files, env.MASTER_FILE) || '';
   }
-  // если реестра в гисте ещё не было — зафиксируем инициализацию
   if (!fileContent(files, 'devices.json')) {
     patch['devices.json'] = JSON.stringify(reg, null, 2);
   }
@@ -183,7 +187,8 @@ async function handleSpeed(req, env) {
     });
   }
 
-  const master = (fileContent(files, env.MASTER_FILE) || '')
+  // эталон в гисте — base64: декодируем в список vless-ссылок
+  const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
 
   const tested = [], untested = [], bypass = [];
@@ -203,11 +208,11 @@ async function handleSpeed(req, env) {
   // быстрейшие первыми: down по убыванию, при равенстве — rtt по возрастанию
   tested.sort(function (a, b) { return (b.down - a.down) || (a.rtt - b.rtt); });
 
-  const out = tested.map(function (x) { return x.line; })
-    .concat(untested, bypass).join('\n') + '\n';
+  const out = tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
 
+  // nodes-kN тоже base64 (Loon декодирует так же, как эталон)
   await gistPatch(env, {
-    ['nodes-' + key + '.txt']: out,
+    ['nodes-' + key + '.txt']: b64encode(out),
     'devices.json': JSON.stringify(reg, null, 2),
   });
 
