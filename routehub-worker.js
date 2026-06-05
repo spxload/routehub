@@ -13,6 +13,8 @@
 // ВАЖНО: содержимое подписки — base64 от «\n»-склеенных vless-ссылок
 //   (так пишет publish_nodes.py). И эталон, и nodes-kN — base64, чтобы
 //   Loon декодировал их одинаково.
+//   Имена сопоставляются по НОРМАЛИЗОВАННОМУ виду (схлопнутые пробелы),
+//   т.к. Loon нормализует пробелы в именах узлов при импорте.
 //
 // env (Cloudflare -> Worker -> Settings -> Variables and Secrets):
 //   GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
@@ -82,8 +84,11 @@ function withFrag(line, frag) {
 function decodeName(frag) { try { return decodeURIComponent(frag); } catch (e) { return frag; } }
 function stripMetric(name) {
   const i = name.indexOf(METRIC_SEP);
-  return (i >= 0 ? name.slice(0, i) : name).trim();
+  return (i >= 0 ? name.slice(0, i) : name);
 }
+// Loon нормализует пробелы в именах -> сопоставляем по схлопнутому виду
+function norm(s) { return String(s).replace(/\s+/g, ' ').trim(); }
+function matchKey(name) { return norm(stripMetric(name)); }
 function tagOf(name) {
   if (name.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) return 'bypass'; // [Обход
   if (name.indexOf('[VPN]') >= 0) return 'vpn';
@@ -177,11 +182,11 @@ async function handleSpeed(req, env) {
     return jsonResp({ error: 'key in conflict' }, 409);
   }
 
-  // карта измеренной скорости по БАЗОВОМУ имени (без нашей метрики)
+  // карта измеренной скорости по НОРМАЛИЗОВАННОМУ базовому имени
   const sp = new Map();
   for (const s of speeds) {
     if (!s || !s.name) continue;
-    sp.set(stripMetric(String(s.name)), {
+    sp.set(matchKey(String(s.name)), {
       down: Math.max(0, Math.round(+s.down || 0)),
       rtt: Math.max(0, Math.round(+s.rtt || 0)),
     });
@@ -196,10 +201,10 @@ async function handleSpeed(req, env) {
     const name = decodeName(fragOf(line));
     const tag = tagOf(name);
     if (tag === 'bypass') { bypass.push(line); continue; }
-    const m = sp.get(stripMetric(name));
+    const m = sp.get(matchKey(name));
     if (m && (tag === 'vpn' || tag === 'game')) {
-      const metric = m.down + '\u2193 ' + m.rtt + 'ms';        // "45↓ 38ms"
-      const newName = stripMetric(name) + METRIC_SEP + metric; // имя без старой метрики + новая
+      const metric = m.down + '\u2193 ' + m.rtt + 'ms';          // "45↓ 38ms"
+      const newName = norm(stripMetric(name)) + METRIC_SEP + metric; // чистое имя + метрика
       tested.push({ line: withFrag(line, encodeURIComponent(newName)), down: m.down, rtt: m.rtt });
     } else {
       untested.push(line); // непротестированные — без метрики, в исходном порядке
