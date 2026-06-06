@@ -1,6 +1,6 @@
 // =============================================================
 // routehub-ai-bad.js — RouteHub, кнопка «AI не работает» (Этап D, шаг D.8)
-var VERSION = 'ai-bad v0.1.1 (2026-06-06)';
+var VERSION = 'ai-bad v0.1.2 (2026-06-06)';
 //
 // Тип: generic (запуск ВРУЧНУЮ из интерфейса Loon). Аргумент не нужен.
 //   1. ШТРАФ текущему AI-узлу — rh_ai_penalty[k] += PEN_STEP (до PEN_CAP).
@@ -8,6 +8,9 @@ var VERSION = 'ai-bad v0.1.1 (2026-06-06)';
 //   2. ПЕРЕХОД — лучший зелёный узел ДРУГОЙ страны (иначе другой узел той же).
 // Рейтинг: кэш ядра rh_ratings_cache; если пуст — raw/jsdelivr.
 // Матч имён: matchKey = norm(stripProvider(stripMetric(name))).
+// Переключение: setSelectPolicy primary (подтверждён рабочим на устройстве;
+//   getConfig — читающий, как fallback). ИСПР. v0.1.2: раньше getConfig стоял
+//   первым и возвращал ложный applied=true без реального переключения.
 // =============================================================
 
 var GROUP = 'RH-AI';
@@ -78,9 +81,10 @@ function freshPick(cands) {
   var countries = Object.keys(byC).sort(function (a, b) { return (byC[b].length - byC[a].length) || (cpIdx(a) - cpIdx(b)); });
   return bestIn(byC[countries[0]]);
 }
+// setSelectPolicy primary (подтверждён рабочим); getConfig — читающий, fallback
 function setPolicy(group, node) {
-  try { var r = $config.getConfig(group, node); if (r !== false) return true; } catch (e) {}
-  try { var r2 = $config.setSelectPolicy(group, node); return (r2 === true || r2 === undefined); } catch (e2) { return false; }
+  try { var r = $config.setSelectPolicy(group, node); if (r === true || r === undefined) return true; } catch (e) {}
+  try { return $config.getConfig(group, node) !== false; } catch (e2) { return false; }
 }
 function httpGet(url) {
   return new Promise(function (resolve) {
