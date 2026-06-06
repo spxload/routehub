@@ -1,17 +1,15 @@
 // =============================================================
 // routehub-ai-bad.js — RouteHub, кнопка «AI не работает» (Этап D, шаг D.8)
-var VERSION = 'ai-bad v0.1.3 (2026-06-06)';
+var VERSION = 'ai-bad v0.1.4 (2026-06-06)';
 //
 // Тип: generic (запуск ВРУЧНУЮ из интерфейса Loon). Аргумент не нужен.
-//   1. ШТРАФ текущему AI-узлу — rh_ai_penalty[k] += PEN_STEP (до PEN_CAP).
-//      Вычитается из балла в ядре, затухает 6ч.
-//   2. ПЕРЕХОД (логика как у health, sticky): другой зелёный узел ТОЙ ЖЕ страны;
-//      смена СТРАНЫ — только если в текущей стране нет других зелёных (freshPick).
-//      Решение Дианы: ручная кнопка = health+sticky, страну менять лишь когда
-//      все узлы текущей страны мертвы (защита AI-аккаунтов от бана за смену IP).
+//   1. ШТРАФ текущему AI-узлу — rh_ai_penalty[k] += PEN_STEP (до PEN_CAP), затухает 6ч.
+//   2. ПЕРЕХОД (sticky как health): другой зелёный узел ТОЙ ЖЕ страны; смена
+//      страны — только если в текущей стране нет других зелёных (freshPick).
+// СТРАНА — ПО ИМЕНИ узла (флаг 🇩🇪 ИЛИ слово), НЕ GeoIP rating.country (он врёт).
+//   Согласовано с core v0.6.1.
 // Рейтинг: кэш ядра rh_ratings_cache; если пуст — raw/jsdelivr.
-// Матч имён: matchKey = norm(stripProvider(stripMetric(name))).
-// Переключение: setSelectPolicy primary (подтверждён рабочим), getConfig fallback.
+// Переключение: setSelectPolicy primary, getConfig fallback.
 // =============================================================
 
 var GROUP = 'RH-AI';
@@ -22,6 +20,40 @@ var RATINGS_URLS = [
 var PREFERRED_COUNTRY = 'DE';
 var COUNTRY_PRIORITY = ['DE','NL','CH','BE','FR','AT','GB','FI','SE','NO',
   'PL','EE','LV','LT','CZ','ES','IE','US','CA','JP','SG','KR'];
+var NAME_COUNTRY = [
+  ['\u0413\u0435\u0440\u043C\u0430\u043D\u0438\u044F', 'DE'],
+  ['\u0424\u0438\u043D\u043B\u044F\u043D\u0434\u0438\u044F', 'FI'],
+  ['\u041D\u0438\u0434\u0435\u0440\u043B\u0430\u043D\u0434\u044B', 'NL'],
+  ['\u041F\u043E\u043B\u044C\u0448\u0430', 'PL'],
+  ['\u042D\u0441\u0442\u043E\u043D\u0438\u044F', 'EE'],
+  ['\u0422\u0443\u0440\u0446\u0438\u044F', 'TR'],
+  ['\u0421\u0428\u0410', 'US'],
+  ['\u0412\u0435\u043B\u0438\u043A\u043E\u0431\u0440\u0438\u0442\u0430\u043D\u0438\u044F', 'GB'],
+  ['\u0420\u0443\u043C\u044B\u043D\u0438\u044F', 'RO'],
+  ['\u0424\u0440\u0430\u043D\u0446\u0438\u044F', 'FR'],
+  ['\u0428\u0432\u0435\u0439\u0446\u0430\u0440\u0438\u044F', 'CH'],
+  ['\u0428\u0432\u0435\u0446\u0438\u044F', 'SE'],
+  ['\u041D\u043E\u0440\u0432\u0435\u0433\u0438\u044F', 'NO'],
+  ['\u0427\u0435\u0445\u0438\u044F', 'CZ'],
+  ['\u0410\u0432\u0441\u0442\u0440\u0438\u044F', 'AT'],
+  ['\u041B\u0430\u0442\u0432\u0438\u044F', 'LV'],
+  ['\u041A\u0430\u0437\u0430\u0445\u0441\u0442\u0430\u043D', 'KZ'],
+  ['\u0410\u0440\u043C\u0435\u043D\u0438\u044F', 'AM'],
+  ['\u0411\u0435\u043B\u0430\u0440\u0443\u0441\u044C', 'BY'],
+  ['\u0418\u0441\u043F\u0430\u043D\u0438\u044F', 'ES'],
+  ['\u041D\u0438\u0433\u0435\u0440\u0438\u044F', 'NG'],
+  ['\u0418\u0440\u043B\u0430\u043D\u0434\u0438\u044F', 'IE'],
+  ['\u0422\u0430\u0439\u043B\u0430\u043D\u0434', 'TH'],
+  ['\u0418\u043D\u0434\u0438\u044F', 'IN'],
+  ['\u041E\u0410\u042D', 'AE'],
+  ['\u041A\u0430\u043D\u0430\u0434\u0430', 'CA'],
+  ['\u0410\u0440\u0433\u0435\u043D\u0442\u0438\u043D\u0430', 'AR'],
+  ['\u0421\u0438\u043D\u0433\u0430\u043F\u0443\u0440', 'SG'],
+  ['\u0411\u0440\u0430\u0437\u0438\u043B\u0438\u044F', 'BR'],
+  ['\u042F\u043F\u043E\u043D\u0438\u044F', 'JP'],
+  ['\u042E\u0436\u043D\u0430\u044F \u041A\u043E\u0440\u0435\u044F', 'KR'],
+  ['\u0420\u043E\u0441\u0441\u0438\u044F', 'RU']
+];
 
 var PENALTY_KEY = 'rh_ai_penalty';
 var PEN_STEP = 40;
@@ -50,6 +82,21 @@ function nameOf(el) {
   return '';
 }
 function cpIdx(c) { var i = COUNTRY_PRIORITY.indexOf(c); return i < 0 ? 999 : i; }
+function flagToISO(s) {
+  var out = '';
+  for (var i = 0; i < s.length; i++) {
+    var cp = s.codePointAt(i);
+    if (cp >= 0x1F1E6 && cp <= 0x1F1FF) { out += String.fromCharCode(65 + (cp - 0x1F1E6)); i++; if (out.length === 2) return out; }
+    else if (out.length) break;
+  }
+  return out.length === 2 ? out : '';
+}
+function countryFromName(name) {
+  var iso = flagToISO(name);
+  if (iso) return iso;
+  for (var i = 0; i < NAME_COUNTRY.length; i++) { if (name.indexOf(NAME_COUNTRY[i][0]) >= 0) return NAME_COUNTRY[i][1]; }
+  return '??';
+}
 
 function ptsRtt(x) { if (x < 10) return 20; if (x < 20) return 10; if (x < 50) return 5; if (x < 100) return 0; if (x < 500) return -10; return -20; }
 function ptsJit(x) { if (x < 10) return 10; if (x < 20) return 5; if (x < 100) return 0; if (x < 500) return -10; return -20; }
@@ -82,7 +129,6 @@ function freshPick(cands) {
   var countries = Object.keys(byC).sort(function (a, b) { return (byC[b].length - byC[a].length) || (cpIdx(a) - cpIdx(b)); });
   return bestIn(byC[countries[0]]);
 }
-// setSelectPolicy primary (подтверждён рабочим); getConfig — читающий, fallback
 function setPolicy(group, node) {
   try { var r = $config.setSelectPolicy(group, node); if (r === true || r === undefined) return true; } catch (e) {}
   try { return $config.getConfig(group, node) !== false; } catch (e2) { return false; }
@@ -152,7 +198,7 @@ async function main() {
     var r = ratIdx[k];
     if (!r || r.light !== 'green') continue;
     var m = spdP[k] || spdA[k] || null;
-    all.push({ live: live, k: k, country: r.country || '??', stability: r.stability || 0, score: aiScore(m) });
+    all.push({ live: live, k: k, country: countryFromName(live), stability: r.stability || 0, score: aiScore(m) });
   }
   if (!all.length) {
     $notification.post('\uD83E\uDD16 RouteHub AI', 'Узел оштрафован', 'Нет других зелёных узлов для перехода.');
