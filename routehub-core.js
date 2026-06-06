@@ -1,6 +1,6 @@
 // =============================================================
 // routehub-core.js — RouteHub, AI-селектор (Этап D, шаг D.5)
-var VERSION = 'core v0.5.3 (2026-06-06)';
+var VERSION = 'core v0.6.0 (2026-06-06)';
 //
 // Тип: cron (каждые 30 мин). Аргумент НЕ нужен (рейтинг — публичный raw).
 // Назначает ОДИН узел группе RH-AI (все 5 AI идут через него).
@@ -8,12 +8,21 @@ var VERSION = 'core v0.5.3 (2026-06-06)';
 // ДВА слоя данных (ЭТАП_D_ФОРМУЛА.md):
 //   ГЕЙТ — routehub-ratings.json: light=green (фильтр, не слагаемое).
 //   БАЛЛ — локальные метрики: 2*rtt_pts+1.5*jit_pts+1*bl_pts+0.5*s(CAP=3) − штраф D.8.
-// ВЫБОР: Германия-якорь; смена страны только если текущий вне гейта; смена узла
-//   в стране — если лучше на >HYSTERESIS и прошёл cooldown. sticky против банов.
+//
+// ВЫБОР (решение Дианы — вар.1, ЯКОРЬ АБСОЛЮТНЫЙ):
+//   1. Приоритетная страна = Германия, ЕСЛИ в ней есть зелёные узлы; иначе
+//      резерв (страна по числу зелёных, затем COUNTRY_PRIORITY).
+//   2. AI всегда в приоритетной стране, НЕЗАВИСИМО от баллов других стран.
+//      Балл/штраф решают лишь, КАКОЙ узел внутри приоритетной страны.
+//   3. Если текущий узел НЕ в приоритетной стране (увели вручную/кнопкой) —
+//      немедленный возврат на лучший узел приоритетной страны.
+//   4. Sticky/hysteresis/cooldown — только МЕЖДУ узлами приоритетной страны
+//      (защита AI-аккаунтов от частых смен IP).
+//   Уйти из Германии можно лишь когда в ней НЕТ зелёных (все red/исчезли).
+//
 // Матч имён: matchKey = norm(stripProvider(stripMetric(name))) — рейтинг с
 //   префиксом '[Lastdep] ', getSubPolicies без него. Выбор — ЖИВЫМ именем.
-// ПЕРЕКЛЮЧЕНИЕ (A.12): зовём setSelectPolicy И getConfig, логируем оба результата
-//   (на устройстве проверяем, какой реально переключает; v0.5.3).
+// Переключение: setSelectPolicy primary (подтверждён рабочим), getConfig fallback.
 // =============================================================
 
 var GROUP = 'RH-AI';
@@ -127,24 +136,24 @@ function bestIn(pool) {
   });
   return p[0];
 }
-function freshPick(cands) {
+
+// приоритетная страна: Германия, если в ней есть зелёные; иначе резерв
+// (по числу зелёных узлов, затем COUNTRY_PRIORITY)
+function pickCountry(cands) {
   var de = cands.filter(function (c) { return c.country === PREFERRED_COUNTRY; });
-  if (de.length) return bestIn(de);
+  if (de.length) return PREFERRED_COUNTRY;
   var byC = {};
   cands.forEach(function (c) { (byC[c.country] = byC[c.country] || []).push(c); });
   var countries = Object.keys(byC).sort(function (a, b) {
     return (byC[b].length - byC[a].length) || (cpIdx(a) - cpIdx(b));
   });
-  return bestIn(byC[countries[0]]);
+  return countries[0];
 }
 
-// A.12: зовём ОБА метода, логируем результаты (диагностика — какой переключает)
+// setSelectPolicy primary (подтверждён рабочим на устройстве); getConfig — читающий, fallback
 function setPolicy(group, node) {
-  var okS, okG, eS = '', eG = '';
-  try { okS = $config.setSelectPolicy(group, node); } catch (e) { eS = e.message; }
-  try { okG = $config.getConfig(group, node); } catch (e) { eG = e.message; }
-  log('apply: setSelectPolicy=' + okS + (eS ? ('/err:' + eS) : '') + ' getConfig=' + okG + (eG ? ('/err:' + eG) : ''));
-  return (okS === true || okS === undefined || okG === true);
+  try { var r = $config.setSelectPolicy(group, node); if (r === true || r === undefined) return true; } catch (e) { log('setSelectPolicy err: ' + e.message); }
+  try { return $config.getConfig(group, node) !== false; } catch (e2) { log('getConfig err: ' + e2.message); return false; }
 }
 
 function getSubPolicies(group) {
@@ -223,23 +232,30 @@ async function main() {
     $done({}); return;
   }
 
+  // приоритетная страна (Германия-якорь абсолютный) + пул её узлов
+  var country = pickCountry(cands);
+  var pool = cands.filter(function (c) { return c.country === country; });
+
   var state = readJSON(STATE_KEY, { version: VERSION, lastRun: 0, sel: null });
   var prev = state.sel;
-  var cur = prev ? cands.filter(function (c) { return c.k === prev.k; })[0] : null;
+  // текущий узел учитывается, ТОЛЬКО если он в приоритетной стране
+  var cur = prev ? pool.filter(function (c) { return c.k === prev.k; })[0] : null;
 
   var pick, reason;
   if (cur) {
-    var sameC = cands.filter(function (c) { return c.country === cur.country && c.k !== cur.k; });
-    var best = sameC.length ? bestIn(sameC) : null;
+    // sticky между узлами приоритетной страны
+    var others = pool.filter(function (c) { return c.k !== cur.k; });
+    var best = others.length ? bestIn(others) : null;
     var cooldownOk = !prev.lastSwitched || (now() - prev.lastSwitched) >= COOLDOWN_MS;
     if (best && (best.score - cur.score) > HYSTERESIS && cooldownOk) {
-      pick = best; reason = 'апгрейд в стране';
+      pick = best; reason = 'апгрейд в ' + country;
     } else {
-      pick = cur; reason = 'sticky';
+      pick = cur; reason = 'sticky ' + country;
     }
   } else {
-    pick = freshPick(cands);
-    reason = prev ? 'восстановление (тек. узел вне гейта)' : 'старт';
+    // текущего нет в приоритетной стране (увели вручную/кнопкой) или холодный старт
+    pick = bestIn(pool);
+    reason = prev ? 'возврат на якорь ' + country : 'старт ' + country;
   }
 
   var changed = !prev || prev.k !== pick.k;
