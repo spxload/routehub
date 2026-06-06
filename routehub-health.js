@@ -1,15 +1,19 @@
 // =============================================================
 // routehub-health.js — RouteHub, здоровье AI-узла (Этап D, шаг D.6)
-var VERSION = 'health v0.1.3 (2026-06-06)';
+var VERSION = 'health v0.1.4 (2026-06-06)';
 //
 // Тип: cron (КАЖДЫЕ 5 МИН, tag=RH-Health — интервал в routehub.conf).
 // ОБЛАСТЬ: только RH-AI (select, сама не чинится). url-test/fallback Loon чинит сам.
 // ЛОГИКА: проба ТЕКУЩЕГО узла RH-AI. Жив — тихий выход. Мёртв -> штраф
-//   (rh_ai_penalty) + переключение на зелёный ТОЙ ЖЕ страны (защита от бана);
-//   нет в стране -> резерв (freshPick); пуш.
-// СТРАНА — ПО ИМЕНИ узла (флаг 🇩🇪 ИЛИ слово), НЕ GeoIP rating.country (он врёт).
-//   Согласовано с core v0.6.1.
-// Матч имён: matchKey = norm(stripProvider(stripMetric(name))).
+//   (rh_ai_penalty) + переключение на зелёный ТОЙ ЖЕ страны (по имени); пуш.
+//
+// ДЕБАУНС (v0.1.4, решение Дианы): в начале смотрит rh_ai_checked — общую
+//   метку последней пробы AI-узла (пишут health И netwatch). Если узел
+//   проверяли <4.5 мин назад (напр. netwatch при смене сети) — ПРОПУСКАЕТ
+//   тик, чтобы не дублировать. Т.е. health работает «через 5 мин после
+//   последней проверки», а не жёстко каждые 5 мин.
+//
+// СТРАНА — ПО ИМЕНИ узла (countryFromName), согласовано с core/netwatch.
 // Переключение: setSelectPolicy primary, getConfig fallback.
 // =============================================================
 
@@ -66,6 +70,8 @@ var STATE_KEY = 'rh_core_state';
 var RCACHE_KEY = 'rh_ratings_cache';
 var WIFI_KEY = 'rh_speed_wifi';
 var CELL_KEY = 'rh_speed_cell';
+var CHECKED_KEY = 'rh_ai_checked';                 // общая метка последней пробы (health+netwatch)
+var DEBOUNCE_MS = 270 * 1000;                      // проверяли <4.5 мин назад -> пропуск тика
 var MAX_FAILS = 5;
 var METRIC_SEP = ' \u00B7 ';
 var HTTP_TIMEOUT = 15000;
@@ -181,10 +187,18 @@ async function main() {
   var cur = state.sel;
   if (!cur || !cur.live) { log('нет активного узла (ядро не выбрало) — выход'); $done({}); return; }
 
+  // дебаунс: узел проверяли недавно (напр. netwatch) — пропуск тика
+  var lastChk = parseInt($persistentStore.read(CHECKED_KEY) || '0', 10) || 0;
+  if (lastChk && (now() - lastChk) < DEBOUNCE_MS) {
+    log('узел проверен ' + Math.round((now() - lastChk) / 1000) + 'с назад — пропуск тика');
+    $done({}); return;
+  }
+
   var lk = parseInt($persistentStore.read(LOCK_KEY) || '0', 10) || 0;
   if (lk && (now() - lk) < LOCK_FRESH_MS) { log('RH_script_lock занят — выход'); $done({}); return; }
 
   var alive = await probe(cur.live);
+  $persistentStore.write(String(now()), CHECKED_KEY);   // отметка проверки (netwatch увидит)
   if (alive) { log('\u2713 [' + cur.k + '] жив'); $done({}); return; }
 
   log('\u26A0 [' + cur.k + '] не отвечает (' + PROBE_TRIES + ' проб) — переключаю');
@@ -226,6 +240,7 @@ async function main() {
   var pick = (sameC.length ? bestIn(sameC) : freshPick(all));
 
   var applied = setPolicy(GROUP, pick.live);
+  $persistentStore.write(String(now()), CHECKED_KEY);
   state.sel = { k: pick.k, live: pick.live, country: pick.country, score: Math.round(pick.score), reason: 'health: узел умер', lastSwitched: now() };
   writeJSON(STATE_KEY, state);
   log((applied ? '\u26A1 ' : 'x ') + '-> [' + pick.country + '] ' + pick.k);
