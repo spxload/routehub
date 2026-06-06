@@ -1,14 +1,17 @@
 // =============================================================
 // routehub-health.js — RouteHub, здоровье AI-узла (Этап D, шаг D.6)
-var VERSION = 'health v0.1.1 (2026-06-06)';
+var VERSION = 'health v0.1.2 (2026-06-06)';
 //
-// Тип: cron (каждые 20 мин, tag=RH-Health). Аргумент не нужен.
+// Тип: cron (КАЖДЫЕ 5 МИН, tag=RH-Health — интервал задаётся в routehub.conf).
+//   Аргумент не нужен.
 // ОБЛАСТЬ: только RH-AI (select, сама не чинится). url-test/fallback Loon чинит сам.
 // ЛОГИКА: проба ТЕКУЩЕГО узла RH-AI. Жив — тихий выход. Мёртв -> штраф
 //   (rh_ai_penalty) + переключение на зелёный ТОЙ ЖЕ страны (защита от бана);
 //   нет в стране -> резерв (freshPick); пуш.
 // Матч имён: matchKey = norm(stripProvider(stripMetric(name))) — ключи рейтинга
 //   с префиксом '[Lastdep] ', имена из getSubPolicies без него.
+// Переключение: setSelectPolicy (подтверждён на устройстве как рабочий; getConfig —
+//   читающий), fallback getConfig.
 // =============================================================
 
 var GROUP = 'RH-AI';
@@ -84,9 +87,10 @@ function freshPick(cands) {
   var countries = Object.keys(byC).sort(function (a, b) { return (byC[b].length - byC[a].length) || (cpIdx(a) - cpIdx(b)); });
   return bestIn(byC[countries[0]]);
 }
+// setSelectPolicy подтверждён рабочим (v0.5.3 лог); getConfig — читающий, как fallback
 function setPolicy(group, node) {
-  try { var r = $config.getConfig(group, node); if (r !== false) return true; } catch (e) {}
-  try { var r2 = $config.setSelectPolicy(group, node); return (r2 === true || r2 === undefined); } catch (e2) { return false; }
+  try { var r = $config.setSelectPolicy(group, node); if (r === true || r === undefined) return true; } catch (e) {}
+  try { return $config.getConfig(group, node) !== false; } catch (e2) { return false; }
 }
 function httpGet(url) {
   return new Promise(function (resolve) {
