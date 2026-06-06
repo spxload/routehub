@@ -1,16 +1,17 @@
 // =============================================================
 // routehub-ai-bad.js — RouteHub, кнопка «AI не работает» (Этап D, шаг D.8)
-var VERSION = 'ai-bad v0.1.2 (2026-06-06)';
+var VERSION = 'ai-bad v0.1.3 (2026-06-06)';
 //
 // Тип: generic (запуск ВРУЧНУЮ из интерфейса Loon). Аргумент не нужен.
 //   1. ШТРАФ текущему AI-узлу — rh_ai_penalty[k] += PEN_STEP (до PEN_CAP).
 //      Вычитается из балла в ядре, затухает 6ч.
-//   2. ПЕРЕХОД — лучший зелёный узел ДРУГОЙ страны (иначе другой узел той же).
+//   2. ПЕРЕХОД (логика как у health, sticky): другой зелёный узел ТОЙ ЖЕ страны;
+//      смена СТРАНЫ — только если в текущей стране нет других зелёных (freshPick).
+//      Решение Дианы: ручная кнопка = health+sticky, страну менять лишь когда
+//      все узлы текущей страны мертвы (защита AI-аккаунтов от бана за смену IP).
 // Рейтинг: кэш ядра rh_ratings_cache; если пуст — raw/jsdelivr.
 // Матч имён: matchKey = norm(stripProvider(stripMetric(name))).
-// Переключение: setSelectPolicy primary (подтверждён рабочим на устройстве;
-//   getConfig — читающий, как fallback). ИСПР. v0.1.2: раньше getConfig стоял
-//   первым и возвращал ложный applied=true без реального переключения.
+// Переключение: setSelectPolicy primary (подтверждён рабочим), getConfig fallback.
 // =============================================================
 
 var GROUP = 'RH-AI';
@@ -158,8 +159,9 @@ async function main() {
     $done({}); return;
   }
 
-  var diffCountry = all.filter(function (c) { return c.country !== cur.country; });
-  var pick = (diffCountry.length ? freshPick(diffCountry) : bestIn(all));
+  // sticky: другой узел ТОЙ ЖЕ страны; смена страны только если в стране пусто
+  var sameC = all.filter(function (c) { return c.country === cur.country; });
+  var pick = (sameC.length ? bestIn(sameC) : freshPick(all));
 
   var applied = setPolicy(GROUP, pick.live);
   state.sel = { k: pick.k, live: pick.live, country: pick.country, score: Math.round(pick.score), reason: 'кнопка «не работает»', lastSwitched: now() };
@@ -167,7 +169,7 @@ async function main() {
   log((applied ? '\u26A1 ' : 'x ') + '-> [' + pick.country + '] ' + pick.k);
 
   $notification.post('\uD83E\uDD16 RouteHub AI',
-    'Переключено: ' + cur.country + ' \u2192 ' + pick.country,
+    'Узел AI заменён (' + cur.country + (pick.country === cur.country ? '' : ' \u2192 ' + pick.country) + ')',
     pick.k + (applied ? '' : '  (применить не удалось)'));
   $done({});
 }
