@@ -1,6 +1,6 @@
 // =============================================================
 // routehub-core.js — RouteHub, AI-селектор (Этап D, шаг D.5)
-var VERSION = 'core v0.6.0 (2026-06-06)';
+var VERSION = 'core v0.6.1 (2026-06-06)';
 //
 // Тип: cron (каждые 30 мин). Аргумент НЕ нужен (рейтинг — публичный raw).
 // Назначает ОДИН узел группе RH-AI (все 5 AI идут через него).
@@ -9,19 +9,21 @@ var VERSION = 'core v0.6.0 (2026-06-06)';
 //   ГЕЙТ — routehub-ratings.json: light=green (фильтр, не слагаемое).
 //   БАЛЛ — локальные метрики: 2*rtt_pts+1.5*jit_pts+1*bl_pts+0.5*s(CAP=3) − штраф D.8.
 //
-// ВЫБОР (решение Дианы — вар.1, ЯКОРЬ АБСОЛЮТНЫЙ):
-//   1. Приоритетная страна = Германия, ЕСЛИ в ней есть зелёные узлы; иначе
+// СТРАНА — ИЗ ИМЕНИ УЗЛА (решение Дианы), НЕ GeoIP. Поле rating.country = GeoIP
+//   выходного IP, оно ВРЁТ (напр. «🇫🇮 Финляндия [VPN]» имеет country=DE). Поэтому
+//   страну берём из имени: флаг-эмодзи 🇩🇪 ИЛИ слово «Германия» (любой сигнал).
+//   countryFromName(): сперва флаг (regional indicator), затем словарь слов.
+//   GeoIP rating.country оставлен только для справки (в лог не влияет на выбор).
+//
+// ВЫБОР (вар.1, ЯКОРЬ АБСОЛЮТНЫЙ):
+//   1. Приоритетная страна = Германия, ЕСЛИ в ней есть зелёные (по ИМЕНИ); иначе
 //      резерв (страна по числу зелёных, затем COUNTRY_PRIORITY).
 //   2. AI всегда в приоритетной стране, НЕЗАВИСИМО от баллов других стран.
-//      Балл/штраф решают лишь, КАКОЙ узел внутри приоритетной страны.
-//   3. Если текущий узел НЕ в приоритетной стране (увели вручную/кнопкой) —
-//      немедленный возврат на лучший узел приоритетной страны.
-//   4. Sticky/hysteresis/cooldown — только МЕЖДУ узлами приоритетной страны
-//      (защита AI-аккаунтов от частых смен IP).
-//   Уйти из Германии можно лишь когда в ней НЕТ зелёных (все red/исчезли).
+//   3. Текущий узел не в приоритетной стране -> немедленный возврат на якорь.
+//   4. Sticky/hysteresis/cooldown — только МЕЖДУ узлами приоритетной страны.
+//   Уйти из Германии можно лишь когда в ней НЕТ зелёных.
 //
-// Матч имён: matchKey = norm(stripProvider(stripMetric(name))) — рейтинг с
-//   префиксом '[Lastdep] ', getSubPolicies без него. Выбор — ЖИВЫМ именем.
+// Матч имён: matchKey = norm(stripProvider(stripMetric(name))).
 // Переключение: setSelectPolicy primary (подтверждён рабочим), getConfig fallback.
 // =============================================================
 
@@ -34,6 +36,42 @@ var RATINGS_URLS = [
 var PREFERRED_COUNTRY = 'DE';
 var COUNTRY_PRIORITY = ['DE','NL','CH','BE','FR','AT','GB','FI','SE','NO',
   'PL','EE','LV','LT','CZ','ES','IE','US','CA','JP','SG','KR'];
+
+// словарь: слово страны в имени -> код. Порядок важен (длинные/частные раньше).
+var NAME_COUNTRY = [
+  ['\u0413\u0435\u0440\u043C\u0430\u043D\u0438\u044F', 'DE'],          // Германия (вкл. «Германия Напрямую»)
+  ['\u0424\u0438\u043D\u043B\u044F\u043D\u0434\u0438\u044F', 'FI'],    // Финляндия
+  ['\u041D\u0438\u0434\u0435\u0440\u043B\u0430\u043D\u0434\u044B', 'NL'], // Нидерланды
+  ['\u041F\u043E\u043B\u044C\u0448\u0430', 'PL'],                      // Польша
+  ['\u042D\u0441\u0442\u043E\u043D\u0438\u044F', 'EE'],                // Эстония
+  ['\u0422\u0443\u0440\u0446\u0438\u044F', 'TR'],                      // Турция
+  ['\u0421\u0428\u0410', 'US'],                                        // США
+  ['\u0412\u0435\u043B\u0438\u043A\u043E\u0431\u0440\u0438\u0442\u0430\u043D\u0438\u044F', 'GB'], // Великобритания
+  ['\u0420\u0443\u043C\u044B\u043D\u0438\u044F', 'RO'],                // Румыния
+  ['\u0424\u0440\u0430\u043D\u0446\u0438\u044F', 'FR'],                // Франция
+  ['\u0428\u0432\u0435\u0439\u0446\u0430\u0440\u0438\u044F', 'CH'],    // Швейцария
+  ['\u0428\u0432\u0435\u0446\u0438\u044F', 'SE'],                      // Швеция
+  ['\u041D\u043E\u0440\u0432\u0435\u0433\u0438\u044F', 'NO'],          // Норвегия
+  ['\u0427\u0435\u0445\u0438\u044F', 'CZ'],                            // Чехия
+  ['\u0410\u0432\u0441\u0442\u0440\u0438\u044F', 'AT'],                // Австрия
+  ['\u041B\u0430\u0442\u0432\u0438\u044F', 'LV'],                      // Латвия
+  ['\u041A\u0430\u0437\u0430\u0445\u0441\u0442\u0430\u043D', 'KZ'],    // Казахстан
+  ['\u0410\u0440\u043C\u0435\u043D\u0438\u044F', 'AM'],                // Армения
+  ['\u0411\u0435\u043B\u0430\u0440\u0443\u0441\u044C', 'BY'],          // Беларусь
+  ['\u0418\u0441\u043F\u0430\u043D\u0438\u044F', 'ES'],                // Испания
+  ['\u041D\u0438\u0433\u0435\u0440\u0438\u044F', 'NG'],                // Нигерия
+  ['\u0418\u0440\u043B\u0430\u043D\u0434\u0438\u044F', 'IE'],          // Ирландия
+  ['\u0422\u0430\u0439\u043B\u0430\u043D\u0434', 'TH'],                // Тайланд
+  ['\u0418\u043D\u0434\u0438\u044F', 'IN'],                            // Индия
+  ['\u041E\u0410\u042D', 'AE'],                                        // ОАЭ
+  ['\u041A\u0430\u043D\u0430\u0434\u0430', 'CA'],                      // Канада
+  ['\u0410\u0440\u0433\u0435\u043D\u0442\u0438\u043D\u0430', 'AR'],    // Аргентина
+  ['\u0421\u0438\u043D\u0433\u0430\u043F\u0443\u0440', 'SG'],          // Сингапур
+  ['\u0411\u0440\u0430\u0437\u0438\u043B\u0438\u044F', 'BR'],          // Бразилия
+  ['\u042F\u043F\u043E\u043D\u0438\u044F', 'JP'],                      // Япония
+  ['\u042E\u0436\u043D\u0430\u044F \u041A\u043E\u0440\u0435\u044F', 'KR'], // Южная Корея
+  ['\u0420\u043E\u0441\u0441\u0438\u044F', 'RU']                       // Россия
+];
 
 var COOLDOWN_MS = 30 * 60 * 1000;
 var HYSTERESIS = 15;
@@ -66,6 +104,32 @@ function nameOf(el) {
   return '';
 }
 function cpIdx(c) { var i = COUNTRY_PRIORITY.indexOf(c); return i < 0 ? 999 : i; }
+
+// флаг-эмодзи (две regional indicator U+1F1E6..U+1F1FF) -> ISO2
+function flagToISO(s) {
+  var out = '';
+  for (var i = 0; i < s.length; i++) {
+    var cp = s.codePointAt(i);
+    if (cp >= 0x1F1E6 && cp <= 0x1F1FF) {
+      out += String.fromCharCode(65 + (cp - 0x1F1E6));
+      i++; // суррогатная пара
+      if (out.length === 2) return out;
+    } else if (out.length) {
+      break;
+    }
+  }
+  return out.length === 2 ? out : '';
+}
+// СТРАНА ИЗ ИМЕНИ: флаг ИЛИ слово (флаг приоритетнее; если расходятся — флаг).
+// Возвращает ISO2 или '??'.
+function countryFromName(name) {
+  var iso = flagToISO(name);
+  if (iso) return iso;
+  for (var i = 0; i < NAME_COUNTRY.length; i++) {
+    if (name.indexOf(NAME_COUNTRY[i][0]) >= 0) return NAME_COUNTRY[i][1];
+  }
+  return '??';
+}
 
 function log(m) { console.log('[RH-Core] ' + m); }
 
@@ -137,8 +201,7 @@ function bestIn(pool) {
   return p[0];
 }
 
-// приоритетная страна: Германия, если в ней есть зелёные; иначе резерв
-// (по числу зелёных узлов, затем COUNTRY_PRIORITY)
+// приоритетная страна (по ИМЕНИ): Германия, если в ней есть зелёные; иначе резерв
 function pickCountry(cands) {
   var de = cands.filter(function (c) { return c.country === PREFERRED_COUNTRY; });
   if (de.length) return PREFERRED_COUNTRY;
@@ -220,7 +283,9 @@ async function main() {
     seenGreen++;
     var m = spdPrim[k] || spdAlt[k] || null;
     cands.push({
-      live: live, k: k, country: r.country || '??',
+      live: live, k: k,
+      country: countryFromName(live),                     // СТРАНА ИЗ ИМЕНИ
+      geoip: r.country || '??',                           // GeoIP — только справка
       stability: (typeof r.stability === 'number') ? r.stability : 0,
       score: aiScore(m) - penaltyNow(pen, k), hasMetrics: !!m
     });
@@ -232,18 +297,16 @@ async function main() {
     $done({}); return;
   }
 
-  // приоритетная страна (Германия-якорь абсолютный) + пул её узлов
+  // приоритетная страна (Германия-якорь абсолютный, ПО ИМЕНИ) + пул её узлов
   var country = pickCountry(cands);
   var pool = cands.filter(function (c) { return c.country === country; });
 
   var state = readJSON(STATE_KEY, { version: VERSION, lastRun: 0, sel: null });
   var prev = state.sel;
-  // текущий узел учитывается, ТОЛЬКО если он в приоритетной стране
   var cur = prev ? pool.filter(function (c) { return c.k === prev.k; })[0] : null;
 
   var pick, reason;
   if (cur) {
-    // sticky между узлами приоритетной страны
     var others = pool.filter(function (c) { return c.k !== cur.k; });
     var best = others.length ? bestIn(others) : null;
     var cooldownOk = !prev.lastSwitched || (now() - prev.lastSwitched) >= COOLDOWN_MS;
@@ -253,7 +316,6 @@ async function main() {
       pick = cur; reason = 'sticky ' + country;
     }
   } else {
-    // текущего нет в приоритетной стране (увели вручную/кнопкой) или холодный старт
     pick = bestIn(pool);
     reason = prev ? 'возврат на якорь ' + country : 'старт ' + country;
   }
