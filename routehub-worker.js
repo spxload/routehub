@@ -1,16 +1,20 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.4.17 (2026-06-06)
+// VERSION: worker v0.5.0 (2026-06-06)
 //
 // GET  /config?key=kN  -> персональный routehub.conf
 // POST /speed          -> {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json,
-//                         пересборка nodes-kN с ТИРАМИ-полосками
+//                         пересборка nodes-kN с ИКОНКАМИ (блок+процент)
 // GET  /whoami         -> детект сети по request.cf (нужен прямой запрос)
 //
-// Тиры (ЭТАП_D_ФОРМУЛА.md): абсолютная достаточность СКОРОСТИ по РЕАЛЬНЫМ битрейтам,
-//   полоска ▰▰▰(≥5,1080p)/▰▰▱(2-4,720p)/▰▱▱(1,SD-веб)/▱▱▱(<1); мёртвый ⛔.
-//   Имя: "база · 🛜▰▰▱ 📱▰▱▱". show_rtt -> цифры (down↓rtt). jit/bl — для селектора (D.5).
-// Сортировка nodes-kN — по down (умный выбор делает селектор по баллу группы, без отбраковки).
+// ИКОНКА (ЭТАП_D_ФОРМУЛА.md): заполняющийся блок (абсолютное качество, насыщение
+//   на 25 Мбит=4K) + НАДСТРОЧНЫЙ процент от быстрейшего узла сети (на каждом узле):
+//     ▁ 360p(<1) ▃ 480p(1-2) ▅ 720p(2-5) ▇ 1080p(5-15) █ 4K(15-25) █⁺ 4K+(≥25)
+//   Имя: "база · 🛜█⁺ ¹⁰⁰ 📱▅ ³⁸". Мёртвый: 🛜⛔ (без процента).
+//   show_rtt -> добавляет цифры (down↓rtt). jit/bl — для селектора (D.5/D.6).
+//   Процент считается в пределах СЕТИ (w/c). По оператору — когда появится
+//   per-operator кэш (D.7 детект готов, разбивка метрик — позже).
+// Сортировка nodes-kN — по down (умный выбор делает селектор по баллу группы).
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
@@ -18,18 +22,30 @@ const METRIC_SEP = ' \u00B7 ';
 const DEAD = '\u26D4';                 // ⛔
 const ICON_WIFI = '\uD83D\uDEDC';      // 🛜
 const ICON_CELL = '\uD83D\uDCF1';      // 📱
-const BAR_F = '\u25B0';                // ▰
-const BAR_E = '\u25B1';                // ▱
+// заполняющийся блок (фикс. высота, снизу вверх) + надстрочный плюс для высшего
+const BLK = ['\u2581', '\u2583', '\u2585', '\u2587', '\u2588']; // ▁▃▅▇█
+const SUP_PLUS = '\u207A';             // ⁺
+const SUP_DIG = ['\u2070', '\u00B9', '\u00B2', '\u00B3', '\u2074', '\u2075', '\u2076', '\u2077', '\u2078', '\u2079'];
 const GIST_API = 'https://api.github.com/gists/';
 const KEY_RE = /^k\d+$/;
 const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
 
-// тир достаточности скорости (РЕАЛЬНЫЕ битрейты, Мбит/с): 0..3 заполненных сегмента
-// ≥5=1080p, 2-4=720p, 1=SD/веб, <1=плохо
-function speedTier(down) { if (down >= 5) return 3; if (down >= 2) return 2; if (down >= 1) return 1; return 0; }
-function tierBar(t) { return BAR_F.repeat(t) + BAR_E.repeat(3 - t); }
+// уровень качества по абсолютной скорости (РЕАЛЬНЫЕ битрейты, насыщение 25=4K)
+function speedBlock(down) {
+  if (down < 1) return BLK[0];        // 360p
+  if (down < 2) return BLK[1];        // 480p
+  if (down < 5) return BLK[2];        // 720p
+  if (down < 15) return BLK[3];       // 1080p
+  if (down < 25) return BLK[4];       // 4K
+  return BLK[4] + SUP_PLUS;           // 4K с запасом
+}
+// надстрочное число (процент от быстрейшего узла сети)
+function supNum(n) {
+  n = Math.round(n); if (n < 0) n = 0; if (n > 999) n = 999;
+  return String(n).split('').map(function (d) { return SUP_DIG[+d]; }).join('');
+}
 
 function ghHeaders(token) {
   return { 'Authorization': 'token ' + token, 'User-Agent': 'routehub-worker', 'Accept': 'application/vnd.github+json' };
@@ -127,15 +143,20 @@ async function handleConfig(url, env) {
   let conf = await cr.text();
 
   conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + rawNodesUrl(env, key) + ',udp=true,enabled=true');
+  // ВРЕМЕННО (снять после D.10): абсолютный URL скриптов + сбиватель кэша Loon
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
   const cb = '?v=' + Date.now();
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1' + cb);
+  // ВРЕМЕННО (снять после D.10): форс включения спидтеста
   conf = conf.replace(/(tag=RH-Speed[^\n]*?)enabled=false/, '$1enabled=true');
-  const flags = [];
-  if (reg[key].cell_unlim) flags.push('cellall');
-  if (reg[key].ewma) flags.push('ewma');
-  const opts = flags.join(',');
-  conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + opts);
+  // аргумент спидтесту: key|origin|opts (cellall,ewma)
+  const sFlags = [];
+  if (reg[key].cell_unlim) sFlags.push('cellall');
+  if (reg[key].ewma) sFlags.push('ewma');
+  conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + sFlags.join(','));
+  // аргумент netwatch: key|origin|opts (autorefresh) — origin нужен для /whoami
+  const nOpts = reg[key].auto_refresh ? 'autorefresh' : '';
+  conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + url.origin + '|' + nOpts);
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
@@ -203,36 +224,47 @@ async function handleSpeed(req, env) {
   const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
 
-  function part(icon, m) {
-    if (m.dead) return icon + DEAD;
-    const bar = tierBar(speedTier(m.down));
-    return icon + bar + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
-  }
-
-  const tested = [], untested = [], bypass = [];
-  let labeled = 0;
+  // проход 1: собрать узлы с метками + максимум скорости ПО СЕТИ (для процента)
+  const bypass = [], untested = [], items = [];
+  let maxW = 0, maxC = 0;
   for (const line of master) {
     const name = decodeName(fragOf(line));
     const tag = tagOf(name);
     if (tag === 'bypass') { bypass.push(line); continue; }
     const st = (tag === 'vpn' || tag === 'game') ? state[matchKey(name)] : null;
     if (st && (st.w || st.c)) {
-      const parts = [];
-      if (st.w) parts.push(part(ICON_WIFI, st.w));
-      if (st.c) parts.push(part(ICON_CELL, st.c));
-      const newName = norm(stripMetric(name)) + METRIC_SEP + parts.join(' ');
-      const d = (st.w && !st.w.dead) ? st.w.down : ((st.c && !st.c.dead) ? st.c.down : 0);
-      const rt = (st.w && !st.w.dead) ? st.w.rtt : ((st.c && !st.c.dead) ? st.c.rtt : 99999);
-      tested.push({ line: withFrag(line, encodeURIComponent(newName)), down: d, rtt: rt });
-      labeled++;
+      if (st.w && !st.w.dead && st.w.down > maxW) maxW = st.w.down;
+      if (st.c && !st.c.dead && st.c.down > maxC) maxC = st.c.down;
+      items.push({ line: line, name: name, st: st });
     } else {
       untested.push(line);
     }
   }
+
+  function part(icon, m, max) {
+    if (m.dead) return icon + DEAD;
+    const blk = speedBlock(m.down);
+    const pct = max > 0 ? Math.round(m.down / max * 100) : 0;
+    return icon + blk + ' ' + supNum(pct) + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
+  }
+
+  // проход 2: рендер имён
+  const tested = [];
+  let labeled = 0;
+  for (const it of items) {
+    const st = it.st, parts = [];
+    if (st.w) parts.push(part(ICON_WIFI, st.w, maxW));
+    if (st.c) parts.push(part(ICON_CELL, st.c, maxC));
+    const newName = norm(stripMetric(it.name)) + METRIC_SEP + parts.join(' ');
+    const d = (st.w && !st.w.dead) ? st.w.down : ((st.c && !st.c.dead) ? st.c.down : 0);
+    const rt = (st.w && !st.w.dead) ? st.w.rtt : ((st.c && !st.c.dead) ? st.c.rtt : 99999);
+    tested.push({ line: withFrag(it.line, encodeURIComponent(newName)), down: d, rtt: rt });
+    labeled++;
+  }
   tested.sort(function (a, b) { return (b.down - a.down) || (a.rtt - b.rtt); });
 
   const out = tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
-  const dbg = { ts: now, sent_wifi: sentW, sent_cell: sentC, state_nodes: Object.keys(state).length, labeled: labeled, show_rtt: showRtt };
+  const dbg = { ts: now, sent_wifi: sentW, sent_cell: sentC, state_nodes: Object.keys(state).length, labeled: labeled, maxW: maxW, maxC: maxC, show_rtt: showRtt };
 
   await gistPatch(env, {
     [metricsFile]: JSON.stringify(state),
