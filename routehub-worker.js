@@ -1,6 +1,6 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.5.0 (2026-06-06)
+// VERSION: worker v0.6.0 (2026-06-06) — финал D: временные хаки сняты
 //
 // GET  /config?key=kN  -> персональный routehub.conf
 // POST /speed          -> {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json,
@@ -10,11 +10,13 @@
 // ИКОНКА (ЭТАП_D_ФОРМУЛА.md): заполняющийся блок (абсолютное качество, насыщение
 //   на 25 Мбит=4K) + НАДСТРОЧНЫЙ процент от быстрейшего узла сети (на каждом узле):
 //     ▁ 360p(<1) ▃ 480p(1-2) ▅ 720p(2-5) ▇ 1080p(5-15) █ 4K(15-25) █⁺ 4K+(≥25)
-//   Имя: "база · 🛜█⁺ ¹⁰⁰ 📱▅ ³⁸". Мёртвый: 🛜⛔ (без процента).
-//   show_rtt -> добавляет цифры (down↓rtt). jit/bl — для селектора (D.5/D.6).
-//   Процент считается в пределах СЕТИ (w/c). По оператору — когда появится
-//   per-operator кэш (D.7 детект готов, разбивка метрик — позже).
+//   Имя: "база · 🛜█⁺ ¹⁰⁰ 📱▅ ³⁸". Мёртвый: 🛜⛔. show_rtt -> добавляет (down↓rtt).
 // Сортировка nodes-kN — по down (умный выбор делает селектор по баллу группы).
+//
+// Конфиг: script-path переписывается в АБСОЛЮТНЫЙ raw-URL; RH-Speed/RH-Net получают
+//   argument=key|origin|opts. (Кэш-сбиватель ?v=, форс RH-Speed и debug-файлы УБРАНЫ
+//   в v0.6.0 — RH-Speed включён в самом конфиге; обновления скриптов доходят по
+//   обычному кэшу Loon, ~3-5 мин.)
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
@@ -22,7 +24,6 @@ const METRIC_SEP = ' \u00B7 ';
 const DEAD = '\u26D4';                 // ⛔
 const ICON_WIFI = '\uD83D\uDEDC';      // 🛜
 const ICON_CELL = '\uD83D\uDCF1';      // 📱
-// заполняющийся блок (фикс. высота, снизу вверх) + надстрочный плюс для высшего
 const BLK = ['\u2581', '\u2583', '\u2585', '\u2587', '\u2588']; // ▁▃▅▇█
 const SUP_PLUS = '\u207A';             // ⁺
 const SUP_DIG = ['\u2070', '\u00B9', '\u00B2', '\u00B3', '\u2074', '\u2075', '\u2076', '\u2077', '\u2078', '\u2079'];
@@ -32,16 +33,14 @@ const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
 
-// уровень качества по абсолютной скорости (РЕАЛЬНЫЕ битрейты, насыщение 25=4K)
 function speedBlock(down) {
-  if (down < 1) return BLK[0];        // 360p
-  if (down < 2) return BLK[1];        // 480p
-  if (down < 5) return BLK[2];        // 720p
-  if (down < 15) return BLK[3];       // 1080p
-  if (down < 25) return BLK[4];       // 4K
-  return BLK[4] + SUP_PLUS;           // 4K с запасом
+  if (down < 1) return BLK[0];
+  if (down < 2) return BLK[1];
+  if (down < 5) return BLK[2];
+  if (down < 15) return BLK[3];
+  if (down < 25) return BLK[4];
+  return BLK[4] + SUP_PLUS;
 }
-// надстрочное число (процент от быстрейшего узла сети)
 function supNum(n) {
   n = Math.round(n); if (n < 0) n = 0; if (n > 999) n = 999;
   return String(n).split('').map(function (d) { return SUP_DIG[+d]; }).join('');
@@ -143,18 +142,15 @@ async function handleConfig(url, env) {
   let conf = await cr.text();
 
   conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + rawNodesUrl(env, key) + ',udp=true,enabled=true');
-  // ВРЕМЕННО (снять после D.10): абсолютный URL скриптов + сбиватель кэша Loon
+  // script-path -> абсолютный raw-URL (без кэш-сбивателя; снят в v0.6.0)
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
-  const cb = '?v=' + Date.now();
-  conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1' + cb);
-  // ВРЕМЕННО (снять после D.10): форс включения спидтеста
-  conf = conf.replace(/(tag=RH-Speed[^\n]*?)enabled=false/, '$1enabled=true');
-  // аргумент спидтесту: key|origin|opts (cellall,ewma)
+  conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
+  // argument спидтесту: key|origin|opts (cellall,ewma)
   const sFlags = [];
   if (reg[key].cell_unlim) sFlags.push('cellall');
   if (reg[key].ewma) sFlags.push('ewma');
   conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + sFlags.join(','));
-  // аргумент netwatch: key|origin|opts (autorefresh) — origin нужен для /whoami
+  // argument netwatch: key|origin|opts (autorefresh) — origin нужен для /whoami
   const nOpts = reg[key].auto_refresh ? 'autorefresh' : '';
   conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + url.origin + '|' + nOpts);
 
@@ -264,12 +260,10 @@ async function handleSpeed(req, env) {
   tested.sort(function (a, b) { return (b.down - a.down) || (a.rtt - b.rtt); });
 
   const out = tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
-  const dbg = { ts: now, sent_wifi: sentW, sent_cell: sentC, state_nodes: Object.keys(state).length, labeled: labeled, maxW: maxW, maxC: maxC, show_rtt: showRtt };
 
   await gistPatch(env, {
     [metricsFile]: JSON.stringify(state),
     ['nodes-' + key + '.txt']: b64encode(out),
-    ['debug-' + key + '.json']: JSON.stringify(dbg, null, 2),
     'devices.json': JSON.stringify(reg, null, 2),
   });
 
