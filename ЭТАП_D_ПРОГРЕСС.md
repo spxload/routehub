@@ -10,10 +10,13 @@
 - **core v0.6.1** (cron 30м): гейт green → балл AIM − штраф → **Германия-якорь
   АБСОЛЮТНЫЙ по ИМЕНИ узла** (флаг 🇩🇪 ИЛИ слово «Германия»), sticky внутри страны,
   возврат на якорь если узел увели. `setSelectPolicy` переключает (подтверждено).
-- **health v0.1.3** (cron 5м): проба текущего AI-узла; мёртв → штраф + узел той же
-  страны (по имени).
-- **netwatch v0.1.0** (network-changed): детект сети слоями (ssid→маяки/Яндекс→
-  оператор), whitelist РКН, autorefresh. async/await в Loon РАБОТАЕТ (подтверждено).
+- **health v0.1.4** (cron 5м): проба текущего AI-узла; мёртв → штраф + узел той же
+  страны (по имени). ДЕБАУНС: читает `rh_ai_checked`; если узел проверяли <4.5 мин
+  назад — пропускает тик; после пробы пишет `rh_ai_checked`.
+- **netwatch v0.2.0** (network-changed): детект сети слоями (ssid→маяки/Яндекс→
+  оператор), whitelist РКН, autorefresh. **+ ХУК проверки AI-узла при смене сети**:
+  пробует текущий узел, мёртв → штраф + узел той же страны; защита от гонки
+  (`lockBusy`), дебаунс 30с, пишет `rh_ai_checked`. async/await в Loon РАБОТАЕТ.
 - **ai-bad v0.1.4** (generic, ВРУЧНУЮ): штраф +40 (затух. 6ч) + sticky-переход в той
   же стране (по имени); смена страны только если в стране нет зелёных.
 - **speedtest v0.4.13** (cron 20м): метрики down/rtt/jit/bl → POST.
@@ -24,17 +27,28 @@
   fallback; RH-Apple=select; **RH-Все**=select (ручной тест, все узлы). Health 5м,
   Speed 20м (enabled=true), Core 30м, Net network-changed, кнопка generic.
 
+## Защита AI-узла — три слоя, синхронизированы
+- **core** (30м): план/якорь Германия.
+- **health** (5м): проба текущего узла.
+- **netwatch** (смена сети): мгновенная проба текущего узла (хук).
+- **Синхронизация:** общий штамп `rh_ai_checked` (пишут health И netwatch) +
+  `RH_script_lock` (один переключатель за раз). Если netwatch проверил узел при смене
+  сети, health пропускает свой тик ближайшие 4.5 мин — не дублируют друг друга.
+- **Кнопка** ai-bad (вручную): штраф + sticky-переход.
+
 ## КЛЮЧЕВОЙ УРОК D (зафиксировать)
 - **Страна узла берётся ИЗ ИМЕНИ (флаг/слово), НЕ из GeoIP `rating.country`.** GeoIP
   выходного IP ВРЁТ: напр. «🇫🇮 Финляндия [VPN]» имеет country=DE; «🇬🇧 Великобритания»
   → RO; «🇦🇲 Армения» → PH. Функция `countryFromName` (flagToISO + словарь слов) — в
-  core/health/ai-bad одинаково. GeoIP оставлен только справкой.
+  core/health/netwatch/ai-bad одинаково. GeoIP оставлен только справкой.
 - **Переключение группы: `$config.setSelectPolicy(group, node)`** (РАБОТАЕТ).
   `$config.getConfig(group,node)` — ЧИТАЮЩИЙ (возвращает весь конфиг), НЕ переключает.
 - **async/await + Promise в Loon** (cron/network-changed/generic) — работают.
 - **matchKey = norm(stripProvider(stripMetric(name)))**: stripProvider срезает ведущий
   `[Lastdep] ` — ключи рейтинга с префиксом, имена из getSubPolicies без. Без этого
   рейтинг матчился пусто.
+- **Cron-таймер в Loon сбросить нельзя** (нет API). Синхронизация скриптов — через
+  общий штамп `rh_ai_checked` + `RH_script_lock`, не через перепланирование cron.
 - ssid на iOS появляется при разрешении «Локация: Всегда» (дом fh_86bd02_5G запомнен).
 
 ## Финальная зачистка (сделана)
@@ -47,7 +61,6 @@
 - **netwatch на сотовой вне дома**: строка оператора (whoami/ipaso) и поведение при
   whitelist. `ECHO_URL=https://yandex.ru/internet/` — подтвердить, отдаёт ли IP в теле;
   если нет — оператор «?», слои 1–2 работают.
-- Хук проверки AI-узла в netwatch при смене сети — НЕ добавлен (Диана не просила).
 - `routehub-viewer.js` — не сделан (опционально; состояние видно по уведомлениям/логам).
 
 ## Выдача k2 жене
@@ -58,10 +71,11 @@
 4. Метки скорости у неё — свои (другой оператор/Wi-Fi), считаются на её телефоне.
 
 ## Файлы Этапа D (финальные версии)
-worker v0.6.0, core v0.6.1, health v0.1.3, ai-bad v0.1.4, netwatch v0.1.0,
+worker v0.6.0, core v0.6.1, health v0.1.4, netwatch v0.2.0, ai-bad v0.1.4,
 speedtest v0.4.13, conf C-draft-10, ЭТАП_D_ФОРМУЛА.md, wrangler.toml.
 
 ## Хранилище телефона ($persistentStore)
 rh_speed_wifi/rh_speed_cell (кэш метрик), rh_core_state (sel:{k,live,country,score,
 reason,lastSwitched}), rh_ai_penalty ({matchKey:{p,ts}}), rh_ratings_cache,
-rh_net_state, rh_home_ssids, rh_home_aso, RH_script_lock.
+rh_net_state, rh_home_ssids, rh_home_aso, rh_ai_checked (общий штамп пробы AI-узла,
+health+netwatch), rh_last_net, RH_script_lock.
