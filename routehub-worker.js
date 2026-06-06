@@ -1,32 +1,34 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.4.15 (2026-06-05)
+// VERSION: worker v0.4.16 (2026-06-06)
 //
-// GET  /config?key=kN  -> персональный routehub.conf (узлы = nodes-kN.txt)
-// POST /speed          -> приём {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json,
-//                         пересборка nodes-kN из объединённого состояния
-// GET  /whoami         -> детект сети БЕЗ геолокации: читает request.cf
-//                         (asn/asOrganization реального IP запроса) -> {net,aso,...}
-//                         ВАЖНО: запрос должен идти мимо VPN (node:"DIRECT").
+// GET  /config?key=kN  -> персональный routehub.conf
+// POST /speed          -> {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json,
+//                         пересборка nodes-kN с ТИРАМИ-полосками
+// GET  /whoami         -> детект сети по request.cf (нужен прямой запрос)
 //
-// MERGE (ключевое, v0.4.15): метки хранятся в metrics-kN.json {key:{w,c}}. POST
-//   обновляет только присланные сети (wifi/cell), вторая сохраняется. Сотовый
-//   прогон НЕ затирает Wi-Fi-метки (и наоборот). nodes-kN рендерится из merge.
-// Имя: "база · 🛜<wifi>↓ 📱<cell>↓"; при show_rtt + " <rtt>ms"; мёртвая -> ⛔.
-// Флаги профиля в devices.json (Worker сам дописывает = false): cell_unlim, ewma,
-//   show_rtt, auto_refresh.
+// Тиры (спека ЭТАП_D_ФОРМУЛА.md): абсолютная достаточность СКОРОСТИ, 3-сегментная
+//   полоска ▰▰▰/▰▰▱/▰▱▱/▱▱▱; мёртвый ⛔. Имя: "база · 🛜▰▰▱ 📱▰▱▱".
+//   show_rtt -> добавляет цифры (down↓rtt). Метрики jit/bl хранятся для селектора (D.5).
+// Сортировка nodes-kN — по down (умный выбор узла делает селектор по баллу группы).
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
 const METRIC_SEP = ' \u00B7 ';
 const DEAD = '\u26D4';                 // ⛔
-const ICON_WIFI = '\uD83D\uDEDC';      // 🛜 (wireless)
+const ICON_WIFI = '\uD83D\uDEDC';      // 🛜
 const ICON_CELL = '\uD83D\uDCF1';      // 📱
+const BAR_F = '\u25B0';                // ▰
+const BAR_E = '\u25B1';                // ▱
 const GIST_API = 'https://api.github.com/gists/';
 const KEY_RE = /^k\d+$/;
 const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
+
+// тир достаточности скорости (абсолютные пороги, Мбит/с): 0..3 заполненных сегмента
+function speedTier(down) { if (down >= 15) return 3; if (down >= 6) return 2; if (down >= 2) return 1; return 0; }
+function tierBar(t) { return BAR_F.repeat(t) + BAR_E.repeat(3 - t); }
 
 function ghHeaders(token) {
   return { 'Authorization': 'token ' + token, 'User-Agent': 'routehub-worker', 'Accept': 'application/vnd.github+json' };
@@ -137,9 +139,15 @@ async function handleConfig(url, env) {
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 
-// {name,down,rtt} | {name,dead:true}  ->  {down,rtt} | {dead:true}
+// {name,...} -> {down,rtt,jit,bl} | {dead:true}
 function metricOf(s) {
-  return s.dead ? { dead: true } : { down: Math.max(0, Math.round(+s.down || 0)), rtt: Math.max(0, Math.round(+s.rtt || 0)) };
+  if (s.dead) return { dead: true };
+  return {
+    down: Math.max(0, Math.round(+s.down || 0)),
+    rtt: Math.max(0, Math.round(+s.rtt || 0)),
+    jit: Math.max(0, Math.round(+s.jit || 0)),
+    bl: (s.bl == null ? null : Math.max(0, Math.round(+s.bl))),
+  };
 }
 
 async function handleSpeed(req, env) {
@@ -160,8 +168,7 @@ async function handleSpeed(req, env) {
   const e = reg[key];
   if (e.status === 'free') {
     e.status = 'bound'; e.nonce = nonce; e.first_seen = now; e.last_seen = now;
-    ensureFreeSpare(reg);
-    ensureFlags(reg);
+    ensureFreeSpare(reg); ensureFlags(reg);
   } else if (e.status === 'bound') {
     if (e.nonce !== nonce) {
       e.status = 'conflict';
@@ -175,7 +182,7 @@ async function handleSpeed(req, env) {
 
   const showRtt = !!e.show_rtt;
 
-  // --- MERGE: объединённое состояние меток ---
+  // MERGE
   const metricsFile = 'metrics-' + key + '.json';
   let state = {};
   const sraw = fileContent(files, metricsFile);
@@ -199,7 +206,8 @@ async function handleSpeed(req, env) {
 
   function part(icon, m) {
     if (m.dead) return icon + DEAD;
-    return icon + m.down + '\u2193' + (showRtt && m.rtt ? (' ' + m.rtt + 'ms') : '');
+    const bar = tierBar(speedTier(m.down));
+    return icon + bar + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
   }
 
   const tested = [], untested = [], bypass = [];
@@ -225,7 +233,6 @@ async function handleSpeed(req, env) {
   tested.sort(function (a, b) { return (b.down - a.down) || (a.rtt - b.rtt); });
 
   const out = tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
-
   const dbg = { ts: now, sent_wifi: sentW, sent_cell: sentC, state_nodes: Object.keys(state).length, labeled: labeled, show_rtt: showRtt };
 
   await gistPatch(env, {
