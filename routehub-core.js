@@ -1,32 +1,19 @@
 // =============================================================
 // routehub-core.js — RouteHub, AI-селектор (Этап D, шаг D.5)
-var VERSION = 'core v0.5.2 (2026-06-06)';
+var VERSION = 'core v0.5.3 (2026-06-06)';
 //
 // Тип: cron (каждые 30 мин). Аргумент НЕ нужен (рейтинг — публичный raw).
 // Назначает ОДИН узел группе RH-AI (все 5 AI идут через него).
 //
 // ДВА слоя данных (ЭТАП_D_ФОРМУЛА.md):
-//   ГЕЙТ  — routehub-ratings.json (сервер): живость/страна/AI-доступность.
-//           Гейт ФИЛЬТРУЕТ (light=green), НЕ слагаемое. Узел не бракуется
-//           за низкую скорость.
-//   БАЛЛ  — локальные метрики спидтеста (rh_speed_wifi/rh_speed_cell):
-//           AI-профиль п.5 = 2*rtt_pts + 1.5*jit_pts + 1*bl_pts + 0.5*s(CAP=3),
-//           пороги Cloudflare AIM. Балл ранжирует выживших гейт.
-//           МИНУС штраф кнопок «не работает» (rh_ai_penalty, затухает 6ч).
-//
-// ВЫБОР (sticky прежде всего, защита AI-аккаунтов от банов за смену IP):
-//   - Германия — якорь (vyvod 9: AI всегда на работающем регионе, Германия пер.).
-//   - Смена СТРАНЫ — только если текущий узел выпал из гейта (red/исчез).
-//   - Смена узла ВНУТРИ страны — допустима (без смены региона безопасна),
-//     если кандидат лучше текущего на > HYSTERESIS и прошёл cooldown.
-//   - Германия пуста -> резервная страна (по числу зелёных узлов) -> глобально.
-//
-// Имена: матч рейтинг<->узел<->метрики по matchKey = norm(stripProvider(stripMetric(name))).
-//   ВАЖНО: ключи рейтинга идут с префиксом '[Lastdep] ' (сервер), имена из
-//   getSubPolicies — без него -> stripProvider срезает ведущий '[...]'.
-//   ВЫБОР делается ЖИВЫМ именем из getSubPolicies (с суффиксом меток).
-// Переключение группы: $config.getConfig(policy, select) (контракт A.12),
-//   fallback $config.setSelectPolicy. Race-флаг RH_script_lock (Раздел 17.3).
+//   ГЕЙТ — routehub-ratings.json: light=green (фильтр, не слагаемое).
+//   БАЛЛ — локальные метрики: 2*rtt_pts+1.5*jit_pts+1*bl_pts+0.5*s(CAP=3) − штраф D.8.
+// ВЫБОР: Германия-якорь; смена страны только если текущий вне гейта; смена узла
+//   в стране — если лучше на >HYSTERESIS и прошёл cooldown. sticky против банов.
+// Матч имён: matchKey = norm(stripProvider(stripMetric(name))) — рейтинг с
+//   префиксом '[Lastdep] ', getSubPolicies без него. Выбор — ЖИВЫМ именем.
+// ПЕРЕКЛЮЧЕНИЕ (A.12): зовём setSelectPolicy И getConfig, логируем оба результата
+//   (на устройстве проверяем, какой реально переключает; v0.5.3).
 // =============================================================
 
 var GROUP = 'RH-AI';
@@ -39,29 +26,28 @@ var PREFERRED_COUNTRY = 'DE';
 var COUNTRY_PRIORITY = ['DE','NL','CH','BE','FR','AT','GB','FI','SE','NO',
   'PL','EE','LV','LT','CZ','ES','IE','US','CA','JP','SG','KR'];
 
-var COOLDOWN_MS = 30 * 60 * 1000;     // не дёргать узел чаще раза в 30 мин
-var HYSTERESIS = 15;                  // порог превосходства для смены узла в стране
-var DATA_WARN_MS = 12 * 3600 * 1000;  // рейтинг старше -> предупредить
-var DATA_HARD_MS = 24 * 3600 * 1000;  // рейтинг старше -> не трогать выбор
-var MAX_FAILS = 5;                    // как в спидтесте: метрика мертва
+var COOLDOWN_MS = 30 * 60 * 1000;
+var HYSTERESIS = 15;
+var DATA_WARN_MS = 12 * 3600 * 1000;
+var DATA_HARD_MS = 24 * 3600 * 1000;
+var MAX_FAILS = 5;
 
 var STATE_KEY = 'rh_core_state';
 var WIFI_KEY = 'rh_speed_wifi';
 var CELL_KEY = 'rh_speed_cell';
-var PENALTY_KEY = 'rh_ai_penalty';    // { matchKey: {p, ts} } — пишут кнопки D.8
-var PEN_DECAY_MS = 6 * 3600 * 1000;   // штраф затухает линейно за 6ч
+var PENALTY_KEY = 'rh_ai_penalty';
+var PEN_DECAY_MS = 6 * 3600 * 1000;
 var LOCK_KEY = 'RH_script_lock';
-var LOCK_FRESH_MS = 60 * 1000;        // чужой свежий лок -> пропустить ход
-var LOCK_STALE_MS = 2 * 60 * 1000;    // лок протух -> игнорировать
+var LOCK_FRESH_MS = 60 * 1000;
+var LOCK_STALE_MS = 2 * 60 * 1000;
 
-var METRIC_SEP = ' \u00B7 ';          // ' · '
+var METRIC_SEP = ' \u00B7 ';
 var HTTP_TIMEOUT = 15000;
 
 var now = function () { return Date.now(); };
 
-// --- утилиты имён (идентичны во всех скриптах для согласованного матча) ---
 function stripMetric(name) { var i = name.indexOf(METRIC_SEP); return i >= 0 ? name.slice(0, i) : name; }
-function stripProvider(s) { return String(s).replace(/^\s*\[[^\]]*\]\s+/, ''); } // срез ведущего '[Lastdep] '
+function stripProvider(s) { return String(s).replace(/^\s*\[[^\]]*\]\s+/, ''); }
 function norm(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 function matchKey(name) { return norm(stripProvider(stripMetric(name))); }
 function looksLikeNode(n) { return typeof n === 'string' && n.length >= 5 && n.indexOf('[') >= 0; }
@@ -77,7 +63,6 @@ function log(m) { console.log('[RH-Core] ' + m); }
 function readJSON(key, def) { try { var s = $persistentStore.read(key); return s ? JSON.parse(s) : def; } catch (e) { return def; } }
 function writeJSON(key, obj) { try { $persistentStore.write(JSON.stringify(obj), key); } catch (e) {} }
 
-// штраф «не работает»: линейное затухание за PEN_DECAY_MS
 function penaltyNow(pen, key) {
   var e = pen && pen[key];
   if (!e || !e.p) return 0;
@@ -106,7 +91,6 @@ async function fetchRatings() {
   return null;
 }
 
-// --- индексы ---
 function buildRatIdx(nodes) {
   var idx = {};
   for (var name in nodes) { if (nodes.hasOwnProperty(name)) idx[matchKey(name)] = nodes[name]; }
@@ -117,20 +101,18 @@ function buildSpeedIdx(key) {
   for (var nm in c) {
     if (!c.hasOwnProperty(nm) || !looksLikeNode(nm)) continue;
     var e = c[nm];
-    if ((e.fails || 0) >= MAX_FAILS) continue;   // мёртвая метрика -> нет данных
+    if ((e.fails || 0) >= MAX_FAILS) continue;
     if (!(e.down > 0)) continue;
     idx[matchKey(nm)] = e;
   }
   return idx;
 }
 
-// --- баллы по порогам Cloudflare AIM (ЭТАП_D_ФОРМУЛА.md п.5) ---
 function ptsRtt(x) { if (x < 10) return 20; if (x < 20) return 10; if (x < 50) return 5; if (x < 100) return 0; if (x < 500) return -10; return -20; }
-function ptsBl(x) { return ptsRtt(x); }            // bl: те же пороги, что rtt
+function ptsBl(x) { return ptsRtt(x); }
 function ptsJit(x) { if (x < 10) return 10; if (x < 20) return 5; if (x < 100) return 0; if (x < 500) return -10; return -20; }
 function sDown(d, cap) { var v = d / cap; return v > 1 ? 1 : v; }
 
-// AI-профиль; m=null -> балл 0, но узел НЕ исключается (выбор без отбраковки по скорости)
 function aiScore(m) {
   if (!m) return 0;
   var rtt = m.rtt || 0, jit = m.jit || 0, down = m.down || 0;
@@ -138,7 +120,6 @@ function aiScore(m) {
   return 2 * ptsRtt(rtt) + 1.5 * ptsJit(jit) + 1 * blPts + 0.5 * sDown(down, 3);
 }
 
-// --- выбор лучшего узла в пуле кандидатов ---
 function bestIn(pool) {
   var p = pool.slice();
   p.sort(function (a, b) {
@@ -146,7 +127,6 @@ function bestIn(pool) {
   });
   return p[0];
 }
-// свежий выбор: Германия-якорь -> резервная страна по числу узлов -> глобально
 function freshPick(cands) {
   var de = cands.filter(function (c) { return c.country === PREFERRED_COUNTRY; });
   if (de.length) return bestIn(de);
@@ -158,16 +138,13 @@ function freshPick(cands) {
   return bestIn(byC[countries[0]]);
 }
 
-// --- переключение группы: контракт A.12, fallback setSelectPolicy ---
+// A.12: зовём ОБА метода, логируем результаты (диагностика — какой переключает)
 function setPolicy(group, node) {
-  try {
-    var r = $config.getConfig(group, node);   // A.12: установка выбора
-    if (r !== false) return true;
-  } catch (e) { log('getConfig(set) исключение: ' + e.message); }
-  try {
-    var r2 = $config.setSelectPolicy(group, node);  // fallback (диагностика v5)
-    return (r2 === true || r2 === undefined);
-  } catch (e2) { log('setSelectPolicy исключение: ' + e2.message); return false; }
+  var okS, okG, eS = '', eG = '';
+  try { okS = $config.setSelectPolicy(group, node); } catch (e) { eS = e.message; }
+  try { okG = $config.getConfig(group, node); } catch (e) { eG = e.message; }
+  log('apply: setSelectPolicy=' + okS + (eS ? ('/err:' + eS) : '') + ' getConfig=' + okG + (eG ? ('/err:' + eG) : ''));
+  return (okS === true || okS === undefined || okG === true);
 }
 
 function getSubPolicies(group) {
@@ -185,15 +162,15 @@ function getSubPolicies(group) {
 function detectNet() {
   var ssid = '';
   try { var cfg = JSON.parse($config.getConfig()); ssid = cfg && cfg.ssid ? String(cfg.ssid) : ''; } catch (e) {}
-  return ssid ? 'wifi' : 'cell';   // грабли #5: ssid часто пуст -> 'cell'
+  return ssid ? 'wifi' : 'cell';
 }
 
 function lockBusy() {
   var lk = parseInt($persistentStore.read(LOCK_KEY) || '0', 10) || 0;
   if (!lk) return false;
   var age = now() - lk;
-  if (age < LOCK_FRESH_MS) return true;   // чужой свежий -> занято
-  if (age > LOCK_STALE_MS) return false;  // протух -> игнор
+  if (age < LOCK_FRESH_MS) return true;
+  if (age > LOCK_STALE_MS) return false;
   return false;
 }
 
@@ -202,11 +179,11 @@ async function main() {
 
   var data = await fetchRatings();
   if (!data) { log('рейтинг недоступен — выбор не трогаю'); $done({}); return; }
-  writeJSON('rh_ratings_cache', data);   // кэш для кнопок D.8 (мгновенный переход)
+  writeJSON('rh_ratings_cache', data);
 
   var ageMs = now() - (data.updated || 0) * 1000;
   var ageMin = Math.round(ageMs / 60000);
-  if (ageMs > DATA_HARD_MS) { log('рейтинг старше 24ч (' + Math.round(ageMin / 60) + 'ч) — выбор не трогаю'); $done({}); return; }
+  if (ageMs > DATA_HARD_MS) { log('рейтинг старше 24ч — выбор не трогаю'); $done({}); return; }
   if (ageMs > DATA_WARN_MS) log('внимание: рейтинг ' + Math.round(ageMin / 60) + 'ч');
 
   var ratIdx = buildRatIdx(data.nodes);
@@ -219,25 +196,24 @@ async function main() {
   var subs = await getSubPolicies(GROUP);
   if (!subs.length) { log('пул RH-AI пуст/недоступен'); $done({}); return; }
 
-  // кандидаты: гейт green + узел известен серверу; страховочно мимо обхода/игр
   var cands = [];
   var seenRat = 0, seenGreen = 0;
   for (var i = 0; i < subs.length; i++) {
     var live = nameOf(subs[i]);
     if (!looksLikeNode(live)) continue;
-    if (live.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) continue; // [Обход
-    if (live.indexOf('\u0418\u0433\u0440\u044B') >= 0) continue;        // Игры
+    if (live.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) continue;
+    if (live.indexOf('\u0418\u0433\u0440\u044B') >= 0) continue;
     var k = matchKey(live);
     var r = ratIdx[k];
-    if (!r) continue;                       // сервер не знает узел -> пропуск
+    if (!r) continue;
     seenRat++;
-    if (r.light !== 'green') continue;       // ГЕЙТ: только зелёные
+    if (r.light !== 'green') continue;
     seenGreen++;
-    var m = spdPrim[k] || spdAlt[k] || null; // метрики: тек. сеть -> др. -> нет
+    var m = spdPrim[k] || spdAlt[k] || null;
     cands.push({
       live: live, k: k, country: r.country || '??',
       stability: (typeof r.stability === 'number') ? r.stability : 0,
-      score: aiScore(m) - penaltyNow(pen, k), hasMetrics: !!m  // штраф D.8 вычитается
+      score: aiScore(m) - penaltyNow(pen, k), hasMetrics: !!m
     });
   }
 
@@ -253,7 +229,6 @@ async function main() {
 
   var pick, reason;
   if (cur) {
-    // sticky: текущий узел в гейте. Только апгрейд ВНУТРИ страны.
     var sameC = cands.filter(function (c) { return c.country === cur.country && c.k !== cur.k; });
     var best = sameC.length ? bestIn(sameC) : null;
     var cooldownOk = !prev.lastSwitched || (now() - prev.lastSwitched) >= COOLDOWN_MS;
