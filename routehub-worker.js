@@ -1,16 +1,16 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.4.16 (2026-06-06)
+// VERSION: worker v0.4.17 (2026-06-06)
 //
 // GET  /config?key=kN  -> персональный routehub.conf
 // POST /speed          -> {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json,
 //                         пересборка nodes-kN с ТИРАМИ-полосками
 // GET  /whoami         -> детект сети по request.cf (нужен прямой запрос)
 //
-// Тиры (спека ЭТАП_D_ФОРМУЛА.md): абсолютная достаточность СКОРОСТИ, 3-сегментная
-//   полоска ▰▰▰/▰▰▱/▰▱▱/▱▱▱; мёртвый ⛔. Имя: "база · 🛜▰▰▱ 📱▰▱▱".
-//   show_rtt -> добавляет цифры (down↓rtt). Метрики jit/bl хранятся для селектора (D.5).
-// Сортировка nodes-kN — по down (умный выбор узла делает селектор по баллу группы).
+// Тиры (ЭТАП_D_ФОРМУЛА.md): абсолютная достаточность СКОРОСТИ по РЕАЛЬНЫМ битрейтам,
+//   полоска ▰▰▰(≥5,1080p)/▰▰▱(2-4,720p)/▰▱▱(1,SD-веб)/▱▱▱(<1); мёртвый ⛔.
+//   Имя: "база · 🛜▰▰▱ 📱▰▱▱". show_rtt -> цифры (down↓rtt). jit/bl — для селектора (D.5).
+// Сортировка nodes-kN — по down (умный выбор делает селектор по баллу группы, без отбраковки).
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
@@ -26,8 +26,9 @@ const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
 
-// тир достаточности скорости (абсолютные пороги, Мбит/с): 0..3 заполненных сегмента
-function speedTier(down) { if (down >= 15) return 3; if (down >= 6) return 2; if (down >= 2) return 1; return 0; }
+// тир достаточности скорости (РЕАЛЬНЫЕ битрейты, Мбит/с): 0..3 заполненных сегмента
+// ≥5=1080p, 2-4=720p, 1=SD/веб, <1=плохо
+function speedTier(down) { if (down >= 5) return 3; if (down >= 2) return 2; if (down >= 1) return 1; return 0; }
 function tierBar(t) { return BAR_F.repeat(t) + BAR_E.repeat(3 - t); }
 
 function ghHeaders(token) {
@@ -139,7 +140,6 @@ async function handleConfig(url, env) {
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 
-// {name,...} -> {down,rtt,jit,bl} | {dead:true}
 function metricOf(s) {
   if (s.dead) return { dead: true };
   return {
@@ -182,7 +182,6 @@ async function handleSpeed(req, env) {
 
   const showRtt = !!e.show_rtt;
 
-  // MERGE
   const metricsFile = 'metrics-' + key + '.json';
   let state = {};
   const sraw = fileContent(files, metricsFile);
