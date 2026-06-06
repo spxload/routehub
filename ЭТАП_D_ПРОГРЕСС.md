@@ -1,123 +1,67 @@
-# ЭТАП D — ПРОГРЕСС и «грабли» (для продолжения)
+# ЭТАП D — ЗАВЕРШЁН (личные подписки, AI-селектор, спидтест, иконки)
 
-> Читать вместе с `ЭТАП_D_ФОРМУЛА.md` (метрики/формула/тиры/иконки — ИСТОЧНИК ИСТИНЫ),
-> `ЭТАП_D_ЛИЧНЫЕ_ПОДПИСКИ.md` (архитектура), `СТАРТ.md`. Состояние 2026-06-06.
+> Источники: `ЭТАП_D_ФОРМУЛА.md` (метрики/иконки), `ЭТАП_D_ЛИЧНЫЕ_ПОДПИСКИ.md`
+> (архитектура), `СТАРТ.md`. Состояние 2026-06-06.
 
-## Статус
-- **D.0–D.4 готовы и проверены** (Wi-Fi и сотовая).
-- **D.5–D.9 — КОД ГОТОВ** (см. ниже). Все скрипты в репозитории, конфиг проводит их,
-  Worker деплоен. **Остался ТОЛЬКО тест на устройстве — D.10** (чек-лист внизу).
-- D.10 делает Диана; по результату — финальная чистка временных хаков.
+## Статус: D.0–D.10 ГОТОВЫ и проверены на устройстве. Временные хаки сняты.
+Дальше — Этапы E (Wi-Fi/сотовая), F (РКН-обход), I (звонки), J (TikTok): новые чаты.
 
-## Что сделано в D.5–D.9
-- **D.5** `routehub-core.js` v0.5.1 — AI-селектор (cron 30м). Гейт по рейтингу → балл AIM →
-  sticky/Германия-якорь. + читает штраф кнопки (D.8), кэширует рейтинг (`rh_ratings_cache`).
-- **D.6** `routehub-health.js` v0.1.0 — health RH-AI (cron 20м): проба ТЕКУЩЕГО узла; мёртв →
-  штраф + переключение в той же стране. url-test/fallback группы Loon чинит сам (не трогаем).
-- **D.7** `routehub-netwatch.js` v0.1.0 — единый network-changed: слоистый детект сети
-  (ssid → маяки/Яндекс → оператор whoami/ipaso), детектор whitelist РКН, autorefresh тап-пуш.
-- **D.8** `routehub-ai-bad.js` v0.1.0 — generic-кнопка «AI не работает» (вручную): штраф
-  текущему узлу (`rh_ai_penalty`, затухает 6ч) + немедленный переход на узел другой страны.
-- **D.9** `routehub-worker.js` v0.5.0 — иконки блок+процент; argument для RH-Net.
-  `routehub.conf` C-draft-7 — RH-Health и RH-Net включены, добавлена кнопка RH-AI-плохо.
+## Что работает (подтверждено на k1)
+- **core v0.6.1** (cron 30м): гейт green → балл AIM − штраф → **Германия-якорь
+  АБСОЛЮТНЫЙ по ИМЕНИ узла** (флаг 🇩🇪 ИЛИ слово «Германия»), sticky внутри страны,
+  возврат на якорь если узел увели. `setSelectPolicy` переключает (подтверждено).
+- **health v0.1.3** (cron 5м): проба текущего AI-узла; мёртв → штраф + узел той же
+  страны (по имени).
+- **netwatch v0.1.0** (network-changed): детект сети слоями (ssid→маяки/Яндекс→
+  оператор), whitelist РКН, autorefresh. async/await в Loon РАБОТАЕТ (подтверждено).
+- **ai-bad v0.1.4** (generic, ВРУЧНУЮ): штраф +40 (затух. 6ч) + sticky-переход в той
+  же стране (по имени); смена страны только если в стране нет зелёных.
+- **speedtest v0.4.13** (cron 20м): метрики down/rtt/jit/bl → POST.
+- **worker v0.6.0**: /config (абсолютный URL скриптов + argument key|origin|opts),
+  /speed (merge + иконки), /whoami. Иконки: блок ▁▃▅▇█+█⁺ (насыщ. 25=4K) + надстрочный
+  % от быстрейшего узла сети. Сортировка nodes-kN по download.
+- **conf C-draft-10**: RH-AI=select; RH-АВТО=fallback (по скорости); RH-Звонки/Обход=
+  fallback; RH-Apple=select; **RH-Все**=select (ручной тест, все узлы). Health 5м,
+  Speed 20м (enabled=true), Core 30м, Net network-changed, кнопка generic.
 
-## РИСК для D.10 (проверить первым)
-- `routehub-core.js`/health/netwatch/ai-bad используют **async/await + Promise**. Не
-  подтверждено, что JSC в Loon исполняет их в cron/network-changed/generic. Если в логе нет
-  строки `=== core v0.5.1 ===` или скрипт молча не отрабатывает — переписать на колбэки
-  (как `routehub-speedtest.js`, он намеренно на колбэках). Это ГЛАВНАЯ точка отказа.
+## КЛЮЧЕВОЙ УРОК D (зафиксировать)
+- **Страна узла берётся ИЗ ИМЕНИ (флаг/слово), НЕ из GeoIP `rating.country`.** GeoIP
+  выходного IP ВРЁТ: напр. «🇫🇮 Финляндия [VPN]» имеет country=DE; «🇬🇧 Великобритания»
+  → RO; «🇦🇲 Армения» → PH. Функция `countryFromName` (flagToISO + словарь слов) — в
+  core/health/ai-bad одинаково. GeoIP оставлен только справкой.
+- **Переключение группы: `$config.setSelectPolicy(group, node)`** (РАБОТАЕТ).
+  `$config.getConfig(group,node)` — ЧИТАЮЩИЙ (возвращает весь конфиг), НЕ переключает.
+- **async/await + Promise в Loon** (cron/network-changed/generic) — работают.
+- **matchKey = norm(stripProvider(stripMetric(name)))**: stripProvider срезает ведущий
+  `[Lastdep] ` — ключи рейтинга с префиксом, имена из getSubPolicies без. Без этого
+  рейтинг матчился пусто.
+- ssid на iOS появляется при разрешении «Локация: Всегда» (дом fh_86bd02_5G запомнен).
 
-## Живая инфраструктура
-- **Worker:** `https://routehub.proton4iker.workers.dev` (Workers Builds, деплой при push в
-  main; GIST_TOKEN — Secret). `GET /config?key=kN`, `POST /speed`, `GET /whoami`.
-  Переписывает `script-path=routehub-*` → полный raw-URL + `?v=<ts>`; форсит RH-Speed
-  enabled=true + argument; добавляет RH-Net argument `key|origin|opts`. Рендерит nodes-kN.
-- **Гист** `GIST_ID=b14194982ad9d058c21d393d0f342147`: `lastdep-nodes.txt` (эталон, base64),
-  `nodes-kN.txt` (профиль, base64), `metrics-kN.json` (merge `{matchKey:{w:{down,rtt,jit,bl},c}}`),
-  `devices.json` (реестр+флаги), `debug-kN.json` (ВРЕМЕННО).
-- **k1** забиндан (Диана). k2 — free.
+## Финальная зачистка (сделана)
+- worker v0.6.0: убраны `?v=` кэш-сбиватель, форс RH-Speed, запись debug-kN.json.
+- conf: RH-Speed enabled=true. Старые ai-region-switch.js/ai-switch-viewer.js — помечены
+  устаревшими (можно удалить через веб-GitHub).
+- Следствие: обновления скриптов теперь доходят по обычному кэшу Loon (~3-5 мин), без ?v=.
 
-## Флаги профиля (devices.json; Worker дописывает =false; правишь в гисте на GitHub)
-- `cell_unlim` — сотовая мерит ВСЕ узлы. `ewma` — сглаживание (рекоменд. для сотовой).
-- `show_rtt` — цифры down↓rtt рядом с иконкой. `auto_refresh` — тап-пуш обновления при смене сети.
+## Осталось проверить «в поле» (не блокирует закрытие D)
+- **netwatch на сотовой вне дома**: строка оператора (whoami/ipaso) и поведение при
+  whitelist. `ECHO_URL=https://yandex.ru/internet/` — подтвердить, отдаёт ли IP в теле;
+  если нет — оператор «?», слои 1–2 работают.
+- Хук проверки AI-узла в netwatch при смене сети — НЕ добавлен (Диана не просила).
+- `routehub-viewer.js` — не сделан (опционально; состояние видно по уведомлениям/логам).
 
-## ИКОНКИ (ЭТАП_D_ФОРМУЛА.md — источник истины)
-- Уровень качества = заполняющийся блок (насыщение 25 Мбит=4K): `▁`360p `▃`480p `▅`720p
-  `▇`1080p `█`4K `█⁺`4K+. Мёртвый `⛔`.
-- НАДСТРОЧНЫЙ процент от быстрейшего узла сети — на каждом узле: `¹⁰⁰ ⁸² ⁴⁰`.
-- Имя: `база · 🛜█⁺ ¹⁰⁰ 📱▅ ³⁸`. show_rtt → добавляет ` down↓rtt`.
-- Процент в пределах СЕТИ (w/c). По оператору — когда появится per-operator кэш.
+## Выдача k2 жене
+1. Дать жене ссылку конфига `https://routehub.proton4iker.workers.dev/config?key=k2`.
+2. Её Loon добавляет как удалённый конфиг → первый спидтест сделает POST → Worker
+   забиндит k2 (status free→bound, nonce её устройства), заведёт nodes-k2/metrics-k2.
+3. Флаги k2 (cell_unlim/ewma/show_rtt/auto_refresh) — править в `devices.json` гиста.
+4. Метки скорости у неё — свои (другой оператор/Wi-Fi), считаются на её телефоне.
 
-## Балл/выбор (D.5) — ЭТАП_D_ФОРМУЛА.md
-Гейт сервера (живой green / страна / chatgpt-claude≠block) → балл AI = `2·rtt_pts +
-1.5·jit_pts + 1·bl_pts + 0.5·s(CAP=3)` (пороги Cloudflare AIM) − штраф D.8 → sticky.
-Рейтинг сервера — ГЕЙТ, не слагаемое. Метрики — локальный кэш (тек.сеть→др.→нет; нет→балл 0,
-узел НЕ исключается). 3 профиля хватает.
+## Файлы Этапа D (финальные версии)
+worker v0.6.0, core v0.6.1, health v0.1.3, ai-bad v0.1.4, netwatch v0.1.0,
+speedtest v0.4.13, conf C-draft-10, ЭТАП_D_ФОРМУЛА.md, wrangler.toml.
 
-## ГРАБЛИ (не наступать)
-1. Узлы — base64. 2. Loon нормализует пробелы → матч по `norm`. 3. `getSubPolicies`→JSON-СТРОКА,
-имя в `.name`. 4. `__down?bytes=0`→"Empty response"; мерить `bytes=1`. 5. `ssid` часто пуст →
-детект сети слоями (D.7). 6. Loon кэширует скрипты по URL → `?v=<ts>` (ВРЕМЕННО). 7. VERSION
-в логе. 8. rtt — не пинг (min из 3). 9. Loon НЕ даёт менять URL подписки/перезагружать молча;
-обновление — только `loon://update?sub=all` тапом. 10. Иконки сети верны лишь при верном детекте.
-11. Worker рендерит nodes-kN из MERGE (не с нуля) — POST одной сети не затирает другую. 12. Имена
-в RH-AI с суффиксом ` · 🛜… 📱…`; выбор живым именем, гейт/метрики по `matchKey`. 13. async/await —
-см. «РИСК» выше.
-
-## Контракты
-- POST /speed: `{key,nonce,wifi:[ITEM],cell:[ITEM]}`, ITEM хороший `{name,down,rtt,jit,bl?}`,
-  мёртвый `{name,dead:true}`. Пустой массив = не обновлять (merge сохранит).
-- GET /whoami: `{ip,asn,aso,country,net}` (прямой запрос, node:"DIRECT").
-- Кэш телефона: `rh_speed_wifi`/`rh_speed_cell` = `{baseName:{down,rtt,jit,bl,ts,att,fails}}`.
-  baseName = имя до ` · `. Состояние селектора: `rh_core_state`. Штраф: `rh_ai_penalty`
-  `{matchKey:{p,ts}}`. Сеть: `rh_net_state`, дом: `rh_home_ssids`/`rh_home_aso`.
-- Переключение группы (A.12): `$config.getConfig(policyName, selectName)`; fallback `setSelectPolicy`.
-
-## Детект сети БЕЗ геолокации (D.7) — реализовано
-Слой 1 ssid → wifi (+учёт домашних). Слой 2 сотовая: маяки общего интернета (gstatic+cloudflare
-204) vs Яндекс → cell / cell-whitelist(РКН) / offline. Слой 3 оператор best-effort:
-origin/whoami через DIRECT (request.cf.asOrganization); фолбэк — IP из страницы Яндекса +
-`$utils.ipaso`. **ECHO_URL=`https://yandex.ru/internet/` — ПРОВЕРИТЬ на устройстве** (возвращает
-ли IP в теле; если нет — оператор останется «?», слои 1–2 работают). Whitelist → флаг + пуш;
-авто-обход маршрутизацией — Этап F (не D).
-
-## ВРЕМЕННОЕ — снять ФИНАЛЬНЫМ коммитом ПОСЛЕ D.10 (не раньше — иначе кэш скриптов застрянет)
-`?v=<ts>` cache-buster; форс enabled=true RH-Speed; `debug-kN.json`. Тогда же удалить старые
-`ai-region-switch.js`/`ai-switch-viewer.js` (заменены ядром).
-
-## D.10 — ЧЕК-ЛИСТ ТЕСТА (делает Диана)
-**Подготовка:**
-1. На k1: обновить подписку (`loon://update?sub=all` тапом). Дать Loon «Локация: Всегда» (для ssid).
-2. В гисте у k1 при желании выставить `ewma:true` (сотовая прыгает), `show_rtt:true` (видеть цифры).
-3. Один Wi-Fi-прогон спидтеста, чтобы метки 🛜 наполнились (кэш мог опустеть).
-
-**D.5 ядро (RH-Core):**
-4. Запустить RH-Core (вручную из списка скриптов или дождаться :00/:30). Лог: `=== core v0.5.1 ===`,
-   `сеть=…`, `зелёных N`, строка `⚡/✓ [DE] … балл=…`. **Нет первой строки → async/await не идёт
-   (см. РИСК) — сообщить, перепишу на колбэки.**
-5. Loon → Policy → RH-AI переключилась на выбранный узел. Если НЕТ — A.12 не сработал; в `setPolicy`
-   поменять primary на `setSelectPolicy`.
-6. ChatGPT и Claude работают через VPN, узел немецкий зелёный.
-7. Повторный запуск: `✓ sticky`, узел не дёргается, уведомления нет.
-
-**D.6 health (RH-Health):** 8. Запустить вручную. Если текущий узел жив — лог `✓ … жив`, тихо.
-
-**D.7 netwatch (RH-Net):** 9. Переключить Wi-Fi↔сотовая. Лог `=== netwatch …`, `сеть=wifi/cell`.
-   На сотовой — строка оператора (или `?`). При `auto_refresh:true` — тап-пуш о смене сети.
-
-**D.8 кнопка (RH-AI-плохо):** 10. Запустить вручную при активном AI-узле. Должно: штраф текущему +
-   переход на узел ДРУГОЙ страны + пуш «Переключено: X → Y». Проверить, что ядро потом не вернуло
-   оштрафованный узел сразу.
-
-**D.9 иконки:** 11. В именах узлов RH-AI/RH-АВТО видны `🛜█⁺ ¹⁰⁰`-метки; при `show_rtt` — цифры.
-
-**После успеха:** сообщить — сниму временные хаки (п. «ВРЕМЕННОЕ») финальным коммитом.
-
-## Метод замера (почему ниже Ookla) — НЕ баг
-Через VPN-узел, ОДИН поток, до Cloudflare; Ookla — сырой канал, много потоков. Для СРАВНЕНИЯ
-узлов верно. Для видео-профиля спека требует 2–4 потока (TODO в спидтесте, по итогам D.10).
-
-## Файлы Этапа D (версии)
-`routehub-worker.js` v0.5.0, `routehub-speedtest.js` v0.4.13, `routehub-core.js` v0.5.1,
-`routehub-health.js` v0.1.0, `routehub-netwatch.js` v0.1.0, `routehub-ai-bad.js` v0.1.0,
-`ЭТАП_D_ФОРМУЛА.md`, `wrangler.toml`, `routehub.conf` C-draft-7.
+## Хранилище телефона ($persistentStore)
+rh_speed_wifi/rh_speed_cell (кэш метрик), rh_core_state (sel:{k,live,country,score,
+reason,lastSwitched}), rh_ai_penalty ({matchKey:{p,ts}}), rh_ratings_cache,
+rh_net_state, rh_home_ssids, rh_home_aso, RH_script_lock.
