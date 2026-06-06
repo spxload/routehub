@@ -1,16 +1,16 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.4.12 (2026-06-05)';
+var VERSION = 'speedtest v0.4.13 (2026-06-06)';
 //
 // Тип: cron (весь день, каждые 20 мин). Аргумент: "<key>|<origin>|<opts>".
-//   opts (через запятую): cellall — сотовая мерит все; ewma — сглаживание.
+//   opts: cellall — сотовая мерит все; ewma — сглаживание.
 // Пул [VPN]+[Игры] из RH-АВТО (getSubPolicies -> JSON-СТРОКА).
-// Отклик: min из RTT_SAMPLES проб bytes=1. Скорость: 4 МБ -> 12 МБ на быстрых.
-// EWMA (флаг ewma): сглаживание down/rtt = a*новое + (1-a)*старое — один
-//   случайный замер не дёргает рейтинг. Без флага — последнее значение.
+// Метрики (спека ЭТАП_D_ФОРМУЛА.md): down, rtt(min из 3), jit(=max-min проб),
+//   bl(=отклик под нагрузкой - rtt; проба параллельно скачиванию, approx).
+// EWMA (флаг): сглаживание down/rtt/jit/bl.
 // НАДЁЖНОСТЬ: 0/сбой не «готов», бэкофф RETRY_MS; после MAX_FAILS -> мёртв
-//   (бэкофф DEAD_MS, маркер ⛔); на сервер только хорошие (down>0) или мёртвые.
-// Wi-Fi: все узлы; сотовая: 5, либо все при cellall. ОТПРАВКА: оба кэша.
+//   (DEAD_MS, маркер ⛔); на сервер только хорошие (down>0) или мёртвые.
+// Wi-Fi: все; сотовая: 5 либо все при cellall. ОТПРАВКА: оба кэша.
 // =============================================================
 
 var BATCH_ALL = 80;
@@ -19,7 +19,7 @@ var CACHE_MS = 24 * 3600 * 1000;
 var RETRY_MS = 15 * 60 * 1000;
 var DEAD_MS = 6 * 3600 * 1000;
 var MAX_FAILS = 5;
-var EWMA_A = 0.6;                 // вес нового замера при сглаживании
+var EWMA_A = 0.6;
 var DOWN_BYTES = 4000000;
 var DOWN_BIG = 12000000;
 var FAST_SEC = 1.5;
@@ -60,8 +60,12 @@ function buildArr(cacheKey) {
   for (var nm in c) {
     if (!c.hasOwnProperty(nm) || !looksLikeNode(nm)) continue;
     var e = c[nm];
-    if ((e.fails || 0) >= MAX_FAILS) out.push({ name: nm, dead: true });
-    else if (e.down > 0) out.push({ name: nm, down: e.down, rtt: e.rtt });
+    if ((e.fails || 0) >= MAX_FAILS) { out.push({ name: nm, dead: true }); continue; }
+    if (e.down > 0) {
+      var it = { name: nm, down: e.down, rtt: e.rtt, jit: e.jit || 0 };
+      if (e.bl != null) it.bl = e.bl;
+      out.push(it);
+    }
   }
   return out;
 }
@@ -109,41 +113,50 @@ function main() {
     });
   }
 
-  function rttProbe(name, n, best, cb) {
-    if (n <= 0) { cb(best); return; }
+  // N проб задержки -> массив времён (для min и джиттера)
+  function rttSamples(name, n, acc, cb) {
+    if (n <= 0) { cb(acc); return; }
     var t0 = Date.now();
     $httpClient.get({ url: DOWN_HOST + '?bytes=' + RTT_BYTES + '&t=' + Date.now(), node: name, timeout: RTT_TIMEOUT },
       function (e) {
-        if (!e) { var d = Date.now() - t0; if (best === null || d < best) best = d; }
-        rttProbe(name, n - 1, best, cb);
+        if (!e) acc.push(Date.now() - t0);
+        rttSamples(name, n - 1, acc, cb);
       });
   }
 
-  function rateOf(name, bytes, cb) {
+  // скачивание; при withLoaded — параллельная проба задержки под нагрузкой
+  function rateOf(name, bytes, withLoaded, cb) {
     var s0 = Date.now();
+    var loaded = null;
+    if (withLoaded) {
+      var p0 = Date.now();
+      $httpClient.get({ url: DOWN_HOST + '?bytes=' + RTT_BYTES + '&t=L' + Date.now(), node: name, timeout: RTT_TIMEOUT },
+        function (e) { if (!e) loaded = Date.now() - p0; });
+    }
     $httpClient.get({ url: DOWN_HOST + '?bytes=' + bytes + '&t=' + Date.now(), node: name, timeout: DOWN_TIMEOUT },
       function (e, r) {
-        if (e || !r || r.status !== 200) { cb(null, 0); return; }
+        if (e || !r || r.status !== 200) { cb(null, 0, null); return; }
         var sec = (Date.now() - s0) / 1000;
-        cb(sec > 0 ? Math.round((bytes * 8 / 1e6) / sec) : 0, sec);
+        cb(sec > 0 ? Math.round((bytes * 8 / 1e6) / sec) : 0, sec, loaded);
       });
   }
 
   function measureNode(name, cb) {
-    rttProbe(name, RTT_SAMPLES, null, function (rtt) {
-      if (rtt === null) { console.log('  x RTT [' + name + ']: нет ответа'); cb(null); return; }
-      rateOf(name, DOWN_BYTES, function (mbps1, sec1) {
-        if (mbps1 === null || mbps1 <= 0) { console.log('  ~ DOWN [' + name + ']: fail (rtt ' + rtt + ')'); cb(null); return; }
-        if (sec1 < FAST_SEC) {
-          rateOf(name, DOWN_BIG, function (mbps2) {
-            var down = (mbps2 === null || mbps2 <= 0) ? mbps1 : mbps2;
-            console.log('  ok [' + name + '] ' + down + ' Mbps ' + rtt + 'ms');
-            cb({ down: down, rtt: rtt });
-          });
-        } else {
-          console.log('  ok [' + name + '] ' + mbps1 + ' Mbps ' + rtt + 'ms');
-          cb({ down: mbps1, rtt: rtt });
+    rttSamples(name, RTT_SAMPLES, [], function (acc) {
+      if (!acc.length) { console.log('  x RTT [' + name + ']: нет ответа'); cb(null); return; }
+      var mn = acc[0], mx = acc[0];
+      for (var i = 1; i < acc.length; i++) { if (acc[i] < mn) mn = acc[i]; if (acc[i] > mx) mx = acc[i]; }
+      var jit = Math.round(mx - mn);
+      rateOf(name, DOWN_BYTES, true, function (mbps1, sec1, loaded) {
+        if (mbps1 === null || mbps1 <= 0) { console.log('  ~ DOWN [' + name + ']: fail (rtt ' + mn + ')'); cb(null); return; }
+        var bl = (loaded != null) ? Math.max(0, loaded - mn) : null;
+        function done(down) {
+          console.log('  ok [' + name + '] ' + down + ' Mbps ' + mn + 'ms j' + jit + (bl != null ? ' bl' + bl : ''));
+          cb({ down: down, rtt: mn, jit: jit, bl: bl });
         }
+        if (sec1 < FAST_SEC) {
+          rateOf(name, DOWN_BIG, false, function (mbps2) { done((mbps2 && mbps2 > 0) ? mbps2 : mbps1); });
+        } else { done(mbps1); }
       });
     });
   }
@@ -153,15 +166,17 @@ function main() {
     var fullName = list[i], base = baseName(fullName), prev = results[base] || {};
     measureNode(fullName, function (res) {
       if (res && res.down > 0) {
-        var nd = res.down, nr = res.rtt;
+        var nd = res.down, nr = res.rtt, nj = res.jit, nb = res.bl;
         if (useEwma && prev.down > 0 && prev.ts > 0) {
           nd = Math.round(EWMA_A * res.down + (1 - EWMA_A) * prev.down);
           nr = Math.round(EWMA_A * res.rtt + (1 - EWMA_A) * prev.rtt);
+          if (res.jit != null && prev.jit != null) nj = Math.round(EWMA_A * res.jit + (1 - EWMA_A) * prev.jit);
+          if (res.bl != null && prev.bl != null) nb = Math.round(EWMA_A * res.bl + (1 - EWMA_A) * prev.bl);
         }
-        results[base] = { down: nd, rtt: nr, ts: Date.now(), att: Date.now(), fails: 0 };
+        results[base] = { down: nd, rtt: nr, jit: nj, bl: nb, ts: Date.now(), att: Date.now(), fails: 0 };
       } else {
         var f = (prev.fails || 0) + 1;
-        results[base] = { down: prev.down || 0, rtt: prev.rtt || 0, ts: prev.ts || 0, att: Date.now(), fails: f };
+        results[base] = { down: prev.down || 0, rtt: prev.rtt || 0, jit: prev.jit || 0, bl: (prev.bl == null ? null : prev.bl), ts: prev.ts || 0, att: Date.now(), fails: f };
         if (f === MAX_FAILS) console.log('  ! [' + base + '] помечен как мёртвый (' + f + ' неудач)');
       }
       writeJSON(RKEY, results);
