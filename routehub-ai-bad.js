@@ -1,18 +1,13 @@
 // =============================================================
 // routehub-ai-bad.js — RouteHub, кнопка «AI не работает» (Этап D, шаг D.8)
-var VERSION = 'ai-bad v0.1.0 (2026-06-06)';
+var VERSION = 'ai-bad v0.1.1 (2026-06-06)';
 //
 // Тип: generic (запуск ВРУЧНУЮ из интерфейса Loon). Аргумент не нужен.
-// Делает две вещи (решение Дианы: штраф + переход):
-//   1. ШТРАФ текущему AI-узлу — rh_ai_penalty[k] += PEN_STEP (до PEN_CAP),
-//      ts=now. Штраф вычитается из балла в routehub-core.js и затухает 6ч,
-//      т.е. ядро какое-то время не вернёт этот узел.
-//   2. ПЕРЕХОД немедленно — выбирает лучший зелёный узел ДРУГОЙ страны
-//      (смена региона; если зелёных в других странах нет — другой узел той же).
-//
-// Источник рейтинга: кэш ядра rh_ratings_cache (мгновенно); если пуст —
-//   тянет raw/jsdelivr. Баллы/гейт/матчинг — как в ядре (согласованно).
-// Узлы из getSubPolicies(RH-AI); выбор живым именем через $config.getConfig.
+//   1. ШТРАФ текущему AI-узлу — rh_ai_penalty[k] += PEN_STEP (до PEN_CAP).
+//      Вычитается из балла в ядре, затухает 6ч.
+//   2. ПЕРЕХОД — лучший зелёный узел ДРУГОЙ страны (иначе другой узел той же).
+// Рейтинг: кэш ядра rh_ratings_cache; если пуст — raw/jsdelivr.
+// Матч имён: matchKey = norm(stripProvider(stripMetric(name))).
 // =============================================================
 
 var GROUP = 'RH-AI';
@@ -25,8 +20,8 @@ var COUNTRY_PRIORITY = ['DE','NL','CH','BE','FR','AT','GB','FI','SE','NO',
   'PL','EE','LV','LT','CZ','ES','IE','US','CA','JP','SG','KR'];
 
 var PENALTY_KEY = 'rh_ai_penalty';
-var PEN_STEP = 40;                    // штраф за одно нажатие (ед. балла AIM)
-var PEN_CAP = 100;                    // потолок накопленного штрафа
+var PEN_STEP = 40;
+var PEN_CAP = 100;
 var STATE_KEY = 'rh_core_state';
 var RCACHE_KEY = 'rh_ratings_cache';
 var WIFI_KEY = 'rh_speed_wifi';
@@ -41,8 +36,9 @@ function readJSON(k, d) { try { var s = $persistentStore.read(k); return s ? JSO
 function writeJSON(k, o) { try { $persistentStore.write(JSON.stringify(o), k); } catch (e) {} }
 
 function stripMetric(n) { var i = n.indexOf(METRIC_SEP); return i >= 0 ? n.slice(0, i) : n; }
+function stripProvider(s) { return String(s).replace(/^\s*\[[^\]]*\]\s+/, ''); }
 function norm(s) { return String(s).replace(/\s+/g, ' ').trim(); }
-function matchKey(n) { return norm(stripMetric(n)); }
+function matchKey(n) { return norm(stripProvider(stripMetric(n))); }
 function looksLikeNode(n) { return typeof n === 'string' && n.length >= 5 && n.indexOf('[') >= 0; }
 function nameOf(el) {
   if (typeof el === 'string') return el;
@@ -94,7 +90,7 @@ function httpGet(url) {
 }
 async function getRatings() {
   var c = readJSON(RCACHE_KEY, null);
-  if (c && c.nodes) return c;             // кэш ядра — мгновенно
+  if (c && c.nodes) return c;
   for (var i = 0; i < RATINGS_URLS.length; i++) {
     var r = await httpGet(RATINGS_URLS[i]);
     if (r.ok && r.status === 200 && r.body) { try { var d = JSON.parse(r.body); if (d && d.nodes) return d; } catch (e) {} }
@@ -121,7 +117,6 @@ async function main() {
     $done({}); return;
   }
 
-  // 1. штраф текущему
   var pen = readJSON(PENALTY_KEY, {});
   var e = pen[cur.k] || { p: 0, ts: 0 };
   e.p = Math.min(PEN_CAP, (e.p || 0) + PEN_STEP);
@@ -130,7 +125,6 @@ async function main() {
   writeJSON(PENALTY_KEY, pen);
   log('штраф [' + cur.k + '] p=' + e.p);
 
-  // 2. немедленный переход на другую страну
   var data = await getRatings();
   var subs = await getSubPolicies(GROUP);
   if (!data || !data.nodes || !subs.length) {
@@ -149,7 +143,7 @@ async function main() {
     if (!looksLikeNode(live)) continue;
     if (live.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0 || live.indexOf('\u0418\u0433\u0440\u044B') >= 0) continue;
     var k = matchKey(live);
-    if (k === cur.k) continue;            // не текущий
+    if (k === cur.k) continue;
     var r = ratIdx[k];
     if (!r || r.light !== 'green') continue;
     var m = spdP[k] || spdA[k] || null;
@@ -160,7 +154,6 @@ async function main() {
     $done({}); return;
   }
 
-  // приоритет: другая страна; если таких нет — любой другой узел
   var diffCountry = all.filter(function (c) { return c.country !== cur.country; });
   var pick = (diffCountry.length ? freshPick(diffCountry) : bestIn(all));
 
@@ -171,7 +164,7 @@ async function main() {
 
   $notification.post('\uD83E\uDD16 RouteHub AI',
     'Переключено: ' + cur.country + ' \u2192 ' + pick.country,
-    pick.k.replace('[Lastdep] ', '') + (applied ? '' : '  (применить не удалось)'));
+    pick.k + (applied ? '' : '  (применить не удалось)'));
   $done({});
 }
 

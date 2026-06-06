@@ -1,22 +1,14 @@
 // =============================================================
 // routehub-health.js — RouteHub, здоровье AI-узла (Этап D, шаг D.6)
-var VERSION = 'health v0.1.0 (2026-06-06)';
+var VERSION = 'health v0.1.1 (2026-06-06)';
 //
 // Тип: cron (каждые 20 мин, tag=RH-Health). Аргумент не нужен.
-//
-// ОБЛАСТЬ: только RH-AI. RH-АВТО (url-test) и RH-Звонки/RH-Обход (fallback)
-//   Loon чинит сам нативно — отдельная проба избыточна (простота).
-//   RH-AI — select, управляется скриптом, сама НЕ чинится -> ей нужен health.
-//
-// ЛОГИКА (план D.2): проверяет ТОЛЬКО текущий узел RH-AI (одна лёгкая проба
-//   через него, не все узлы). Если жив — тихо выходит. Если мёртв:
-//     1. штрафует узел в rh_ai_penalty (PEN_CAP) — ядро тоже его обойдёт;
-//     2. переключает на зелёный узел ТОЙ ЖЕ страны (защита от бана — без
-//        смены региона); если в стране живых нет — резерв (freshPick);
-//     3. пуш.
-//   НЕ тестирует все узлы, НЕ шлёт данные на сервер, НЕ меняет страну без нужды.
-//
-// Реакция быстрее серверного рейтинга (2ч) и комплементарна ядру (30 мин).
+// ОБЛАСТЬ: только RH-AI (select, сама не чинится). url-test/fallback Loon чинит сам.
+// ЛОГИКА: проба ТЕКУЩЕГО узла RH-AI. Жив — тихий выход. Мёртв -> штраф
+//   (rh_ai_penalty) + переключение на зелёный ТОЙ ЖЕ страны (защита от бана);
+//   нет в стране -> резерв (freshPick); пуш.
+// Матч имён: matchKey = norm(stripProvider(stripMetric(name))) — ключи рейтинга
+//   с префиксом '[Lastdep] ', имена из getSubPolicies без него.
 // =============================================================
 
 var GROUP = 'RH-AI';
@@ -50,8 +42,9 @@ function readJSON(k, d) { try { var s = $persistentStore.read(k); return s ? JSO
 function writeJSON(k, o) { try { $persistentStore.write(JSON.stringify(o), k); } catch (e) {} }
 
 function stripMetric(n) { var i = n.indexOf(METRIC_SEP); return i >= 0 ? n.slice(0, i) : n; }
+function stripProvider(s) { return String(s).replace(/^\s*\[[^\]]*\]\s+/, ''); }
 function norm(s) { return String(s).replace(/\s+/g, ' ').trim(); }
-function matchKey(n) { return norm(stripMetric(n)); }
+function matchKey(n) { return norm(stripProvider(stripMetric(n))); }
 function looksLikeNode(n) { return typeof n === 'string' && n.length >= 5 && n.indexOf('[') >= 0; }
 function nameOf(el) {
   if (typeof el === 'string') return el;
@@ -120,7 +113,6 @@ function detectNet() {
   var ssid = ''; try { var cfg = JSON.parse($config.getConfig()); ssid = cfg && cfg.ssid ? String(cfg.ssid) : ''; } catch (e) {}
   return ssid ? 'wifi' : 'cell';
 }
-// проба текущего узла: жив, если хоть одна попытка вернула ответ
 async function probe(node) {
   for (var i = 0; i < PROBE_TRIES; i++) {
     var r = await new Promise(function (resolve) {
@@ -146,7 +138,6 @@ async function main() {
 
   log('\u26A0 [' + cur.k + '] не отвечает (' + PROBE_TRIES + ' проб) — переключаю');
 
-  // штраф мёртвому (ядро тоже обойдёт)
   var pen = readJSON(PENALTY_KEY, {});
   pen[cur.k] = { p: PEN_CAP, ts: now() };
   writeJSON(PENALTY_KEY, pen);
@@ -180,7 +171,6 @@ async function main() {
     $done({}); return;
   }
 
-  // защита от бана: сначала та же страна, иначе резерв
   var sameC = all.filter(function (c) { return c.country === cur.country; });
   var pick = (sameC.length ? bestIn(sameC) : freshPick(all));
 
@@ -191,7 +181,7 @@ async function main() {
 
   $notification.post('\uD83E\uDD16 RouteHub AI',
     'Узел AI заменён (' + cur.country + (pick.country === cur.country ? '' : ' \u2192 ' + pick.country) + ')',
-    pick.k.replace('[Lastdep] ', '') + (applied ? '' : '  (применить не удалось)'));
+    pick.k + (applied ? '' : '  (применить не удалось)'));
   $done({});
 }
 

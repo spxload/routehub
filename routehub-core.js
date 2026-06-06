@@ -1,6 +1,6 @@
 // =============================================================
 // routehub-core.js — RouteHub, AI-селектор (Этап D, шаг D.5)
-var VERSION = 'core v0.5.1 (2026-06-06)';
+var VERSION = 'core v0.5.2 (2026-06-06)';
 //
 // Тип: cron (каждые 30 мин). Аргумент НЕ нужен (рейтинг — публичный raw).
 // Назначает ОДИН узел группе RH-AI (все 5 AI идут через него).
@@ -21,7 +21,9 @@ var VERSION = 'core v0.5.1 (2026-06-06)';
 //     если кандидат лучше текущего на > HYSTERESIS и прошёл cooldown.
 //   - Германия пуста -> резервная страна (по числу зелёных узлов) -> глобально.
 //
-// Имена: матч рейтинг<->узел<->метрики по matchKey = norm(stripMetric(name)).
+// Имена: матч рейтинг<->узел<->метрики по matchKey = norm(stripProvider(stripMetric(name))).
+//   ВАЖНО: ключи рейтинга идут с префиксом '[Lastdep] ' (сервер), имена из
+//   getSubPolicies — без него -> stripProvider срезает ведущий '[...]'.
 //   ВЫБОР делается ЖИВЫМ именем из getSubPolicies (с суффиксом меток).
 // Переключение группы: $config.getConfig(policy, select) (контракт A.12),
 //   fallback $config.setSelectPolicy. Race-флаг RH_script_lock (Раздел 17.3).
@@ -57,10 +59,11 @@ var HTTP_TIMEOUT = 15000;
 
 var now = function () { return Date.now(); };
 
-// --- утилиты имён (идентичны Worker для согласованного матча) ---
+// --- утилиты имён (идентичны во всех скриптах для согласованного матча) ---
 function stripMetric(name) { var i = name.indexOf(METRIC_SEP); return i >= 0 ? name.slice(0, i) : name; }
+function stripProvider(s) { return String(s).replace(/^\s*\[[^\]]*\]\s+/, ''); } // срез ведущего '[Lastdep] '
 function norm(s) { return String(s).replace(/\s+/g, ' ').trim(); }
-function matchKey(name) { return norm(stripMetric(name)); }
+function matchKey(name) { return norm(stripProvider(stripMetric(name))); }
 function looksLikeNode(n) { return typeof n === 'string' && n.length >= 5 && n.indexOf('[') >= 0; }
 function nameOf(el) {
   if (typeof el === 'string') return el;
@@ -211,13 +214,14 @@ async function main() {
   var spdPrim = buildSpeedIdx(net === 'wifi' ? WIFI_KEY : CELL_KEY);
   var spdAlt = buildSpeedIdx(net === 'wifi' ? CELL_KEY : WIFI_KEY);
   var pen = readJSON(PENALTY_KEY, {});
-  log('сеть=' + net + ' метрик(' + net + ')=' + Object.keys(spdPrim).length + ' метрик(др.)=' + Object.keys(spdAlt).length);
+  log('сеть=' + net + ' метрик(' + net + ')=' + Object.keys(spdPrim).length + ' рейтинг=' + Object.keys(ratIdx).length);
 
   var subs = await getSubPolicies(GROUP);
   if (!subs.length) { log('пул RH-AI пуст/недоступен'); $done({}); return; }
 
   // кандидаты: гейт green + узел известен серверу; страховочно мимо обхода/игр
   var cands = [];
+  var seenRat = 0, seenGreen = 0;
   for (var i = 0; i < subs.length; i++) {
     var live = nameOf(subs[i]);
     if (!looksLikeNode(live)) continue;
@@ -226,7 +230,9 @@ async function main() {
     var k = matchKey(live);
     var r = ratIdx[k];
     if (!r) continue;                       // сервер не знает узел -> пропуск
+    seenRat++;
     if (r.light !== 'green') continue;       // ГЕЙТ: только зелёные
+    seenGreen++;
     var m = spdPrim[k] || spdAlt[k] || null; // метрики: тек. сеть -> др. -> нет
     cands.push({
       live: live, k: k, country: r.country || '??',
@@ -236,8 +242,8 @@ async function main() {
   }
 
   if (!cands.length) {
-    log('нет зелёных AI-узлов в пуле');
-    $notification.post('\uD83E\uDD16 RouteHub AI', 'Нет доступных узлов', 'Зелёных AI-узлов в пуле нет. Проверьте подписку/рейтинг.');
+    log('нет зелёных AI-узлов в пуле (совпало с рейтингом ' + seenRat + ', green ' + seenGreen + ')');
+    $notification.post('\uD83E\uDD16 RouteHub AI', 'Нет доступных узлов', 'Совпало с рейтингом: ' + seenRat + ', зелёных: ' + seenGreen + '.');
     $done({}); return;
   }
 
@@ -257,14 +263,12 @@ async function main() {
       pick = cur; reason = 'sticky';
     }
   } else {
-    // текущий выпал из гейта (red/исчез) либо холодный старт
     pick = freshPick(cands);
     reason = prev ? 'восстановление (тек. узел вне гейта)' : 'старт';
   }
 
   var changed = !prev || prev.k !== pick.k;
 
-  // применяем (с учётом race-флага)
   var applied = false;
   if (lockBusy()) {
     log('RH_script_lock занят — переключение пропущено');
@@ -274,7 +278,6 @@ async function main() {
     $persistentStore.write('', LOCK_KEY);
   }
 
-  // состояние
   state.version = VERSION;
   state.lastRun = now();
   state.dataAgeMin = ageMin;
@@ -290,11 +293,10 @@ async function main() {
   log((changed ? '\u26A1 ' : '\u2713 ') + '[' + pick.country + '] ' + pick.k +
     ' балл=' + Math.round(pick.score) + ' (' + reason + ', применено=' + applied + ')');
 
-  // уведомление — ТОЛЬКО при смене (без шума каждые 30 мин)
   if (changed && applied) {
     $notification.post('\uD83E\uDD16 RouteHub AI',
       'Узел AI: ' + pick.country + ' \u00B7 зелёных ' + cands.length + ' \u00B7 ' + ageMin + 'мин',
-      pick.k.replace('[Lastdep] ', '') + '  (' + reason + ')');
+      pick.k + '  (' + reason + ')');
   }
 
   $done({});
