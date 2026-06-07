@@ -1,21 +1,21 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D/E, личные подписки)
-// VERSION: worker v0.8.0 (2026-06-07) — пер-сетевые узлы через Worker (/nodes,/net,?src)
+// VERSION: worker v0.8.1 (2026-06-07) — + диагностика времени (/status, ?debug=1)
 //
-// GET  /config?key=kN[&ai=fallback|script][&refresh=N][&src=worker]
+// GET  /config?key=kN[&ai=fallback|script][&refresh=N][&src=worker][&debug=1]
 //        ?ai=fallback ИЛИ флаг ai_fallback -> RH-AI select->fallback, скрипты off.
 //        &refresh=N  -> update-interval=N сек на строке подписки (10..86400).
 //        &src=worker -> подписка = Worker /nodes (пер-сетевой рендер); иначе гист-raw.
-// GET  /nodes?key=kN   -> узлы под СОХРАНЁННУЮ сеть устройства (reg.net): метка
-//        ТОЛЬКО этой сети (🛜 или 📱) + сортировка по её скорости; Cache-Control:no-store.
-// POST /net            -> {key,nonce,net} netwatch сообщает текущую сеть (wifi|cell);
-//        пишется в devices.json[key].net только если устройство привязано и nonce совпал.
-// POST /speed          -> {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json (+ печёт
-//        nodes-kN.txt для старой гист-подписки; при src=worker не используется).
-// GET  /whoami         -> детект сети/оператора по request.cf (нужен прямой запрос).
-//
-// ИКОНКА (ЭТАП_D_ФОРМУЛА.md): блок (насыщение 25 Мбит=4K) + надстрочный % от
-//   быстрейшего узла сети. ▁<1 ▃1-2 ▅2-5 ▇5-15 █15-25 █⁺≥25. Мёртвый: 🛜⛔.
+//        &debug=1 (со src=worker) -> в URL /nodes добавляется &dbg=1 (пишет метки времени).
+// GET  /nodes?key=kN[&dbg=1] -> узлы под СОХРАНЁННУЮ сеть (reg.net): метка ТОЛЬКО
+//        этой сети (🛜/📱) + сортировка по её скорости; Cache-Control:no-store.
+//        &dbg=1 -> пишет reg.nodes_ts/nodes_n (последний запрос Loon; для /status).
+// POST /net            -> {key,nonce,net} netwatch сообщает сеть (wifi|cell); пишет
+//        reg.net/net_ts только привязанному устройству при совпадении nonce.
+// GET  /status?key=kN  -> {net, net_ts (когда пришёл /net), nodes_ts/nodes_n (когда
+//        Loon тянул /nodes), last_seen, server_now} — диагностика времени.
+// POST /speed          -> метрики + (печёт nodes-kN.txt для старой гист-подписки).
+// GET  /whoami         -> детект сети/оператора по request.cf.
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
@@ -145,7 +145,8 @@ async function handleConfig(url, env) {
   const ri = (rfRaw >= 10 && rfRaw <= 86400) ? (',update-interval=' + rfRaw) : '';
   let lastdep;
   if (url.searchParams.get('src') === 'worker') {
-    lastdep = url.origin + '/nodes?key=' + key + ',udp=true' + (ri || ',update-interval=120') + ',enabled=true';
+    const dbg = url.searchParams.get('debug') === '1' ? '&dbg=1' : '';
+    lastdep = url.origin + '/nodes?key=' + key + dbg + ',udp=true' + (ri || ',update-interval=120') + ',enabled=true';
   } else {
     lastdep = rawNodesUrl(env, key) + ',udp=true' + ri + ',enabled=true';
   }
@@ -196,11 +197,25 @@ async function handleNet(req, env) {
   const e = reg[key];
   // не привязан или чужой nonce -> не трогаем (никаких изменений привязки)
   if (e.status !== 'bound' || e.nonce !== nonce) return jsonResp({ ok: true, ignored: true });
-  if (e.net !== net) {
-    e.net = net;
-    await gistPatch(env, { 'devices.json': JSON.stringify(reg, null, 2) });
-  }
-  return jsonResp({ ok: true, net: net });
+  e.net = net;
+  e.net_ts = new Date().toISOString();
+  await gistPatch(env, { 'devices.json': JSON.stringify(reg, null, 2) });
+  return jsonResp({ ok: true, net: net, net_ts: e.net_ts });
+}
+
+// --- GET /status: диагностика времени (когда пришёл /net, когда Loon тянул /nodes) ---
+async function handleStatus(url, env) {
+  const key = url.searchParams.get('key') || '';
+  if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
+  const files = await gistGet(env);
+  const reg = ensureRegistry(files);
+  const e = reg[key];
+  if (!e) return jsonResp({ error: 'unknown key' }, 403);
+  return jsonResp({
+    key: key, status: e.status || null, net: e.net || null,
+    net_ts: e.net_ts || null, nodes_ts: e.nodes_ts || null, nodes_n: e.nodes_n || 0,
+    last_seen: e.last_seen || null, server_now: new Date().toISOString(),
+  });
 }
 
 // рендер узлов под ОДНУ сеть (wifi|cell): метка только этой сети + сортировка по ней
@@ -249,6 +264,12 @@ async function handleNodes(url, env) {
   if (!reg[key]) return new Response('unknown key', { status: 403 });
   const net = (reg[key].net === 'cell') ? 'cell' : 'wifi';
   const showRtt = !!reg[key].show_rtt;
+  // диагностика: отметить, когда Loon тянул /nodes (только при &dbg=1)
+  if (url.searchParams.get('dbg') === '1') {
+    reg[key].nodes_ts = new Date().toISOString();
+    reg[key].nodes_n = (reg[key].nodes_n || 0) + 1;
+    try { await gistPatch(env, { 'devices.json': JSON.stringify(reg, null, 2) }); } catch (e) {}
+  }
   const masterLines = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
   let state = {};
@@ -380,6 +401,7 @@ export default {
       if (req.method === 'GET' && url.pathname === '/whoami') return handleWhoami(req);
       if (req.method === 'GET' && url.pathname === '/config') return await handleConfig(url, env);
       if (req.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env);
+      if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env);
       if (req.method === 'POST' && url.pathname === '/speed') return await handleSpeed(req, env);
       if (req.method === 'POST' && url.pathname === '/net') return await handleNet(req, env);
       return new Response('routehub-worker: not found', { status: 404 });
