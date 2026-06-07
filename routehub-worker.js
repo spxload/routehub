@@ -1,19 +1,19 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D/E, личные подписки)
-// VERSION: worker v0.8.1 (2026-06-07) — + диагностика времени (/status, ?debug=1)
+// VERSION: worker v0.8.2 (2026-06-07) — /nodes читает ?net= (URL задаёт сеть)
 //
 // GET  /config?key=kN[&ai=fallback|script][&refresh=N][&src=worker][&debug=1]
 //        ?ai=fallback ИЛИ флаг ai_fallback -> RH-AI select->fallback, скрипты off.
 //        &refresh=N  -> update-interval=N сек на строке подписки (10..86400).
 //        &src=worker -> подписка = Worker /nodes (пер-сетевой рендер); иначе гист-raw.
-//        &debug=1 (со src=worker) -> в URL /nodes добавляется &dbg=1 (пишет метки времени).
-// GET  /nodes?key=kN[&dbg=1] -> узлы под СОХРАНЁННУЮ сеть (reg.net): метка ТОЛЬКО
-//        этой сети (🛜/📱) + сортировка по её скорости; Cache-Control:no-store.
+//        &debug=1 (со src=worker) -> в URL /nodes добавляется &dbg=1 (метки времени).
+// GET  /nodes?key=kN[&net=wifi|cell][&dbg=1] -> узлы под сеть (net из URL; иначе
+//        reg.net от netwatch; иначе wifi): метка ТОЛЬКО этой сети (🛜/📱) +
+//        сортировка по её скорости; Cache-Control:no-store.
 //        &dbg=1 -> пишет reg.nodes_ts/nodes_n (последний запрос Loon; для /status).
 // POST /net            -> {key,nonce,net} netwatch сообщает сеть (wifi|cell); пишет
 //        reg.net/net_ts только привязанному устройству при совпадении nonce.
-// GET  /status?key=kN  -> {net, net_ts (когда пришёл /net), nodes_ts/nodes_n (когда
-//        Loon тянул /nodes), last_seen, server_now} — диагностика времени.
+// GET  /status?key=kN  -> {net, net_ts, nodes_ts, nodes_n, last_seen, server_now}.
 // POST /speed          -> метрики + (печёт nodes-kN.txt для старой гист-подписки).
 // GET  /whoami         -> детект сети/оператора по request.cf.
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
@@ -255,14 +255,15 @@ function renderNodes(masterLines, state, net, showRtt) {
   return tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
 }
 
-// --- GET /nodes: отдаём узлы под сохранённую сеть устройства (no-store) ---
+// --- GET /nodes: узлы под сеть (net из URL; иначе reg.net; иначе wifi), no-store ---
 async function handleNodes(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
   const files = await gistGet(env);
   const reg = ensureRegistry(files);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
-  const net = (reg[key].net === 'cell') ? 'cell' : 'wifi';
+  const qNet = url.searchParams.get('net');
+  const net = (qNet === 'wifi' || qNet === 'cell') ? qNet : ((reg[key].net === 'cell') ? 'cell' : 'wifi');
   const showRtt = !!reg[key].show_rtt;
   // диагностика: отметить, когда Loon тянул /nodes (только при &dbg=1)
   if (url.searchParams.get('dbg') === '1') {
