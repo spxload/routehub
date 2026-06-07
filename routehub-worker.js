@@ -1,25 +1,21 @@
 // =============================================================
-// routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.7.1 (2026-06-07) — + ?refresh=N (update-interval подписки, тест)
+// routehub-worker.js — Cloudflare Worker (Этап D/E, личные подписки)
+// VERSION: worker v0.8.0 (2026-06-07) — пер-сетевые узлы через Worker (/nodes,/net,?src)
 //
-// GET  /config?key=kN[&ai=fallback|script][&refresh=N]  -> персональный routehub.conf
-//        ?ai=fallback ИЛИ флаг ai_fallback=true -> RH-AI select->fallback
-//        (+ RH-Filter-Обход последним), RH-Core/Health/Net enabled=false.
-//        Приоритет: явный ?ai= > флаг > скрипт (база).
-//        &refresh=N -> добавляет update-interval=N сек к строке подписки Lastdep
-//        (тест авто-обновления порядка узлов; диапазон 10..86400; по умолч. нет).
-// POST /speed          -> {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json,
-//                         пересборка nodes-kN с ИКОНКАМИ (блок+процент)
-// GET  /whoami         -> детект сети по request.cf (нужен прямой запрос)
+// GET  /config?key=kN[&ai=fallback|script][&refresh=N][&src=worker]
+//        ?ai=fallback ИЛИ флаг ai_fallback -> RH-AI select->fallback, скрипты off.
+//        &refresh=N  -> update-interval=N сек на строке подписки (10..86400).
+//        &src=worker -> подписка = Worker /nodes (пер-сетевой рендер); иначе гист-raw.
+// GET  /nodes?key=kN   -> узлы под СОХРАНЁННУЮ сеть устройства (reg.net): метка
+//        ТОЛЬКО этой сети (🛜 или 📱) + сортировка по её скорости; Cache-Control:no-store.
+// POST /net            -> {key,nonce,net} netwatch сообщает текущую сеть (wifi|cell);
+//        пишется в devices.json[key].net только если устройство привязано и nonce совпал.
+// POST /speed          -> {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json (+ печёт
+//        nodes-kN.txt для старой гист-подписки; при src=worker не используется).
+// GET  /whoami         -> детект сети/оператора по request.cf (нужен прямой запрос).
 //
-// ИКОНКА (ЭТАП_D_ФОРМУЛА.md): заполняющийся блок (абсолютное качество, насыщение
-//   на 25 Мбит=4K) + НАДСТРОЧНЫЙ процент от быстрейшего узла сети (на каждом узле):
-//     ▁ 360p(<1) ▃ 480p(1-2) ▅ 720p(2-5) ▇ 1080p(5-15) █ 4K(15-25) █⁺ 4K+(≥25)
-//   Имя: "база · 🛜█⁺ ¹⁰⁰ 📱▅ ³⁸". Мёртвый: 🛜⛔. show_rtt -> добавляет (down↓rtt).
-// Сортировка nodes-kN — по down (умный выбор делает селектор по баллу группы).
-//
-// Конфиг: script-path переписывается в АБСОЛЮТНЫЙ raw-URL; RH-Speed/RH-Net получают
-//   argument=key|origin|opts. fallback-трансформация — в конце handleConfig.
+// ИКОНКА (ЭТАП_D_ФОРМУЛА.md): блок (насыщение 25 Мбит=4K) + надстрочный % от
+//   быстрейшего узла сети. ▁<1 ▃1-2 ▅2-5 ▇5-15 █15-25 █⁺≥25. Мёртвый: 🛜⛔.
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
@@ -144,10 +140,16 @@ async function handleConfig(url, env) {
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
 
-  // строка подписки + опциональный update-interval (?refresh=N сек, 10..86400)
+  // строка подписки: гист-raw (по умолч.) или Worker /nodes (?src=worker, пер-сетевой)
   const rfRaw = parseInt(url.searchParams.get('refresh') || '', 10);
   const ri = (rfRaw >= 10 && rfRaw <= 86400) ? (',update-interval=' + rfRaw) : '';
-  conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + rawNodesUrl(env, key) + ',udp=true' + ri + ',enabled=true');
+  let lastdep;
+  if (url.searchParams.get('src') === 'worker') {
+    lastdep = url.origin + '/nodes?key=' + key + ',udp=true' + (ri || ',update-interval=120') + ',enabled=true';
+  } else {
+    lastdep = rawNodesUrl(env, key) + ',udp=true' + ri + ',enabled=true';
+  }
+  conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + lastdep);
   // script-path -> абсолютный raw-URL (без кэш-сбивателя; снят в v0.6.0)
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
@@ -156,7 +158,7 @@ async function handleConfig(url, env) {
   if (reg[key].cell_unlim) sFlags.push('cellall');
   if (reg[key].ewma) sFlags.push('ewma');
   conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + sFlags.join(','));
-  // argument netwatch: key|origin|opts (autorefresh) — origin нужен для /whoami
+  // argument netwatch: key|origin|opts (autorefresh) — origin нужен для /whoami и /net
   const nOpts = reg[key].auto_refresh ? 'autorefresh' : '';
   conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + url.origin + '|' + nOpts);
 
@@ -176,6 +178,86 @@ async function handleConfig(url, env) {
   }
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+}
+
+// --- POST /net: netwatch сообщает текущую сеть; пишем только привязанному устройству ---
+async function handleNet(req, env) {
+  let data;
+  try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
+  const key = (data && data.key) || '';
+  const nonce = String((data && data.nonce) || '');
+  const net = (data && data.net) || '';
+  if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
+  if (net !== 'wifi' && net !== 'cell') return jsonResp({ error: 'bad net' }, 400);
+
+  const files = await gistGet(env);
+  const reg = ensureRegistry(files);
+  if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
+  const e = reg[key];
+  // не привязан или чужой nonce -> не трогаем (никаких изменений привязки)
+  if (e.status !== 'bound' || e.nonce !== nonce) return jsonResp({ ok: true, ignored: true });
+  if (e.net !== net) {
+    e.net = net;
+    await gistPatch(env, { 'devices.json': JSON.stringify(reg, null, 2) });
+  }
+  return jsonResp({ ok: true, net: net });
+}
+
+// рендер узлов под ОДНУ сеть (wifi|cell): метка только этой сети + сортировка по ней
+function renderNodes(masterLines, state, net, showRtt) {
+  const slot = (net === 'cell') ? 'c' : 'w';
+  const icon = (net === 'cell') ? ICON_CELL : ICON_WIFI;
+  const bypass = [], untested = [], items = [];
+  let max = 0;
+  for (const line of masterLines) {
+    const name = decodeName(fragOf(line));
+    const tag = tagOf(name);
+    if (tag === 'bypass') { bypass.push(line); continue; }
+    const st = (tag === 'vpn' || tag === 'game') ? state[matchKey(name)] : null;
+    const m = st ? st[slot] : null;
+    if (m) {
+      if (!m.dead && m.down > max) max = m.down;
+      items.push({ line: line, name: name, m: m });
+    } else {
+      untested.push(line);
+    }
+  }
+  const tested = [];
+  for (const it of items) {
+    const m = it.m;
+    let label;
+    if (m.dead) { label = icon + DEAD; }
+    else {
+      const pct = max > 0 ? Math.round(m.down / max * 100) : 0;
+      label = icon + speedBlock(m.down) + ' ' + supNum(pct) + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
+    }
+    const newName = norm(stripMetric(it.name)) + METRIC_SEP + label;
+    const d = m.dead ? -1 : m.down;
+    const rt = m.dead ? 99999 : m.rtt;
+    tested.push({ line: withFrag(it.line, encodeURIComponent(newName)), down: d, rtt: rt });
+  }
+  tested.sort(function (a, b) { return (b.down - a.down) || (a.rtt - b.rtt); });
+  return tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
+}
+
+// --- GET /nodes: отдаём узлы под сохранённую сеть устройства (no-store) ---
+async function handleNodes(url, env) {
+  const key = url.searchParams.get('key') || '';
+  if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
+  const files = await gistGet(env);
+  const reg = ensureRegistry(files);
+  if (!reg[key]) return new Response('unknown key', { status: 403 });
+  const net = (reg[key].net === 'cell') ? 'cell' : 'wifi';
+  const showRtt = !!reg[key].show_rtt;
+  const masterLines = b64decode(fileContent(files, env.MASTER_FILE) || '')
+    .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+  let state = {};
+  const sraw = fileContent(files, 'metrics-' + key + '.json');
+  if (sraw) { try { state = JSON.parse(sraw) || {}; } catch (e) { state = {}; } }
+  const out = renderNodes(masterLines, state, net, showRtt);
+  return new Response(b64encode(out), {
+    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
 }
 
 function metricOf(s) {
@@ -265,7 +347,7 @@ async function handleSpeed(req, env) {
     return icon + blk + ' ' + supNum(pct) + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
   }
 
-  // проход 2: рендер имён
+  // проход 2: рендер имён (оба-сетевой; для старой гист-подписки)
   const tested = [];
   let labeled = 0;
   for (const it of items) {
@@ -297,7 +379,9 @@ export default {
     try {
       if (req.method === 'GET' && url.pathname === '/whoami') return handleWhoami(req);
       if (req.method === 'GET' && url.pathname === '/config') return await handleConfig(url, env);
+      if (req.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env);
       if (req.method === 'POST' && url.pathname === '/speed') return await handleSpeed(req, env);
+      if (req.method === 'POST' && url.pathname === '/net') return await handleNet(req, env);
       return new Response('routehub-worker: not found', { status: 404 });
     } catch (err) {
       return new Response('error: ' + (err && err.message ? err.message : 'unknown'), { status: 500 });
