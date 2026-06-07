@@ -1,6 +1,6 @@
 // =============================================================
-// routehub-netwatch.js — RouteHub, диспетчер смены сети (Этап D, шаг D.7)
-var VERSION = 'netwatch v0.2.0 (2026-06-06)';
+// routehub-netwatch.js — RouteHub, диспетчер смены сети (Этап D/E)
+var VERSION = 'netwatch v0.3.0 (2026-06-07)';
 //
 // Тип: network-changed. ЕДИНСТВЕННЫЙ скрипт этого типа (И4).
 //   Аргумент "<key>|<origin>|<opts>". opts: autorefresh.
@@ -8,21 +8,18 @@ var VERSION = 'netwatch v0.2.0 (2026-06-06)';
 // ЗАДАЧИ:
 //   1. Детект типа сети слоями (ssid -> маяки/Яндекс -> оператор).
 //   2. Детект whitelist РКН (флаг + пуш). autorefresh тап-пуш.
-//   3. ХУК ПРОВЕРКИ AI-УЗЛА (v0.2.0): при смене сети сразу пробует
-//      текущий AI-узел; мёртв -> штраф + переключение в той же стране
-//      (логика health). Смена сети — самый частый момент «отвала» узла,
-//      реакция мгновенная и без лишних опросов (netwatch и так запущен).
+//   3. СООБЩИТЬ СЕТЬ Worker (v0.3.0): POST /net {key,nonce,net} — для пер-сетевого
+//      рендера /nodes (Worker отдаёт узлы под текущую сеть). Только привязанному
+//      устройству (Worker проверяет nonce). nonce берём из rh_nonce (его создаёт
+//      спидтест); если его ещё нет — пропускаем (привязка остаётся за спидтестом).
+//   4. ХУК ПРОВЕРКИ AI-УЗЛА: при смене сети сразу пробует текущий AI-узел; мёртв ->
+//      штраф + переключение в той же стране (логика health). Работает в скриптовом
+//      режиме (если ядро выбрало узел). При RH-AI=fallback ядро узел не выбирает ->
+//      хук сам выходит на гейте (cur пуст). Это и упрощение «netwatch = определение
+//      сети» по факту: лишнего он не делает.
 //
-// ГОНКА (решение Дианы):
-//   - Перед переключением — проверка RH_script_lock (чужой свежий <60с -> пропуск).
-//   - Общая метка rh_ai_checked = время последней пробы AI-узла
-//     (пишут netwatch И health). health видит её и пропускает тик, если
-//     узел проверен недавно -> «через 5 мин после последней проверки».
-//   - HOOK_DEBOUNCE: сам netwatch не пробует, если проверял <30с назад
-//     (защита от дрожания сети).
-//
-// СТРАНА — ПО ИМЕНИ узла (флаг/слово), согласовано с core/health.
-// НЕ делает: авто-обход при whitelist (Этап F). НЕ переключает сеть.
+// ГОНКА: RH_script_lock (<60с чужой -> пропуск) + общая метка rh_ai_checked.
+// СТРАНА — ПО ИМЕНИ узла. НЕ делает: авто-обход при whitelist (Этап F). Сеть не переключает.
 // =============================================================
 
 var GROUP = 'RH-AI';
@@ -88,6 +85,7 @@ var CELL_KEY = 'rh_speed_cell';
 var PENALTY_KEY = 'rh_ai_penalty';
 var PEN_CAP = 100;
 var CHECKED_KEY = 'rh_ai_checked';                 // общая метка последней пробы AI-узла
+var NONCE_KEY = 'rh_nonce';                         // создаёт спидтест; для подписи /net
 var HOOK_DEBOUNCE_MS = 30 * 1000;                  // не пробовать, если проверяли <30с назад
 var MAX_FAILS = 5;
 var METRIC_SEP = ' \u00B7 ';
@@ -204,6 +202,19 @@ async function detectOperator(origin) {
   }
   return { op: '', asn: null, src: 'none' };
 }
+// сообщить текущую сеть Worker (для пер-сетевого /nodes); привязку не создаёт
+function reportNet(origin, key, nonce, netTag) {
+  return new Promise(function (resolve) {
+    try {
+      $httpClient.post({
+        url: origin + '/net',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: key, nonce: nonce, net: netTag }),
+        timeout: 10000
+      }, function (e, r) { log('/net ' + netTag + ' -> ' + (e ? ('err ' + e) : (r && r.status))); resolve(); });
+    } catch (e) { resolve(); }
+  });
+}
 function httpGet(url) {
   return new Promise(function (resolve) {
     $httpClient.get({ url: url, timeout: HTTP_TIMEOUT, headers: { 'Cache-Control': 'no-cache' } },
@@ -307,7 +318,7 @@ async function main() {
   log('=== ' + VERSION + ' ===');
   var arg = (typeof $argument === 'string') ? $argument : '';
   var p = arg.split('|');
-  var ORIGIN = p[1] || '', OPTS = p[2] || '';
+  var KEY = p[0] || '', ORIGIN = p[1] || '', OPTS = p[2] || '';
   var autorefresh = OPTS.indexOf('autorefresh') >= 0;
 
   var ssid = '';
@@ -340,6 +351,13 @@ async function main() {
   var st = { net: net, ssid: ssid, operator: operator, asn: asn, whitelist: whitelist, ts: now() };
   writeJSON(NET_KEY, st);
   log('сеть=' + net + (ssid ? ' ssid=[' + ssid + ']' : '') + (whitelist ? ' WHITELIST' : ''));
+
+  // сообщить сеть Worker (пер-сетевой /nodes); только если есть nonce (привязку не создаём)
+  var netTag = (net === 'wifi') ? 'wifi' : ((net === 'cell' || net === 'cell-whitelist') ? 'cell' : '');
+  var NONCE = $persistentStore.read(NONCE_KEY) || '';
+  if (/^k\d+$/.test(KEY) && /^https?:\/\//.test(ORIGIN) && NONCE && netTag) {
+    await reportNet(ORIGIN, KEY, NONCE, netTag);
+  }
 
   if (whitelist) {
     $notification.post('\uD83D\uDEA7 RouteHub', 'Похоже на whitelist РКН',
