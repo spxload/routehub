@@ -1,8 +1,11 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.6.0 (2026-06-06) — финал D: временные хаки сняты
+// VERSION: worker v0.7.0 (2026-06-07) — AI fallback по ?ai=/флагу (трансформация)
 //
-// GET  /config?key=kN  -> персональный routehub.conf
+// GET  /config?key=kN[&ai=fallback|script]  -> персональный routehub.conf
+//        ?ai=fallback ИЛИ флаг ai_fallback=true -> RH-AI select->fallback
+//        (+ RH-Filter-Обход последним), RH-Core/Health/Net enabled=false.
+//        Приоритет: явный ?ai= > флаг > скрипт (база).
 // POST /speed          -> {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json,
 //                         пересборка nodes-kN с ИКОНКАМИ (блок+процент)
 // GET  /whoami         -> детект сети по request.cf (нужен прямой запрос)
@@ -14,9 +17,7 @@
 // Сортировка nodes-kN — по down (умный выбор делает селектор по баллу группы).
 //
 // Конфиг: script-path переписывается в АБСОЛЮТНЫЙ raw-URL; RH-Speed/RH-Net получают
-//   argument=key|origin|opts. (Кэш-сбиватель ?v=, форс RH-Speed и debug-файлы УБРАНЫ
-//   в v0.6.0 — RH-Speed включён в самом конфиге; обновления скриптов доходят по
-//   обычному кэшу Loon, ~3-5 мин.)
+//   argument=key|origin|opts. fallback-трансформация — в конце handleConfig.
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
 
@@ -29,7 +30,7 @@ const SUP_PLUS = '\u207A';             // ⁺
 const SUP_DIG = ['\u2070', '\u00B9', '\u00B2', '\u00B3', '\u2074', '\u2075', '\u2076', '\u2077', '\u2078', '\u2079'];
 const GIST_API = 'https://api.github.com/gists/';
 const KEY_RE = /^k\d+$/;
-const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
+const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh', 'ai_fallback'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
 
@@ -153,6 +154,21 @@ async function handleConfig(url, env) {
   // argument netwatch: key|origin|opts (autorefresh) — origin нужен для /whoami
   const nOpts = reg[key].auto_refresh ? 'autorefresh' : '';
   conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + url.origin + '|' + nOpts);
+
+  // --- AI: fallback-вариант (трансформация одного источника) по ?ai=/флагу ---
+  const aiParam = url.searchParams.get('ai'); // 'fallback' | 'script' | null
+  const useFallback = aiParam === 'fallback' || (aiParam !== 'script' && !!reg[key].ai_fallback);
+  if (useFallback) {
+    // RH-AI: select -> fallback, обход последним фильтром, + url/interval
+    conf = conf.replace(
+      /^RH-AI = select, (.+?), img-url=(\S+)$/m,
+      'RH-AI = fallback, $1, RH-Filter-\u041E\u0431\u0445\u043E\u0434, url=http://cp.cloudflare.com/generate_204, interval=600, img-url=$2'
+    );
+    // выключить скрипты-селекторы AI (их setSelectPolicy конфликтует с fallback)
+    ['RH-Core', 'RH-Health', 'RH-Net'].forEach(function (t) {
+      conf = conf.replace(new RegExp('(tag=' + t + ',[^\\n]*?)enabled=true'), '$1enabled=false');
+    });
+  }
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
