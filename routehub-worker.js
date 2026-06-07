@@ -1,9 +1,11 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D/E, личные подписки)
-// VERSION: worker v0.8.2 (2026-06-07) — /nodes читает ?net= (URL задаёт сеть)
+// VERSION: worker v0.8.3 (2026-06-07) — /config пробрасывает &net= в URL /nodes
 //
-// GET  /config?key=kN[&ai=fallback|script][&refresh=N][&src=worker][&debug=1]
+// GET  /config?key=kN[&ai=fallback|script][&net=wifi|cell][&refresh=N][&src=worker][&debug=1]
 //        ?ai=fallback ИЛИ флаг ai_fallback -> RH-AI select->fallback, скрипты off.
+//        &net=wifi|cell (со src=worker) -> подставляется в URL /nodes (пер-сетевой
+//          конфиг для локального iCloud-файла + Shortcuts-свитча).
 //        &refresh=N  -> update-interval=N сек на строке подписки (10..86400).
 //        &src=worker -> подписка = Worker /nodes (пер-сетевой рендер); иначе гист-raw.
 //        &debug=1 (со src=worker) -> в URL /nodes добавляется &dbg=1 (метки времени).
@@ -146,7 +148,9 @@ async function handleConfig(url, env) {
   let lastdep;
   if (url.searchParams.get('src') === 'worker') {
     const dbg = url.searchParams.get('debug') === '1' ? '&dbg=1' : '';
-    lastdep = url.origin + '/nodes?key=' + key + dbg + ',udp=true' + (ri || ',update-interval=120') + ',enabled=true';
+    const qn = url.searchParams.get('net');
+    const netq = (qn === 'wifi' || qn === 'cell') ? ('&net=' + qn) : '';
+    lastdep = url.origin + '/nodes?key=' + key + netq + dbg + ',udp=true' + (ri || ',update-interval=120') + ',enabled=true';
   } else {
     lastdep = rawNodesUrl(env, key) + ',udp=true' + ri + ',enabled=true';
   }
