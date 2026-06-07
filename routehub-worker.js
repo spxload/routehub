@@ -1,11 +1,13 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D, личные подписки)
-// VERSION: worker v0.7.0 (2026-06-07) — AI fallback по ?ai=/флагу (трансформация)
+// VERSION: worker v0.7.1 (2026-06-07) — + ?refresh=N (update-interval подписки, тест)
 //
-// GET  /config?key=kN[&ai=fallback|script]  -> персональный routehub.conf
+// GET  /config?key=kN[&ai=fallback|script][&refresh=N]  -> персональный routehub.conf
 //        ?ai=fallback ИЛИ флаг ai_fallback=true -> RH-AI select->fallback
 //        (+ RH-Filter-Обход последним), RH-Core/Health/Net enabled=false.
 //        Приоритет: явный ?ai= > флаг > скрипт (база).
+//        &refresh=N -> добавляет update-interval=N сек к строке подписки Lastdep
+//        (тест авто-обновления порядка узлов; диапазон 10..86400; по умолч. нет).
 // POST /speed          -> {key,nonce,wifi[],cell[]}, MERGE в metrics-kN.json,
 //                         пересборка nodes-kN с ИКОНКАМИ (блок+процент)
 // GET  /whoami         -> детект сети по request.cf (нужен прямой запрос)
@@ -142,7 +144,10 @@ async function handleConfig(url, env) {
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
 
-  conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + rawNodesUrl(env, key) + ',udp=true,enabled=true');
+  // строка подписки + опциональный update-interval (?refresh=N сек, 10..86400)
+  const rfRaw = parseInt(url.searchParams.get('refresh') || '', 10);
+  const ri = (rfRaw >= 10 && rfRaw <= 86400) ? (',update-interval=' + rfRaw) : '';
+  conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + rawNodesUrl(env, key) + ',udp=true' + ri + ',enabled=true');
   // script-path -> абсолютный raw-URL (без кэш-сбивателя; снят в v0.6.0)
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
