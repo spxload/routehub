@@ -1,21 +1,20 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
-// VERSION: worker v0.9.1 (2026-06-08) — модель ОДНОЙ подписки.
+// VERSION: worker v0.9.2 (2026-06-08) — модель ОДНОЙ подписки. Чистка:
+//   убраны /net, rawNodesUrl, запись/сидинг nodes-kN.txt, флаг ai_fallback.
 //   /nodes отдаёт оба набора в одном ответе: блок 🛜 (по wifi-скорости),
 //   блок 📱 (по cell-скорости), затем обход одной записью (отсортирован
 //   DE -> по числу узлов -> остальные; RU оставлен). Фильтры режут по метке.
 //   /config считает узлы по флагу и СТРОИТ постраные AI-фильтры и группы
 //   (DE первой, дальше по числу узлов; тай-брейк скорость -> близость к DE;
 //   одиночные — catch-all без RU/BY И стран тиров), подставляя в плейсхолдеры.
-//   v0.9.1: AIrest исключает страны тиров (Loon не дедупит фильтры группы).
 //
 // GET  /config?key=kN  -> конфиг: Lastdep -> /nodes; AI-тиеры подставлены;
 //        script-path -> raw-URL; RH-Speed/RH-Net получают argument=key|origin|opts.
 // GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; Cache-Control:no-store.
 //        &dbg=1 -> пишет reg.nodes_ts/nodes_n.
-// POST /net            -> легаси (в модели одной подписки не нужно).
 // GET  /status?key=kN  -> диагностика.
-// POST /speed          -> метрики (печёт легаси nodes-kN.txt; /nodes их читает).
+// POST /speed          -> метрики устройства (скорость wifi/cell).
 // GET  /whoami         -> детект сети/оператора по request.cf.
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
@@ -30,7 +29,7 @@ const SUP_PLUS = '\u207A';             // ⁺
 const SUP_DIG = ['\u2070', '\u00B9', '\u00B2', '\u00B3', '\u2074', '\u2075', '\u2076', '\u2077', '\u2078', '\u2079'];
 const GIST_API = 'https://api.github.com/gists/';
 const KEY_RE = /^k\d+$/;
-const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh', 'ai_fallback'];
+const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
 
@@ -70,9 +69,6 @@ function supNum(n) {
 
 function ghHeaders(token) {
   return { 'Authorization': 'token ' + token, 'User-Agent': 'routehub-worker', 'Accept': 'application/vnd.github+json' };
-}
-function rawNodesUrl(env, key) {
-  return 'https://gist.githubusercontent.com/' + env.GH_USER + '/' + env.GIST_ID + '/raw/nodes-' + key + '.txt';
 }
 function jsonResp(obj, status) {
   return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
@@ -204,12 +200,9 @@ async function handleConfig(url, env) {
   const reg = ensureRegistry(files);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
   const flagsChanged = ensureFlags(reg);
-
-  const nodesFile = 'nodes-' + key + '.txt';
-  const patch = {};
-  if (!fileContent(files, nodesFile)) patch[nodesFile] = fileContent(files, env.MASTER_FILE) || '';
-  if (flagsChanged || !fileContent(files, 'devices.json')) patch['devices.json'] = JSON.stringify(reg, null, 2);
-  if (Object.keys(patch).length) await gistPatch(env, patch);
+  if (flagsChanged || !fileContent(files, 'devices.json')) {
+    await gistPatch(env, { 'devices.json': JSON.stringify(reg, null, 2) });
+  }
 
   const cr = await fetch(env.CONFIG_URL, { headers: { 'User-Agent': 'routehub-worker' } });
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
@@ -241,27 +234,6 @@ async function handleConfig(url, env) {
   conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + url.origin + '|' + nOpts);
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
-}
-
-// --- POST /net: легаси ---
-async function handleNet(req, env) {
-  let data;
-  try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
-  const key = (data && data.key) || '';
-  const nonce = String((data && data.nonce) || '');
-  const net = (data && data.net) || '';
-  if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
-  if (net !== 'wifi' && net !== 'cell') return jsonResp({ error: 'bad net' }, 400);
-
-  const files = await gistGet(env);
-  const reg = ensureRegistry(files);
-  if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
-  const e = reg[key];
-  if (e.status !== 'bound' || e.nonce !== nonce) return jsonResp({ ok: true, ignored: true });
-  e.net = net;
-  e.net_ts = new Date().toISOString();
-  await gistPatch(env, { 'devices.json': JSON.stringify(reg, null, 2) });
-  return jsonResp({ ok: true, net: net, net_ts: e.net_ts });
 }
 
 // --- GET /status ---
@@ -409,17 +381,11 @@ async function handleSpeed(req, env) {
   apply(data.wifi, 'w');
   apply(data.cell, 'c');
 
-  // легаси nodes-kN.txt (живой источник — /nodes; этот файл не используется конфигом)
-  const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
-    .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
-  const baked = renderNodesBoth(master, state, !!e.show_rtt);
-
   let labeled = 0;
   for (const k in state) if (state[k] && (state[k].w || state[k].c)) labeled++;
 
   await gistPatch(env, {
     [metricsFile]: JSON.stringify(state),
-    ['nodes-' + key + '.txt']: b64encode(baked),
     'devices.json': JSON.stringify(reg, null, 2),
   });
 
@@ -435,7 +401,6 @@ export default {
       if (req.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env);
       if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env);
       if (req.method === 'POST' && url.pathname === '/speed') return await handleSpeed(req, env);
-      if (req.method === 'POST' && url.pathname === '/net') return await handleNet(req, env);
       return new Response('routehub-worker: not found', { status: 404 });
     } catch (err) {
       return new Response('error: ' + (err && err.message ? err.message : 'unknown'), { status: 500 });
