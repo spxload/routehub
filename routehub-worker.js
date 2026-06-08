@@ -1,22 +1,18 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап D/E, личные подписки)
-// VERSION: worker v0.8.3 (2026-06-07) — /config пробрасывает &net= в URL /nodes
+// VERSION: worker v0.8.4 (2026-06-08) — модель двух подписок: /config отдаёт
+//          LastdepW(&net=wifi)+LastdepC(&net=cell); /nodes метит КАЖДЫЙ узел
+//          иконкой сети (против дедупа); ai=fallback transform снят.
 //
-// GET  /config?key=kN[&ai=fallback|script][&net=wifi|cell][&refresh=N][&src=worker][&debug=1]
-//        ?ai=fallback ИЛИ флаг ai_fallback -> RH-AI select->fallback, скрипты off.
-//        &net=wifi|cell (со src=worker) -> подставляется в URL /nodes (пер-сетевой
-//          конфиг для локального iCloud-файла + Shortcuts-свитча).
-//        &refresh=N  -> update-interval=N сек на строке подписки (10..86400).
-//        &src=worker -> подписка = Worker /nodes (пер-сетевой рендер); иначе гист-raw.
-//        &debug=1 (со src=worker) -> в URL /nodes добавляется &dbg=1 (метки времени).
-// GET  /nodes?key=kN[&net=wifi|cell][&dbg=1] -> узлы под сеть (net из URL; иначе
-//        reg.net от netwatch; иначе wifi): метка ТОЛЬКО этой сети (🛜/📱) +
-//        сортировка по её скорости; Cache-Control:no-store.
-//        &dbg=1 -> пишет reg.nodes_ts/nodes_n (последний запрос Loon; для /status).
-// POST /net            -> {key,nonce,net} netwatch сообщает сеть (wifi|cell); пишет
-//        reg.net/net_ts только привязанному устройству при совпадении nonce.
-// GET  /status?key=kN  -> {net, net_ts, nodes_ts, nodes_n, last_seen, server_now}.
-// POST /speed          -> метрики + (печёт nodes-kN.txt для старой гист-подписки).
+// GET  /config?key=kN        -> конфиг с двумя подписками (WiFi/Cell), script-path
+//        переписан в raw-URL, RH-Speed/RH-Net получают argument=key|origin|opts.
+// GET  /nodes?key=kN&net=wifi|cell -> узлы под сеть: метка ТОЛЬКО этой сети (🛜/📱)
+//        на КАЖДОМ узле (протестированные — скорость, прочие — иконка+∅, обход —
+//        иконка), сортировка по скорости; Cache-Control:no-store.
+//        &dbg=1 -> пишет reg.nodes_ts/nodes_n (диагностика).
+// POST /net            -> {key,nonce,net} (легаси; в модели двух подписок не нужен).
+// GET  /status?key=kN  -> диагностика (net,net_ts,nodes_ts,nodes_n,last_seen).
+// POST /speed          -> метрики (+ печёт nodes-kN.txt, легаси).
 // GET  /whoami         -> детект сети/оператора по request.cf.
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
@@ -25,6 +21,7 @@ const METRIC_SEP = ' \u00B7 ';
 const DEAD = '\u26D4';                 // ⛔
 const ICON_WIFI = '\uD83D\uDEDC';      // 🛜
 const ICON_CELL = '\uD83D\uDCF1';      // 📱
+const NODATA = '\u2205';               // ∅
 const BLK = ['\u2581', '\u2583', '\u2585', '\u2587', '\u2588']; // ▁▃▅▇█
 const SUP_PLUS = '\u207A';             // ⁺
 const SUP_DIG = ['\u2070', '\u00B9', '\u00B2', '\u00B3', '\u2074', '\u2075', '\u2076', '\u2077', '\u2078', '\u2079'];
@@ -142,20 +139,13 @@ async function handleConfig(url, env) {
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
 
-  // строка подписки: гист-raw (по умолч.) или Worker /nodes (?src=worker, пер-сетевой)
-  const rfRaw = parseInt(url.searchParams.get('refresh') || '', 10);
-  const ri = (rfRaw >= 10 && rfRaw <= 86400) ? (',update-interval=' + rfRaw) : '';
-  let lastdep;
-  if (url.searchParams.get('src') === 'worker') {
-    const dbg = url.searchParams.get('debug') === '1' ? '&dbg=1' : '';
-    const qn = url.searchParams.get('net');
-    const netq = (qn === 'wifi' || qn === 'cell') ? ('&net=' + qn) : '';
-    lastdep = url.origin + '/nodes?key=' + key + netq + dbg + ',udp=true' + (ri || ',update-interval=120') + ',enabled=true';
-  } else {
-    lastdep = rawNodesUrl(env, key) + ',udp=true' + ri + ',enabled=true';
-  }
-  conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + lastdep);
-  // script-path -> абсолютный raw-URL (без кэш-сбивателя; снят в v0.6.0)
+  // две подписки: WiFi-набор и Cell-набор (Worker /nodes с &net=). Обе всегда
+  // загружены; netwatch флипает родительские select-группы по текущей сети.
+  const wifiSub = url.origin + '/nodes?key=' + key + '&net=wifi,udp=true,enabled=true';
+  const cellSub = url.origin + '/nodes?key=' + key + '&net=cell,udp=true,enabled=true';
+  conf = conf.replace(/^LastdepW = .*$/m, 'LastdepW = ' + wifiSub);
+  conf = conf.replace(/^LastdepC = .*$/m, 'LastdepC = ' + cellSub);
+  // script-path -> абсолютный raw-URL
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
   // argument спидтесту: key|origin|opts (cellall,ewma)
@@ -163,29 +153,14 @@ async function handleConfig(url, env) {
   if (reg[key].cell_unlim) sFlags.push('cellall');
   if (reg[key].ewma) sFlags.push('ewma');
   conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + sFlags.join(','));
-  // argument netwatch: key|origin|opts (autorefresh) — origin нужен для /whoami и /net
+  // argument netwatch: key|origin|opts — origin нужен для /whoami
   const nOpts = reg[key].auto_refresh ? 'autorefresh' : '';
   conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + url.origin + '|' + nOpts);
-
-  // --- AI: fallback-вариант (трансформация одного источника) по ?ai=/флагу ---
-  const aiParam = url.searchParams.get('ai'); // 'fallback' | 'script' | null
-  const useFallback = aiParam === 'fallback' || (aiParam !== 'script' && !!reg[key].ai_fallback);
-  if (useFallback) {
-    // RH-AI: select -> fallback, обход последним фильтром, + url/interval
-    conf = conf.replace(
-      /^RH-AI = select, (.+?), img-url=(\S+)$/m,
-      'RH-AI = fallback, $1, RH-Filter-\u041E\u0431\u0445\u043E\u0434, url=http://cp.cloudflare.com/generate_204, interval=600, img-url=$2'
-    );
-    // выключить скрипты-селекторы AI (их setSelectPolicy конфликтует с fallback)
-    ['RH-Core', 'RH-Health', 'RH-Net'].forEach(function (t) {
-      conf = conf.replace(new RegExp('(tag=' + t + ',[^\\n]*?)enabled=true'), '$1enabled=false');
-    });
-  }
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 
-// --- POST /net: netwatch сообщает текущую сеть; пишем только привязанному устройству ---
+// --- POST /net: легаси (в модели двух подписок не используется) ---
 async function handleNet(req, env) {
   let data;
   try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
@@ -199,7 +174,6 @@ async function handleNet(req, env) {
   const reg = ensureRegistry(files);
   if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
   const e = reg[key];
-  // не привязан или чужой nonce -> не трогаем (никаких изменений привязки)
   if (e.status !== 'bound' || e.nonce !== nonce) return jsonResp({ ok: true, ignored: true });
   e.net = net;
   e.net_ts = new Date().toISOString();
@@ -207,7 +181,7 @@ async function handleNet(req, env) {
   return jsonResp({ ok: true, net: net, net_ts: e.net_ts });
 }
 
-// --- GET /status: диагностика времени (когда пришёл /net, когда Loon тянул /nodes) ---
+// --- GET /status: диагностика ---
 async function handleStatus(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
@@ -222,7 +196,7 @@ async function handleStatus(url, env) {
   });
 }
 
-// рендер узлов под ОДНУ сеть (wifi|cell): метка только этой сети + сортировка по ней
+// рендер узлов под ОДНУ сеть (wifi|cell): метка сети на КАЖДОМ узле (против дедупа)
 function renderNodes(masterLines, state, net, showRtt) {
   const slot = (net === 'cell') ? 'c' : 'w';
   const icon = (net === 'cell') ? ICON_CELL : ICON_WIFI;
@@ -231,14 +205,21 @@ function renderNodes(masterLines, state, net, showRtt) {
   for (const line of masterLines) {
     const name = decodeName(fragOf(line));
     const tag = tagOf(name);
-    if (tag === 'bypass') { bypass.push(line); continue; }
+    if (tag === 'bypass') {
+      // метка сети и на обход — чтобы имена различались между подписками
+      const bn = norm(stripMetric(name)) + METRIC_SEP + icon;
+      bypass.push(withFrag(line, encodeURIComponent(bn)));
+      continue;
+    }
     const st = (tag === 'vpn' || tag === 'game') ? state[matchKey(name)] : null;
     const m = st ? st[slot] : null;
     if (m) {
       if (!m.dead && m.down > max) max = m.down;
       items.push({ line: line, name: name, m: m });
     } else {
-      untested.push(line);
+      // непротестированные: метка сети + ∅ (имя уникально на сеть -> нет дедупа)
+      const un = norm(stripMetric(name)) + METRIC_SEP + icon + NODATA;
+      untested.push(withFrag(line, encodeURIComponent(un)));
     }
   }
   const tested = [];
@@ -269,7 +250,6 @@ async function handleNodes(url, env) {
   const qNet = url.searchParams.get('net');
   const net = (qNet === 'wifi' || qNet === 'cell') ? qNet : ((reg[key].net === 'cell') ? 'cell' : 'wifi');
   const showRtt = !!reg[key].show_rtt;
-  // диагностика: отметить, когда Loon тянул /nodes (только при &dbg=1)
   if (url.searchParams.get('dbg') === '1') {
     reg[key].nodes_ts = new Date().toISOString();
     reg[key].nodes_n = (reg[key].nodes_n || 0) + 1;
@@ -349,7 +329,6 @@ async function handleSpeed(req, env) {
   const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
 
-  // проход 1: собрать узлы с метками + максимум скорости ПО СЕТИ (для процента)
   const bypass = [], untested = [], items = [];
   let maxW = 0, maxC = 0;
   for (const line of master) {
@@ -373,7 +352,6 @@ async function handleSpeed(req, env) {
     return icon + blk + ' ' + supNum(pct) + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
   }
 
-  // проход 2: рендер имён (оба-сетевой; для старой гист-подписки)
   const tested = [];
   let labeled = 0;
   for (const it of items) {
