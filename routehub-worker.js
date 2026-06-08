@@ -1,18 +1,20 @@
 // =============================================================
-// routehub-worker.js — Cloudflare Worker (Этап D/E, личные подписки)
-// VERSION: worker v0.8.4 (2026-06-08) — модель двух подписок: /config отдаёт
-//          LastdepW(&net=wifi)+LastdepC(&net=cell); /nodes метит КАЖДЫЙ узел
-//          иконкой сети (против дедупа); ai=fallback transform снят.
+// routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v0.9.0 (2026-06-08) — модель ОДНОЙ подписки.
+//   /nodes отдаёт оба набора в одном ответе: блок 🛜 (по wifi-скорости),
+//   блок 📱 (по cell-скорости), затем обход одной записью (отсортирован
+//   DE -> по числу узлов -> остальные; RU оставлен). Фильтры режут по метке.
+//   /config считает узлы по флагу и СТРОИТ постраные AI-фильтры и группы
+//   (DE первой, дальше по числу узлов; тай-брейк скорость -> близость к DE;
+//   одиночные — catch-all без RU/BY), подставляя их в плейсхолдеры конфига.
 //
-// GET  /config?key=kN        -> конфиг с двумя подписками (WiFi/Cell), script-path
-//        переписан в raw-URL, RH-Speed/RH-Net получают argument=key|origin|opts.
-// GET  /nodes?key=kN&net=wifi|cell -> узлы под сеть: метка ТОЛЬКО этой сети (🛜/📱)
-//        на КАЖДОМ узле (протестированные — скорость, прочие — иконка+∅, обход —
-//        иконка), сортировка по скорости; Cache-Control:no-store.
-//        &dbg=1 -> пишет reg.nodes_ts/nodes_n (диагностика).
-// POST /net            -> {key,nonce,net} (легаси; в модели двух подписок не нужен).
-// GET  /status?key=kN  -> диагностика (net,net_ts,nodes_ts,nodes_n,last_seen).
-// POST /speed          -> метрики (+ печёт nodes-kN.txt, легаси).
+// GET  /config?key=kN  -> конфиг: Lastdep -> /nodes; AI-тиеры подставлены;
+//        script-path -> raw-URL; RH-Speed/RH-Net получают argument=key|origin|opts.
+// GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; Cache-Control:no-store.
+//        &dbg=1 -> пишет reg.nodes_ts/nodes_n.
+// POST /net            -> легаси (в модели одной подписки не нужно).
+// GET  /status?key=kN  -> диагностика.
+// POST /speed          -> метрики (печёт легаси nodes-kN.txt; /nodes их читает).
 // GET  /whoami         -> детект сети/оператора по request.cf.
 // env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
 // =============================================================
@@ -30,6 +32,27 @@ const KEY_RE = /^k\d+$/;
 const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh', 'ai_fallback'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
+
+const DE = '\uD83C\uDDE9\uD83C\uDDEA'; // 🇩🇪
+const RU = '\uD83C\uDDF7\uD83C\uDDFA'; // 🇷🇺
+const BY = '\uD83C\uDDE7\uD83C\uDDFE'; // 🇧🇾
+const FLAG_RE = /[\u{1F1E6}-\u{1F1FF}]{2}/u;
+// близость к Германии (меньше = ближе): тай-брейк при равном числе узлов
+const PROX = {
+  '\uD83C\uDDE9\uD83C\uDDEA': 0,  '\uD83C\uDDF3\uD83C\uDDF1': 1,  '\uD83C\uDDE8\uD83C\uDDFF': 2,
+  '\uD83C\uDDE6\uD83C\uDDF9': 3,  '\uD83C\uDDF5\uD83C\uDDF1': 4,  '\uD83C\uDDEB\uD83C\uDDF7': 5,
+  '\uD83C\uDDE7\uD83C\uDDEA': 6,  '\uD83C\uDDE8\uD83C\uDDED': 7,  '\uD83C\uDDE9\uD83C\uDDF0': 8,
+  '\uD83C\uDDF8\uD83C\uDDEA': 9,  '\uD83C\uDDF3\uD83C\uDDF4': 10, '\uD83C\uDDEB\uD83C\uDDEE': 11,
+  '\uD83C\uDDEA\uD83C\uDDEA': 12, '\uD83C\uDDF1\uD83C\uDDFB': 13, '\uD83C\uDDF1\uD83C\uDDF9': 14,
+  '\uD83C\uDDEC\uD83C\uDDE7': 15, '\uD83C\uDDEE\uD83C\uDDEA': 16, '\uD83C\uDDEA\uD83C\uDDF8': 17,
+  '\uD83C\uDDEE\uD83C\uDDF9': 18, '\uD83C\uDDF7\uD83C\uDDF4': 19, '\uD83C\uDDE7\uD83C\uDDFE': 20,
+  '\uD83C\uDDF9\uD83C\uDDF7': 22, '\uD83C\uDDF7\uD83C\uDDFA': 23, '\uD83C\uDDF0\uD83C\uDDFF': 24,
+  '\uD83C\uDDE6\uD83C\uDDF2': 25, '\uD83C\uDDE6\uD83C\uDDEA': 26, '\uD83C\uDDEE\uD83C\uDDF3': 27,
+  '\uD83C\uDDF8\uD83C\uDDEC': 28, '\uD83C\uDDF9\uD83C\uDDED': 29, '\uD83C\uDDEF\uD83C\uDDF5': 30,
+  '\uD83C\uDDF0\uD83C\uDDF7': 31, '\uD83C\uDDFA\uD83C\uDDF8': 32, '\uD83C\uDDE8\uD83C\uDDE6': 33,
+  '\uD83C\uDDE7\uD83C\uDDF7': 34, '\uD83C\uDDE6\uD83C\uDDF7': 35, '\uD83C\uDDF3\uD83C\uDDEC': 36,
+};
+function proxOf(fl) { return (fl in PROX) ? PROX[fl] : 99; }
 
 function speedBlock(down) {
   if (down < 1) return BLK[0];
@@ -81,6 +104,7 @@ function decodeName(frag) { try { return decodeURIComponent(frag); } catch (e) {
 function stripMetric(name) { const i = name.indexOf(METRIC_SEP); return (i >= 0 ? name.slice(0, i) : name); }
 function norm(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 function matchKey(name) { return norm(stripMetric(name)); }
+function flagOf(name) { const m = String(name).match(FLAG_RE); return m ? m[0] : ''; }
 function tagOf(name) {
   if (name.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) return 'bypass';
   if (name.indexOf('[VPN]') >= 0) return 'vpn';
@@ -120,6 +144,55 @@ function handleWhoami(req) {
   return jsonResp({ ip: ip, asn: cf.asn || null, aso: aso, country: cf.country || null, net: classifyNet(aso) });
 }
 
+// --- AI-тиеры: страны по числу [VPN]-узлов (флаг из имени), DE первой,
+//     тай-брейк скорость -> близость к DE; RU/BY исключены. Singles -> catch-all. ---
+function buildAiTiers(masterLines, state) {
+  const cnt = {}, spd = {};
+  for (const line of masterLines) {
+    const name = decodeName(fragOf(line));
+    if (tagOf(name) !== 'vpn') continue;
+    const fl = flagOf(name);
+    if (!fl) continue;
+    cnt[fl] = (cnt[fl] || 0) + 1;
+    let s = 0;
+    const st = state[matchKey(name)];
+    if (st) {
+      if (st.w && !st.w.dead) s = Math.max(s, +st.w.down || 0);
+      if (st.c && !st.c.dead) s = Math.max(s, +st.c.down || 0);
+    }
+    if (!(fl in spd) || s > spd[fl]) spd[fl] = s;
+  }
+  const others = Object.keys(cnt).filter(function (f) { return f !== DE && f !== RU && f !== BY; });
+  const multi = others.filter(function (f) { return cnt[f] >= 2; }).sort(function (a, b) {
+    return (cnt[b] - cnt[a]) || ((spd[b] || 0) - (spd[a] || 0)) || (proxOf(a) - proxOf(b));
+  });
+  const tiers = [];
+  if (cnt[DE]) tiers.push(DE);
+  for (const f of multi) tiers.push(f);
+  return tiers;
+}
+function aiBlocks(tiers) {
+  const fW = [], fC = [], gW = [], gC = [];
+  tiers.forEach(function (fl, i) {
+    const id = (i + 1 < 10 ? '0' : '') + (i + 1);
+    fW.push('RH-Filter-W-AI' + id + ' = NameRegex, Lastdep, FilterKey = ' + fl + '.*\\[VPN\\].*' + ICON_WIFI);
+    fC.push('RH-Filter-C-AI' + id + ' = NameRegex, Lastdep, FilterKey = ' + fl + '.*\\[VPN\\].*' + ICON_CELL);
+    gW.push('RH-Filter-W-AI' + id);
+    gC.push('RH-Filter-C-AI' + id);
+  });
+  fW.push('RH-Filter-W-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + RU + '|' + BY + ')).*\\[VPN\\].*' + ICON_WIFI);
+  fC.push('RH-Filter-C-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + RU + '|' + BY + ')).*\\[VPN\\].*' + ICON_CELL);
+  gW.push('RH-Filter-W-AIrest');
+  gC.push('RH-Filter-C-AIrest');
+  const filters = fW.join('\n') + '\n' + fC.join('\n');
+  const u = 'url=http://cp.cloudflare.com/generate_204, interval=600';
+  const groups =
+    'RH-AI = select, RH-AI-W, RH-AI-C, img-url=https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/AI.png\n' +
+    'RH-AI-W = fallback, ' + gW.join(', ') + ', RH-Filter-Обход, ' + u + '\n' +
+    'RH-AI-C = fallback, ' + gC.join(', ') + ', RH-Filter-Обход, ' + u;
+  return { filters: filters, groups: groups };
+}
+
 async function handleConfig(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
@@ -139,28 +212,35 @@ async function handleConfig(url, env) {
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
 
-  // две подписки: WiFi-набор и Cell-набор (Worker /nodes с &net=). Обе всегда
-  // загружены; netwatch флипает родительские select-группы по текущей сети.
-  const wifiSub = url.origin + '/nodes?key=' + key + '&net=wifi,udp=true,enabled=true';
-  const cellSub = url.origin + '/nodes?key=' + key + '&net=cell,udp=true,enabled=true';
-  conf = conf.replace(/^LastdepW = .*$/m, 'LastdepW = ' + wifiSub);
-  conf = conf.replace(/^LastdepC = .*$/m, 'LastdepC = ' + cellSub);
+  // постраные AI-тиеры (динамически по текущему составу узлов)
+  const masterLines = b64decode(fileContent(files, env.MASTER_FILE) || '')
+    .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+  let state = {};
+  const sraw = fileContent(files, 'metrics-' + key + '.json');
+  if (sraw) { try { state = JSON.parse(sraw) || {}; } catch (e) { state = {}; } }
+  const blocks = aiBlocks(buildAiTiers(masterLines, state));
+  conf = conf.replace('# __RH_AI_FILTERS__', blocks.filters);
+  conf = conf.replace('# __RH_AI_GROUPS__', blocks.groups);
+
+  // одна подписка: оба набора в /nodes
+  const sub = url.origin + '/nodes?key=' + key + ',udp=true,enabled=true';
+  conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + sub);
   // script-path -> абсолютный raw-URL
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
-  // argument спидтесту: key|origin|opts (cellall,ewma)
+  // argument спидтесту: key|origin|opts
   const sFlags = [];
   if (reg[key].cell_unlim) sFlags.push('cellall');
   if (reg[key].ewma) sFlags.push('ewma');
   conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + sFlags.join(','));
-  // argument netwatch: key|origin|opts — origin нужен для /whoami
+  // argument netwatch: key|origin|opts
   const nOpts = reg[key].auto_refresh ? 'autorefresh' : '';
   conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + url.origin + '|' + nOpts);
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 
-// --- POST /net: легаси (в модели двух подписок не используется) ---
+// --- POST /net: легаси ---
 async function handleNet(req, env) {
   let data;
   try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
@@ -181,7 +261,7 @@ async function handleNet(req, env) {
   return jsonResp({ ok: true, net: net, net_ts: e.net_ts });
 }
 
-// --- GET /status: диагностика ---
+// --- GET /status ---
 async function handleStatus(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
@@ -196,59 +276,61 @@ async function handleStatus(url, env) {
   });
 }
 
-// рендер узлов под ОДНУ сеть (wifi|cell): метка сети на КАЖДОМ узле (против дедупа)
-function renderNodes(masterLines, state, net, showRtt) {
-  const slot = (net === 'cell') ? 'c' : 'w';
-  const icon = (net === 'cell') ? ICON_CELL : ICON_WIFI;
-  const bypass = [], untested = [], items = [];
-  let max = 0;
+// рендер ОДНОЙ метки для протестированного узла
+function labelOf(icon, m, max, showRtt) {
+  if (m.dead) return icon + DEAD;
+  const pct = max > 0 ? Math.round(m.down / max * 100) : 0;
+  return icon + speedBlock(m.down) + ' ' + supNum(pct) + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
+}
+
+// одна подписка: оба набора (🛜 по wifi-скорости, 📱 по cell), затем обход
+function renderNodesBoth(masterLines, state, showRtt) {
+  const bypassRaw = [];
+  const wTested = [], cTested = [], wUntested = [], cUntested = [];
+  let maxW = 0, maxC = 0;
   for (const line of masterLines) {
     const name = decodeName(fragOf(line));
     const tag = tagOf(name);
-    if (tag === 'bypass') {
-      // метка сети и на обход — чтобы имена различались между подписками
-      const bn = norm(stripMetric(name)) + METRIC_SEP + icon;
-      bypass.push(withFrag(line, encodeURIComponent(bn)));
-      continue;
-    }
+    if (tag === 'bypass') { bypassRaw.push({ line: line, name: name, flag: flagOf(name) }); continue; }
+    const base = norm(stripMetric(name));
     const st = (tag === 'vpn' || tag === 'game') ? state[matchKey(name)] : null;
-    const m = st ? st[slot] : null;
-    if (m) {
-      if (!m.dead && m.down > max) max = m.down;
-      items.push({ line: line, name: name, m: m });
-    } else {
-      // непротестированные: метка сети + ∅ (имя уникально на сеть -> нет дедупа)
-      const un = norm(stripMetric(name)) + METRIC_SEP + icon + NODATA;
-      untested.push(withFrag(line, encodeURIComponent(un)));
-    }
+    const mw = st ? st.w : null;
+    const mc = st ? st.c : null;
+    if (mw) { if (!mw.dead && mw.down > maxW) maxW = mw.down; wTested.push({ line: line, base: base, m: mw }); }
+    else { wUntested.push(withFrag(line, encodeURIComponent(base + METRIC_SEP + ICON_WIFI + NODATA))); }
+    if (mc) { if (!mc.dead && mc.down > maxC) maxC = mc.down; cTested.push({ line: line, base: base, m: mc }); }
+    else { cUntested.push(withFrag(line, encodeURIComponent(base + METRIC_SEP + ICON_CELL + NODATA))); }
   }
-  const tested = [];
-  for (const it of items) {
-    const m = it.m;
-    let label;
-    if (m.dead) { label = icon + DEAD; }
-    else {
-      const pct = max > 0 ? Math.round(m.down / max * 100) : 0;
-      label = icon + speedBlock(m.down) + ' ' + supNum(pct) + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
+  function buildBlock(items, icon, max) {
+    const arr = [];
+    for (const it of items) {
+      const nm = it.base + METRIC_SEP + labelOf(icon, it.m, max, showRtt);
+      arr.push({ line: withFrag(it.line, encodeURIComponent(nm)), down: it.m.dead ? -1 : it.m.down, rtt: it.m.dead ? 99999 : it.m.rtt });
     }
-    const newName = norm(stripMetric(it.name)) + METRIC_SEP + label;
-    const d = m.dead ? -1 : m.down;
-    const rt = m.dead ? 99999 : m.rtt;
-    tested.push({ line: withFrag(it.line, encodeURIComponent(newName)), down: d, rtt: rt });
+    arr.sort(function (a, b) { return (b.down - a.down) || (a.rtt - b.rtt); });
+    return arr.map(function (x) { return x.line; });
   }
-  tested.sort(function (a, b) { return (b.down - a.down) || (a.rtt - b.rtt); });
-  return tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
+  const wifiBlock = buildBlock(wTested, ICON_WIFI, maxW).concat(wUntested);
+  const cellBlock = buildBlock(cTested, ICON_CELL, maxC).concat(cUntested);
+  // обход: DE первой, дальше по числу узлов, потом остальные (RU оставлен, скорости нет)
+  const bcnt = {};
+  for (const b of bypassRaw) if (b.flag) bcnt[b.flag] = (bcnt[b.flag] || 0) + 1;
+  bypassRaw.sort(function (a, b) {
+    if (a.flag === DE && b.flag !== DE) return -1;
+    if (b.flag === DE && a.flag !== DE) return 1;
+    return ((bcnt[b.flag] || 0) - (bcnt[a.flag] || 0)) || (proxOf(a.flag) - proxOf(b.flag));
+  });
+  const bypassOut = bypassRaw.map(function (b) { return withFrag(b.line, encodeURIComponent(norm(stripMetric(b.name)))); });
+  return wifiBlock.concat(cellBlock, bypassOut).join('\n');
 }
 
-// --- GET /nodes: узлы под сеть (net из URL; иначе reg.net; иначе wifi), no-store ---
+// --- GET /nodes: оба набора + обход, no-store ---
 async function handleNodes(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
   const files = await gistGet(env);
   const reg = ensureRegistry(files);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
-  const qNet = url.searchParams.get('net');
-  const net = (qNet === 'wifi' || qNet === 'cell') ? qNet : ((reg[key].net === 'cell') ? 'cell' : 'wifi');
   const showRtt = !!reg[key].show_rtt;
   if (url.searchParams.get('dbg') === '1') {
     reg[key].nodes_ts = new Date().toISOString();
@@ -260,7 +342,7 @@ async function handleNodes(url, env) {
   let state = {};
   const sraw = fileContent(files, 'metrics-' + key + '.json');
   if (sraw) { try { state = JSON.parse(sraw) || {}; } catch (e) { state = {}; } }
-  const out = renderNodes(masterLines, state, net, showRtt);
+  const out = renderNodesBoth(masterLines, state, showRtt);
   return new Response(b64encode(out), {
     headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
   });
@@ -306,8 +388,6 @@ async function handleSpeed(req, env) {
     return jsonResp({ error: 'key in conflict' }, 409);
   }
 
-  const showRtt = !!e.show_rtt;
-
   const metricsFile = 'metrics-' + key + '.json';
   let state = {};
   const sraw = fileContent(files, metricsFile);
@@ -326,51 +406,17 @@ async function handleSpeed(req, env) {
   apply(data.wifi, 'w');
   apply(data.cell, 'c');
 
+  // легаси nodes-kN.txt (живой источник — /nodes; этот файл не используется конфигом)
   const master = b64decode(fileContent(files, env.MASTER_FILE) || '')
     .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+  const baked = renderNodesBoth(master, state, !!e.show_rtt);
 
-  const bypass = [], untested = [], items = [];
-  let maxW = 0, maxC = 0;
-  for (const line of master) {
-    const name = decodeName(fragOf(line));
-    const tag = tagOf(name);
-    if (tag === 'bypass') { bypass.push(line); continue; }
-    const st = (tag === 'vpn' || tag === 'game') ? state[matchKey(name)] : null;
-    if (st && (st.w || st.c)) {
-      if (st.w && !st.w.dead && st.w.down > maxW) maxW = st.w.down;
-      if (st.c && !st.c.dead && st.c.down > maxC) maxC = st.c.down;
-      items.push({ line: line, name: name, st: st });
-    } else {
-      untested.push(line);
-    }
-  }
-
-  function part(icon, m, max) {
-    if (m.dead) return icon + DEAD;
-    const blk = speedBlock(m.down);
-    const pct = max > 0 ? Math.round(m.down / max * 100) : 0;
-    return icon + blk + ' ' + supNum(pct) + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
-  }
-
-  const tested = [];
   let labeled = 0;
-  for (const it of items) {
-    const st = it.st, parts = [];
-    if (st.w) parts.push(part(ICON_WIFI, st.w, maxW));
-    if (st.c) parts.push(part(ICON_CELL, st.c, maxC));
-    const newName = norm(stripMetric(it.name)) + METRIC_SEP + parts.join(' ');
-    const d = (st.w && !st.w.dead) ? st.w.down : ((st.c && !st.c.dead) ? st.c.down : 0);
-    const rt = (st.w && !st.w.dead) ? st.w.rtt : ((st.c && !st.c.dead) ? st.c.rtt : 99999);
-    tested.push({ line: withFrag(it.line, encodeURIComponent(newName)), down: d, rtt: rt });
-    labeled++;
-  }
-  tested.sort(function (a, b) { return (b.down - a.down) || (a.rtt - b.rtt); });
-
-  const out = tested.map(function (x) { return x.line; }).concat(untested, bypass).join('\n');
+  for (const k in state) if (state[k] && (state[k].w || state[k].c)) labeled++;
 
   await gistPatch(env, {
     [metricsFile]: JSON.stringify(state),
-    ['nodes-' + key + '.txt']: b64encode(out),
+    ['nodes-' + key + '.txt']: b64encode(baked),
     'devices.json': JSON.stringify(reg, null, 2),
   });
 
