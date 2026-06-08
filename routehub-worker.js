@@ -1,12 +1,13 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
-// VERSION: worker v0.9.0 (2026-06-08) — модель ОДНОЙ подписки.
+// VERSION: worker v0.9.1 (2026-06-08) — модель ОДНОЙ подписки.
 //   /nodes отдаёт оба набора в одном ответе: блок 🛜 (по wifi-скорости),
 //   блок 📱 (по cell-скорости), затем обход одной записью (отсортирован
 //   DE -> по числу узлов -> остальные; RU оставлен). Фильтры режут по метке.
 //   /config считает узлы по флагу и СТРОИТ постраные AI-фильтры и группы
 //   (DE первой, дальше по числу узлов; тай-брейк скорость -> близость к DE;
-//   одиночные — catch-all без RU/BY), подставляя их в плейсхолдеры конфига.
+//   одиночные — catch-all без RU/BY И стран тиров), подставляя в плейсхолдеры.
+//   v0.9.1: AIrest исключает страны тиров (Loon не дедупит фильтры группы).
 //
 // GET  /config?key=kN  -> конфиг: Lastdep -> /nodes; AI-тиеры подставлены;
 //        script-path -> raw-URL; RH-Speed/RH-Net получают argument=key|origin|opts.
@@ -180,8 +181,10 @@ function aiBlocks(tiers) {
     gW.push('RH-Filter-W-AI' + id);
     gC.push('RH-Filter-C-AI' + id);
   });
-  fW.push('RH-Filter-W-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + RU + '|' + BY + ')).*\\[VPN\\].*' + ICON_WIFI);
-  fC.push('RH-Filter-C-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + RU + '|' + BY + ')).*\\[VPN\\].*' + ICON_CELL);
+  // AIrest = одиночные: исключаем RU/BY И все страны тиров (Loon не дедупит фильтры группы)
+  const exclAlt = [RU, BY].concat(tiers).join('|');
+  fW.push('RH-Filter-W-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*\\[VPN\\].*' + ICON_WIFI);
+  fC.push('RH-Filter-C-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*\\[VPN\\].*' + ICON_CELL);
   gW.push('RH-Filter-W-AIrest');
   gC.push('RH-Filter-C-AIrest');
   const filters = fW.join('\n') + '\n' + fC.join('\n');
