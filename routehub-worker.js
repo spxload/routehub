@@ -1,24 +1,25 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v0.9.4 (2026-06-09) — /nodes сортирует узлы по КОМПОЗИТНОМУ
+//   баллу (вариант B): нормировка 0..1 (скорость к макс набора; rtt/jit/bl к
+//   "полу" FLOOR) + веса 0.40/0.30/0.20/0.10 (down/rtt/jit/bl); bl=null -> вес
+//   перераспределяется на остальные. Раньше сортировка была чисто по скорости
+//   (Германия с высокой скоростью, но плохим пингом залезала первой). Метка в
+//   имени без изменений (скорость+%, опц. ↓rtt) — сам балл виден в
+//   routehub-viewer. Floor: rtt 30 / jit 10 / bl 20 мс (подстроить по данным).
 // VERSION: worker v0.9.3 (2026-06-09) — /nodes пересылает профильные
 //   заголовки подписки из гиста (subinfo.json): subscription-userinfo
 //   (остаток трафика/срок), profile-title, profile-web-page-url,
-//   support-url, announce и пр. Карточка подписки Loon показывает
-//   остаток/имя/тапабельные кнопки. Нет файла/значения -> заголовок
-//   не ставится (поведение прежнее).
+//   support-url, announce и пр. Нет файла/значения -> заголовок не ставится.
 // VERSION: worker v0.9.2 (2026-06-08) — модель ОДНОЙ подписки. Чистка:
 //   убраны /net, rawNodesUrl, запись/сидинг nodes-kN.txt, флаг ai_fallback.
-//   /nodes отдаёт оба набора в одном ответе: блок 🛜 (по wifi-скорости),
-//   блок 📱 (по cell-скорости), затем обход одной записью (отсортирован
-//   DE -> по числу узлов -> остальные; RU оставлен). Фильтры режут по метке.
-//   /config считает узлы по флагу и СТРОИТ постраные AI-фильтры и группы
-//   (DE первой, дальше по числу узлов; тай-брейк скорость -> близость к DE;
-//   одиночные — catch-all без RU/BY И стран тиров), подставляя в плейсхолдеры.
+//   /nodes отдаёт оба набора в одном ответе: блок 🛜, блок 📱, затем обход.
+//   /config считает узлы по флагу и СТРОИТ постраные AI-фильтры и группы.
 //
 // GET  /config?key=kN  -> конфиг: Lastdep -> /nodes; AI-тиеры подставлены;
 //        script-path -> raw-URL; RH-Speed/RH-Net получают argument=key|origin|opts.
 // GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; Cache-Control:no-store;
-//        профильные заголовки подписки из subinfo.json (userinfo/title/web/support/announce).
+//        профильные заголовки подписки из subinfo.json.
 //        &dbg=1 -> пишет reg.nodes_ts/nodes_n.
 // GET  /status?key=kN  -> диагностика.
 // POST /speed          -> метрики устройства (скорость wifi/cell).
@@ -72,6 +73,30 @@ function speedBlock(down) {
 function supNum(n) {
   n = Math.round(n); if (n < 0) n = 0; if (n > 999) n = 999;
   return String(n).split('').map(function (d) { return SUP_DIG[+d]; }).join('');
+}
+
+// --- Композитный балл узла (вариант B) ---------------------------------------
+// Нормировка к 0..1: скорость — к максимуму набора; rtt/jit/bl — к "полу" FLOOR
+// (узел с задержкой <= floor получает ~1.0, дальше плавно падает; один аномально
+// медленный узел не искажает шкалу). bl=null -> его вес делится на остальные.
+// Веса: down 0.40, rtt 0.30, jit 0.20, bl 0.10. ВЫШЕ балл = лучше.
+const SCORE_WS = 0.40, SCORE_WR = 0.30, SCORE_WJ = 0.20, SCORE_WB = 0.10;
+const FLOOR_RTT = 30, FLOOR_JIT = 10, FLOOR_BL = 20;
+function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
+function scoreOf(m, maxDown) {
+  if (!m || m.dead) return -1;
+  const sN = maxDown > 0 ? clamp01((+m.down || 0) / maxDown) : 0;
+  const rtt = +m.rtt || 0;
+  const rN = clamp01(FLOOR_RTT / Math.max(rtt, FLOOR_RTT));
+  const jit = (m.jit == null) ? null : (+m.jit || 0);
+  const jN = (jit == null) ? 1 : clamp01(FLOOR_JIT / Math.max(jit, FLOOR_JIT));
+  if (m.bl == null) {
+    const tot = SCORE_WS + SCORE_WR + SCORE_WJ; // bl нет -> вес перераспределён
+    return (SCORE_WS * sN + SCORE_WR * rN + SCORE_WJ * jN) / tot;
+  }
+  const bl = +m.bl || 0;
+  const bN = clamp01(FLOOR_BL / Math.max(bl, FLOOR_BL));
+  return SCORE_WS * sN + SCORE_WR * rN + SCORE_WJ * jN + SCORE_WB * bN;
 }
 
 function ghHeaders(token) {
@@ -265,7 +290,7 @@ function labelOf(icon, m, max, showRtt) {
   return icon + speedBlock(m.down) + ' ' + supNum(pct) + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
 }
 
-// одна подписка: оба набора (🛜 по wifi-скорости, 📱 по cell), затем обход
+// одна подписка: оба набора (🛜 + 📱), затем обход; порядок блоков — по баллу (B)
 function renderNodesBoth(masterLines, state, showRtt) {
   const bypassRaw = [];
   const wTested = [], cTested = [], wUntested = [], cUntested = [];
@@ -287,9 +312,10 @@ function renderNodesBoth(masterLines, state, showRtt) {
     const arr = [];
     for (const it of items) {
       const nm = it.base + METRIC_SEP + labelOf(icon, it.m, max, showRtt);
-      arr.push({ line: withFrag(it.line, encodeURIComponent(nm)), down: it.m.dead ? -1 : it.m.down, rtt: it.m.dead ? 99999 : it.m.rtt });
+      arr.push({ line: withFrag(it.line, encodeURIComponent(nm)), score: it.m.dead ? -1 : scoreOf(it.m, max) });
     }
-    arr.sort(function (a, b) { return (b.down - a.down) || (a.rtt - b.rtt); });
+    // вариант B: порядок по композитному баллу (скорость+задержка+джиттер+bufferbloat)
+    arr.sort(function (a, b) { return b.score - a.score; });
     return arr.map(function (x) { return x.line; });
   }
   const wifiBlock = buildBlock(wTested, ICON_WIFI, maxW).concat(wUntested);
