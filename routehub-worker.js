@@ -1,5 +1,11 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v0.9.3 (2026-06-09) — /nodes пересылает профильные
+//   заголовки подписки из гиста (subinfo.json): subscription-userinfo
+//   (остаток трафика/срок), profile-title, profile-web-page-url,
+//   support-url, announce и пр. Карточка подписки Loon показывает
+//   остаток/имя/тапабельные кнопки. Нет файла/значения -> заголовок
+//   не ставится (поведение прежнее).
 // VERSION: worker v0.9.2 (2026-06-08) — модель ОДНОЙ подписки. Чистка:
 //   убраны /net, rawNodesUrl, запись/сидинг nodes-kN.txt, флаг ai_fallback.
 //   /nodes отдаёт оба набора в одном ответе: блок 🛜 (по wifi-скорости),
@@ -11,7 +17,8 @@
 //
 // GET  /config?key=kN  -> конфиг: Lastdep -> /nodes; AI-тиеры подставлены;
 //        script-path -> raw-URL; RH-Speed/RH-Net получают argument=key|origin|opts.
-// GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; Cache-Control:no-store.
+// GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; Cache-Control:no-store;
+//        профильные заголовки подписки из subinfo.json (userinfo/title/web/support/announce).
 //        &dbg=1 -> пишет reg.nodes_ts/nodes_n.
 // GET  /status?key=kN  -> диагностика.
 // POST /speed          -> метрики устройства (скорость wifi/cell).
@@ -299,7 +306,7 @@ function renderNodesBoth(masterLines, state, showRtt) {
   return wifiBlock.concat(cellBlock, bypassOut).join('\n');
 }
 
-// --- GET /nodes: оба набора + обход, no-store ---
+// --- GET /nodes: оба набора + обход, no-store, + профильные заголовки ---
 async function handleNodes(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
@@ -318,9 +325,19 @@ async function handleNodes(url, env) {
   const sraw = fileContent(files, 'metrics-' + key + '.json');
   if (sraw) { try { state = JSON.parse(sraw) || {}; } catch (e) { state = {}; } }
   const out = renderNodesBoth(masterLines, state, showRtt);
-  return new Response(b64encode(out), {
-    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
-  });
+  // профильные заголовки подписки из subinfo.json (остаток/имя/кнопки/анонс)
+  const headers = {};
+  const subRaw = fileContent(files, 'subinfo.json');
+  if (subRaw) {
+    try {
+      const meta = JSON.parse(subRaw);
+      for (const k in meta) { if (meta[k]) headers[k] = String(meta[k]); }
+    } catch (e) {}
+  }
+  // обязательные заголовки ставим последними — они приоритетнее пересланных
+  headers['Content-Type'] = 'text/plain; charset=utf-8';
+  headers['Cache-Control'] = 'no-store';
+  return new Response(b64encode(out), { headers: headers });
 }
 
 function metricOf(s) {

@@ -25,9 +25,14 @@
 #     только порядок отображения.
 #   * Имена/теги сохраняются — фильтры [VPN]/[Игры]/[Обход] работают.
 #   * Формат — base64 списка vless-ссылок. UUID = ключи -> Gist СЕКРЕТНЫЙ.
+#   * ПРОФИЛЬНЫЕ ЗАГОЛОВКИ подписки (остаток трафика, имя, кнопки
+#     веб-страницы/поддержки, анонс) снимаются с ответа провайдера и
+#     пишутся в гист файлом subinfo.json — Worker /nodes их пересылает
+#     в Loon. content-disposition НЕ берём (служебное имя файла);
+#     транспорт/cookie/security-заголовки не трогаем.
 # =====================================================================
 
-import os, sys, base64
+import os, sys, base64, json
 from collections import Counter
 from urllib.parse import urlparse, unquote
 
@@ -40,6 +45,16 @@ NODE_PREFIXES = ('vless://', 'vmess://', 'trojan://', 'ss://')
 SKIP_GRPC = False            # grpc оставляем (вдруг Loon добавит поддержку)
 DE_FLAG = '\U0001F1E9\U0001F1EA'   # 🇩🇪
 
+# Профильные заголовки подписки, которые пересылаем в Loon. Все —
+# метаданные подписки (не транспорт). content-disposition исключён
+# намеренно: несёт служебное имя файла (tg_…), имя даёт profile-title.
+META_HEADERS = (
+    'subscription-userinfo', 'subscription-ping-onopen-enabled',
+    'subscriptions-collapse', 'profile-title', 'profile-update-interval',
+    'profile-web-page-url', 'announce', 'announce-url', 'support-url',
+    'provider', 'ping-result',
+)
+
 
 def fetch_subscription(url, hwid):
     headers = {
@@ -51,18 +66,24 @@ def fetch_subscription(url, hwid):
     }
     r = requests.get(url, headers=headers, timeout=30)
     r.raise_for_status()
+    # снять профильные заголовки (CaseInsensitiveDict -> регистр неважен)
+    meta = {}
+    for k in META_HEADERS:
+        v = r.headers.get(k)
+        if v and v.strip():
+            meta[k] = v.strip()
     body = ''.join(r.text.split())
     if not body:
-        return ''
+        return '', meta
     try:
         norm = body.replace('-', '+').replace('_', '/')
         norm += '=' * (-len(norm) % 4)
         dec = base64.b64decode(norm).decode('utf-8', 'ignore')
         if any(p in dec for p in NODE_PREFIXES):
-            return dec
+            return dec, meta
     except Exception:
         pass
-    return r.text
+    return r.text, meta
 
 
 def node_name(uri):
@@ -89,7 +110,7 @@ def main():
     if not (token and gist_id):
         print('GIST_TOKEN/GIST_ID не заданы — публикация пропущена.'); return
 
-    text = fetch_subscription(url, hwid)
+    text, meta = fetch_subscription(url, hwid)
     all_lines = [l.strip() for l in text.splitlines()
                  if l.strip().startswith(NODE_PREFIXES)]
     if not all_lines:
@@ -118,6 +139,11 @@ def main():
     sub = '\n'.join(lines)
     content_b64 = base64.b64encode(sub.encode('utf-8')).decode('ascii')
     payload = {'files': {'lastdep-nodes.txt': {'content': content_b64}}}
+    # профильные заголовки -> гист (Worker /nodes их перешлёт). Пустое
+    # meta не пишем, чтобы не затереть прежнее значение (challenge-страница).
+    if meta:
+        payload['files']['subinfo.json'] = {
+            'content': json.dumps(meta, ensure_ascii=False)}
 
     r = requests.patch(
         f'https://api.github.com/gists/{gist_id}',
@@ -126,8 +152,12 @@ def main():
                  'User-Agent': 'routehub-publish'},
         json=payload, timeout=30)
     if r.status_code == 200:
+        ui = meta.get('subscription-userinfo', '')
+        tail = (f', userinfo: [{ui}]' if ui
+                else ', userinfo НЕ отдан провайдером')
         print(f'OK: опубликовано узлов {len(lines)} '
-              f'(grpc внутри: {grpc_n}, Loon их не покажет), Gist {gist_id}.')
+              f'(grpc внутри: {grpc_n}, Loon их не покажет), '
+              f'заголовков подписки: {len(meta)}{tail}, Gist {gist_id}.')
     else:
         print(f'ОШИБКА Gist: HTTP {r.status_code} {r.text[:200]}'); sys.exit(1)
 
