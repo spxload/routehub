@@ -1,20 +1,19 @@
 // =============================================================
 // routehub-viewer.js — RouteHub, ручной просмотр метрик узлов (Этап E/H)
-var VERSION = 'viewer v0.6.1 (2026-06-10)';
+var VERSION = 'viewer v0.6.2 (2026-06-10)';
 //
 // Тип: generic (запуск ВРУЧНУЮ из Loon). Читает rh_speed_wifi/rh_speed_cell,
-//   считает ТОТ ЖЕ балл, что Worker (v1.0.0: задержка = med, фолбэк rtt):
-//     - console.log: таблица по узлам (балл/скорость+%/rtt/med/jit/bl/дата);
-//     - ИСТОРИЯ ЗАПУСКОВ (rh_runlog): cron/net, разрывы >25 мин;
+//   считает ТОТ ЖЕ балл, что Worker (задержка = med, фолбэк rtt):
+//     - console.log: таблица (балл/скорость+%/rtt/med/jit/bl/дата скорости +
+//       возраст пинга «п:»);
+//     - ИСТОРИЯ ЗАПУСКОВ (rh_runlog): cron/net/свип, разрывы >25 мин;
 //     - $notification: сводка.
-//   v0.6.1: убран вывод $loon (факт зафиксирован: только модель/версии,
-//   батареи нет); колонка med; балл по med. Синхронно с Worker — меняешь там,
-//   меняй тут.
+//   v0.6.2: возраст пинг-свипа (tsp) в таблице; свип в истории. Синхронно с
+//   Worker/speedtest — меняешь там, меняй тут.
 //
-// Метрики: down(Мбит/с), rtt(мин из 3), med(медиана 3 — балл по ней),
-//   jit(разброс), bl(медиана 3 под нагрузкой). Цель пинга — та же, что у
-//   fallback-групп Loon (cp.cloudflare.com/generate_204); скорость —
-//   speed.cloudflare.com.
+// Метрики: down(Мбит/с, кэш 24ч), rtt(мин из 3), med(медиана — балл по ней),
+//   jit, bl. med/rtt/jit обновляются пинг-свипом (~каждые 20 мин). Цель пинга —
+//   cp.cloudflare.com/generate_204 (как у групп Loon); скорость — speed.cloudflare.com.
 // =============================================================
 
 var SCORE_WS = 0.40, SCORE_WR = 0.30, SCORE_WJ = 0.20, SCORE_WB = 0.10;
@@ -73,7 +72,7 @@ function buildBlock(cache, title) {
 
   var lines = [];
   lines.push('===== ' + title + ' =====  (узлов: ' + rows.length + ', макс ' + maxDown + ' \u041C\u0431\u0438\u0442/\u0441)');
-  lines.push(' #  балл |  скорость   | rtt | med | jit |  bl | обновлён (назад) | узел');
+  lines.push(' #  балл |  скорость   | rtt | med | jit |  bl | скорость обн. | пинг | узел');
   var tested = 0, deadN = 0, newest = 0, oldest = 0, best = null;
   for (var j = 0; j < rows.length; j++) {
     var r = rows[j], en = r.e;
@@ -95,7 +94,8 @@ function buildBlock(cache, title) {
       padL(en.med == null ? '-' : en.med, 3) + ' | ' +
       padL(en.jit == null ? '-' : en.jit, 3) + ' | ' +
       padL(en.bl == null ? '-' : en.bl, 3) + ' | ' +
-      pad(fmtDate(en.ts) + ' (' + fmtAge(en.ts) + ')', 16) + ' | ' +
+      pad(fmtDate(en.ts) + ' (' + fmtAge(en.ts) + ')', 14) + ' | ' +
+      padL(en.tsp ? fmtAge(en.tsp) : '\u2014', 4) + ' | ' +
       shortName(r.name)
     );
   }
@@ -113,7 +113,12 @@ function buildHistory() {
     var parts = [fmtDate(e.t), src, pad(e.n || '?', 4)];
     if (e.s === 'cron') {
       if (e.x) parts.push('-> ' + e.x);
-      else parts.push('пул=' + (e.p == null ? '?' : e.p) + ' нужно=' + (e.d == null ? '?' : e.d) + ' ок=' + (e.m == null ? '?' : e.m) + ' сбой=' + (e.f == null ? '?' : e.f) + (e.c ? ' ДОГОН' : ''));
+      else {
+        var d = 'пул=' + (e.p == null ? '?' : e.p) + ' нужно=' + (e.d == null ? '?' : e.d) + ' ок=' + (e.m == null ? '?' : e.m) + ' сбой=' + (e.f == null ? '?' : e.f);
+        if (e.sw != null) d += ' свип=' + e.sw;
+        if (e.c) d += ' ДОГОН';
+        parts.push(d);
+      }
     } else {
       if (e.w) parts.push('WHITELIST');
       if (e.o) parts.push(e.o);
@@ -134,7 +139,7 @@ function main() {
   var head = [];
   head.push('RouteHub viewer \u2014 ' + VERSION);
   head.push('БАЛЛ: нормировка 0..1, веса down 0.40 / задержка 0.30 / jit 0.20 / bl 0.10.');
-  head.push('Задержка для балла = med (медиана проб); rtt (min) — для метки \u2193 в имени.');
+  head.push('Задержка для балла = med; rtt (min) — для метки \u2193. med/rtt/jit обновляются пинг-свипом (~20 мин), скорость — раз в 24ч.');
   head.push('Floor: rtt ' + FLOOR_RTT + ' / jit ' + FLOOR_JIT + ' / bl ' + FLOOR_BL + ' мс. Балл 0..100, выше = лучше \u2014 по нему порядок узлов.');
   head.push('Пинг: cp.cloudflare.com/generate_204 (та же цель, что у групп Loon). Скорость: speed.cloudflare.com.');
   head.push('Метка в имени узла = скорость% (НЕ балл). Порядок в подписке = балл.');

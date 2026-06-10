@@ -1,28 +1,24 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.0.1 (2026-06-10) — ФИКС /refresh: ходит к Lastdep НАПРЯМУЮ
+//   и при сбое возвращает ok:false + точную ошибку. Раньше сбой апстрима
+//   маскировался откатом на сид-кэш (ok:true, updated:1970) — нельзя было
+//   отличить живое обновление от старого кэша.
 // VERSION: worker v1.0.0 (2026-06-10) — МИГРАЦИЯ НА KV.
 //   * Данные в Cloudflare KV (binding RH_KV): sub_cache (узлы+заголовки
 //     подписки), devices, metrics:<kN>. Гист и GitHub Actions больше не нужны
 //     (гист читается ОДИН раз как сид, если KV пуст и GIST_* заданы).
 //   * Worker САМ качает подписку Lastdep (заголовки/сортировка — как в
 //     publish_nodes.py): stale-while-revalidate — кэш старше FRESH_MS (10 мин)
-//     при ЛЮБОМ запросе (ручное и авто-обновление Loon неразличимы)
-//     обновляется синхронно с апстрима; сбой апстрима -> отдаётся старый кэш.
-//     Заголовки подписки (subscription-userinfo и пр.) берутся живьём из
-//     ответа Lastdep — subinfo.json/publish_nodes.py больше не нужны.
-//   * Cron Trigger (wrangler [triggers], раз в 2 ч) — фоновое обновление кэша.
-//   * GET /refresh?key=kN — ПРИНУДИТЕЛЬНОЕ обновление (открыть в Safari),
-//     минуя даже 10-минутный порог.
-//   * Балл: задержка берётся из med (медиана проб, speedtest v0.5.1+),
-//     фолбэк на rtt (min) для старых данных. Метка ↓ в имени — по-прежнему rtt.
-// VERSION: worker v0.9.4 — сортировка /nodes по композитному баллу (вариант B):
-//   нормировка 0..1 + веса 0.40/0.30/0.20/0.10 (down/rtt/jit/bl); floor 30/10/20.
+//     при ЛЮБОМ запросе обновляется синхронно; сбой апстрима -> старый кэш.
+//     Заголовки подписки (subscription-userinfo и пр.) берутся живьём.
+//   * Cron Trigger (раз в 2 ч) — фоновое обновление кэша.
+//   * GET /refresh?key=kN — принудительное обновление (открыть в Safari).
+//   * Балл: задержка = med (медиана проб), фолбэк rtt. Метка ↓ — rtt (min).
 //
-// GET  /config?key=kN  -> конфиг: Lastdep -> /nodes; AI-тиеры подставлены;
-//        script-path -> raw-URL; RH-Speed/RH-Net получают argument=key|origin|opts.
-// GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; no-store;
-//        заголовки подписки из живого ответа Lastdep (через KV-кэш).
-// GET  /refresh?key=kN -> принудительно обновить подписку в KV сейчас.
+// GET  /config?key=kN  -> конфиг (AI-тиеры, script-path, argument).
+// GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; no-store; заголовки подписки.
+// GET  /refresh?key=kN -> принудительно обновить подписку в KV СЕЙЧАС (без отката на кэш).
 // GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
 // POST /speed          -> метрики устройства (KV).
 // GET  /whoami         -> детект сети/оператора по request.cf.
@@ -44,9 +40,8 @@ const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
 
-const FRESH_MS = 10 * 60 * 1000;       // кэш подписки свежее 10 мин -> не ходим к Lastdep
+const FRESH_MS = 10 * 60 * 1000;
 const NODE_PREFIXES = ['vless://', 'vmess://', 'trojan://', 'ss://'];
-// профильные заголовки подписки (как в publish_nodes.py; content-disposition исключён)
 const META_HEADERS = ['subscription-userinfo', 'subscription-ping-onopen-enabled',
   'subscriptions-collapse', 'profile-title', 'profile-update-interval',
   'profile-web-page-url', 'announce', 'announce-url', 'support-url',
@@ -57,7 +52,6 @@ const RU = '\uD83C\uDDF7\uD83C\uDDFA'; // 🇷🇺
 const BY = '\uD83C\uDDE7\uD83C\uDDFE'; // 🇧🇾
 const FLAG_RE = /[\u{1F1E6}-\u{1F1FF}]{2}/u;
 const FLAG_START_RE = /^\s*([\u{1F1E6}-\u{1F1FF}]{2})/u;
-// близость к Германии (меньше = ближе): тай-брейк при равном числе узлов
 const PROX = {
   '\uD83C\uDDE9\uD83C\uDDEA': 0,  '\uD83C\uDDF3\uD83C\uDDF1': 1,  '\uD83C\uDDE8\uD83C\uDDFF': 2,
   '\uD83C\uDDE6\uD83C\uDDF9': 3,  '\uD83C\uDDF5\uD83C\uDDF1': 4,  '\uD83C\uDDEB\uD83C\uDDF7': 5,
@@ -87,9 +81,6 @@ function supNum(n) {
   return String(n).split('').map(function (d) { return SUP_DIG[+d]; }).join('');
 }
 
-// --- Композитный балл узла (вариант B) ---------------------------------------
-// Задержка для балла = med (медиана проб), фолбэк rtt (min). bl=null -> вес
-// перераспределяется. Веса: down 0.40, rtt 0.30, jit 0.20, bl 0.10. ВЫШЕ = лучше.
 const SCORE_WS = 0.40, SCORE_WR = 0.30, SCORE_WJ = 0.20, SCORE_WB = 0.10;
 const FLOOR_RTT = 30, FLOOR_JIT = 10, FLOOR_BL = 20;
 function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
@@ -101,7 +92,7 @@ function scoreOf(m, maxDown) {
   const jit = (m.jit == null) ? null : (+m.jit || 0);
   const jN = (jit == null) ? 1 : clamp01(FLOOR_JIT / Math.max(jit, FLOOR_JIT));
   if (m.bl == null) {
-    const tot = SCORE_WS + SCORE_WR + SCORE_WJ; // bl нет -> вес перераспределён
+    const tot = SCORE_WS + SCORE_WR + SCORE_WJ;
     return (SCORE_WS * sN + SCORE_WR * rN + SCORE_WJ * jN) / tot;
   }
   const bl = +m.bl || 0;
@@ -116,11 +107,9 @@ function ghHeaders(token) {
   return { 'Authorization': 'token ' + token, 'User-Agent': 'routehub-worker', 'Accept': 'application/vnd.github+json' };
 }
 
-// --- KV ---
 async function kvGetJSON(env, k) { const s = await env.RH_KV.get(k); if (!s) return null; try { return JSON.parse(s); } catch (e) { return null; } }
 async function kvPutJSON(env, k, o) { await env.RH_KV.put(k, JSON.stringify(o)); }
 
-// --- base64 (utf-8 безопасно) ---
 function b64ToUtf8(s) {
   try {
     let n = (s || '').replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
@@ -158,7 +147,6 @@ function classifyNet(asOrg) {
   return 'wifi';
 }
 
-// --- ПОДПИСКА: живая загрузка с Lastdep (логика publish_nodes.py) ---
 async function fetchUpstream(env) {
   if (!env.SUBSCRIPTION_URL) throw new Error('SUBSCRIPTION_URL не задан (секрет CF)');
   const r = await fetch(env.SUBSCRIPTION_URL, {
@@ -187,8 +175,6 @@ async function fetchUpstream(env) {
   return { ts: Date.now(), text: lines.join('\n'), meta: meta, n: lines.length };
 }
 
-// сортировка как в publish_nodes.py: DE первой; дальше страны по числу [VPN]-узлов;
-// без флага — в конец; внутри — по имени. Флаг = в НАЧАЛЕ имени.
 function sortMaster(lines) {
   const cnt = {};
   for (const l of lines) {
@@ -213,7 +199,6 @@ function sortMaster(lines) {
     .map(function (o) { return o.l; });
 }
 
-// кэш подписки: свежее FRESH_MS -> кэш; иначе живая загрузка (сбой -> старый кэш)
 async function getSub(env, force) {
   const c = await kvGetJSON(env, 'sub_cache');
   if (!force && c && c.text && (Date.now() - c.ts) < FRESH_MS) return c;
@@ -223,7 +208,6 @@ async function getSub(env, force) {
     return fresh;
   } catch (e) {
     if (c && c.text) return c;
-    // последний шанс — разовый сид из гиста (если ещё не удалён)
     const seeded = await seedSubFromGist(env);
     if (seeded) return seeded;
     throw e;
@@ -247,7 +231,6 @@ async function seedSubFromGist(env) {
   } catch (e) { return null; }
 }
 
-// --- реестр устройств (KV; разовый сид devices+metrics из гиста) ---
 async function loadRegistry(env) {
   let reg = await kvGetJSON(env, 'devices');
   if (reg) return reg;
@@ -290,8 +273,6 @@ function handleWhoami(req) {
   return jsonResp({ ip: ip, asn: cf.asn || null, aso: aso, country: cf.country || null, net: classifyNet(aso) });
 }
 
-// --- AI-тиеры: страны по числу [VPN]-узлов (флаг из имени), DE первой,
-//     тай-брейк скорость -> близость к DE; RU/BY исключены. Singles -> catch-all. ---
 function buildAiTiers(masterLines, state) {
   const cnt = {}, spd = {};
   for (const line of masterLines) {
@@ -387,6 +368,7 @@ async function handleStatus(url, env) {
     sub_ts: c ? new Date(c.ts).toISOString() : null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
     sub_nodes: c ? (c.n || (c.text ? c.text.split('\n').length : 0)) : 0,
+    sub_seeded: c ? !!c.seeded : null,
     server_now: new Date().toISOString(),
   });
 }
@@ -458,14 +440,17 @@ async function handleNodes(url, env) {
   return new Response(utf8ToB64(out), { headers: headers });
 }
 
+// ПРИНУДИТЕЛЬНОЕ обновление: апстрим НАПРЯМУЮ, БЕЗ отката на кэш —
+// сбой виден как ok:false + причина (раньше маскировался сид-кэшем, ok:true/1970)
 async function handleRefresh(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
   const reg = await loadRegistry(env);
   if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
   try {
-    const fresh = await getSub(env, true);
-    return jsonResp({ ok: true, nodes: fresh.n || fresh.text.split('\n').length, updated: new Date(fresh.ts).toISOString() });
+    const fresh = await fetchUpstream(env);
+    await kvPutJSON(env, 'sub_cache', fresh);
+    return jsonResp({ ok: true, nodes: fresh.n, updated: new Date(fresh.ts).toISOString() });
   } catch (e) {
     return jsonResp({ ok: false, error: String(e && e.message || e) }, 502);
   }
@@ -551,7 +536,6 @@ export default {
       return new Response('error: ' + (err && err.message ? err.message : 'unknown'), { status: 500 });
     }
   },
-  // фоновое обновление подписки (Cron Trigger, раз в 2 часа)
   async scheduled(event, env, ctx) {
     ctx.waitUntil(getSub(env, true).catch(function () {}));
   },

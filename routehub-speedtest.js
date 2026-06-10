@@ -1,25 +1,21 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.5.1 (2026-06-10)';
+var VERSION = 'speedtest v0.6.0 (2026-06-10)';
 //
 // Тип: cron (весь день, каждые 20 мин). Аргумент: "<key>|<origin>|<opts>".
-//   opts: cellall — сотовая мерит все; ewma — сглаживание.
 //
-// v0.5.1 (сближение с пингом Loon):
-//   * Пробы задержки (rtt/jit/bl) — на http://cp.cloudflare.com/generate_204:
-//     ТА ЖЕ цель, что у fallback-групп Loon (HTTP без TLS и тела). Скачивание —
-//     по-прежнему speed.cloudflare.com (только он отдаёт файлы заданного размера).
-//   * Новое поле med = МЕДИАНА проб — ближе к тому, что показывает Loon
-//     (одиночный свежий замер). Балл (Worker/viewer) считается по med;
-//     rtt (min) остаётся для метки ↓ в имени. Один в один с Loon цифры не
-//     совпадут (у него одиночный замер, у нас статистика) — это по построению.
-//
-// v0.5.0: пул из ребёнка по сети (RH-АВТО-W/-C); bl = медиана 3 проб под
-//   нагрузкой; BATCH адаптивный (Wi-Fi/cellall = весь пул, сотовая = 10);
-//   HEARTBEAT в rh_runlog (кольцо 50, разрывы >25 мин); ДОГОН по rh_catchup.
-//
-// Метрики: down, rtt(min из 3), med(медиана 3), jit(=max-min), bl(медиана 3 под
-//   нагрузкой - rtt). НАДЁЖНОСТЬ: бэкофф RETRY_MS; MAX_FAILS -> мёртв (⛔).
+// v0.6.0 — ПИНГ-СВИП: когда скорость у всех свежая (нечего мерить полным
+//   замером), прогон делает ЛЁГКИЙ свип задержки: 3 пробы generate_204 на
+//   узел, обновляются ТОЛЬКО med/rtt/jit (+tsp = время свипа); скорость/bl/ts
+//   не трогаются (кэш 24ч). Балл и порядок узлов становятся живыми — следующее
+//   обновление подписки раздаёт узлы по текущей задержке. Wi-Fi/cellall — весь
+//   пул; сотовая без флага — верхние SWEEP_CELL_TOP (порядок подписки = балл).
+//   Мёртвые (на бэкоффе) пропускаются. Бюджет времени SWEEP_BUDGET_MS; не
+//   успел — продолжит со следующего прогона (rh_sweep_idx). Ответил — fails=0
+//   (ожил); не ответил — fails+1 (как у полного замера).
+// v0.5.1: пинг-пробы на cp.cloudflare.com/generate_204 (цель групп Loon); med.
+// v0.5.0: пул из RH-АВТО-W/-C по сети; bl=медиана 3; BATCH адаптивный;
+//   heartbeat rh_runlog; догон rh_catchup.
 // =============================================================
 
 var BATCH_CELL = 10;
@@ -36,10 +32,13 @@ var BL_SAMPLES = 3;
 var RTT_TIMEOUT = 10000;
 var DOWN_TIMEOUT = 25000;
 var LOCK_MS = 10 * 60 * 1000;
+var SWEEP_TIMEOUT = 4000;
+var SWEEP_CELL_TOP = 15;
+var SWEEP_BUDGET_MS = 150 * 1000;
 var POOL_W = 'RH-\u0410\u0412\u0422\u041E-W';
 var POOL_C = 'RH-\u0410\u0412\u0422\u041E-C';
 var DOWN_HOST = 'https://speed.cloudflare.com/__down';
-var PING_URL = 'http://cp.cloudflare.com/generate_204'; // та же цель, что у групп Loon
+var PING_URL = 'http://cp.cloudflare.com/generate_204';
 var METRIC_SEP = ' \u00B7 ';
 var GAP_MS = 25 * 60 * 1000;
 var RUNLOG_MAX = 50;
@@ -48,6 +47,7 @@ var K_NONCE = 'rh_nonce';
 var K_LOCK = 'rh_speed_lock';
 var K_RUNLOG = 'rh_runlog';
 var K_CATCHUP = 'rh_catchup';
+var K_SWEEP_IDX = 'rh_sweep_idx';
 
 function readJSON(key, def) { try { var s = $persistentStore.read(key); return s ? JSON.parse(s) : def; } catch (e) { return def; } }
 function writeJSON(key, obj) { try { $persistentStore.write(JSON.stringify(obj), key); return true; } catch (e) { return false; } }
@@ -148,9 +148,12 @@ function main() {
 
   var okN = 0, failN = 0;
 
-  function send(poolN, dueN) {
+  function send(poolN, dueN, sweptN) {
     var wifi = buildArr('rh_speed_wifi'), cell = buildArr('rh_speed_cell');
-    hb({ s: 'cron', n: net, p: poolN, d: dueN, m: okN, f: failN, c: catchup ? 1 : 0 });
+    var ev = { s: 'cron', n: net, p: poolN, d: dueN, m: okN, f: failN };
+    if (catchup) ev.c = 1;
+    if (sweptN != null) ev.sw = sweptN;
+    hb(ev);
     if (!wifi.length && !cell.length) { console.log('RH-Speed: нет данных'); finish(); return; }
     $httpClient.post({
       url: ORIGIN + '/speed',
@@ -164,18 +167,16 @@ function main() {
     });
   }
 
-  // N проб задержки к PING_URL (та же цель, что у групп Loon) -> массив времён
-  function rttSamples(name, n, acc, cb) {
+  function rttSamples(name, n, acc, timeout, cb) {
     if (n <= 0) { cb(acc); return; }
     var t0 = Date.now();
-    $httpClient.get({ url: PING_URL + '?t=' + Date.now(), node: name, timeout: RTT_TIMEOUT },
+    $httpClient.get({ url: PING_URL + '?t=' + Date.now(), node: name, timeout: timeout },
       function (e) {
         if (!e) acc.push(Date.now() - t0);
-        rttSamples(name, n - 1, acc, cb);
+        rttSamples(name, n - 1, acc, timeout, cb);
       });
   }
 
-  // скачивание; при withLoaded — BL_SAMPLES проб PING_URL ПОД НАГРУЗКОЙ
   function rateOf(name, bytes, withLoaded, cb) {
     var s0 = Date.now();
     var loadedArr = [];
@@ -197,7 +198,7 @@ function main() {
   }
 
   function measureNode(name, cb) {
-    rttSamples(name, RTT_SAMPLES, [], function (acc) {
+    rttSamples(name, RTT_SAMPLES, [], RTT_TIMEOUT, function (acc) {
       if (!acc.length) { console.log('  x RTT [' + name + ']: нет ответа'); cb(null); return; }
       var mn = acc[0], mx = acc[0];
       for (var i = 1; i < acc.length; i++) { if (acc[i] < mn) mn = acc[i]; if (acc[i] > mx) mx = acc[i]; }
@@ -218,7 +219,7 @@ function main() {
   }
 
   function chain(list, i, poolN) {
-    if (i >= list.length) { writeJSON(RKEY, results); send(poolN, list.length); return; }
+    if (i >= list.length) { writeJSON(RKEY, results); send(poolN, list.length, null); return; }
     var fullName = list[i], base = baseName(fullName), prev = results[base] || {};
     measureNode(fullName, function (res) {
       if (res && res.down > 0) {
@@ -231,16 +232,71 @@ function main() {
           if (res.jit != null && prev.jit != null) nj = Math.round(EWMA_A * res.jit + (1 - EWMA_A) * prev.jit);
           if (res.bl != null && prev.bl != null) nb = Math.round(EWMA_A * res.bl + (1 - EWMA_A) * prev.bl);
         }
-        results[base] = { down: nd, rtt: nr, med: nm2, jit: nj, bl: nb, ts: Date.now(), att: Date.now(), fails: 0 };
+        results[base] = { down: nd, rtt: nr, med: nm2, jit: nj, bl: nb, ts: Date.now(), tsp: Date.now(), att: Date.now(), fails: 0 };
       } else {
         failN++;
         var f = (prev.fails || 0) + 1;
-        results[base] = { down: prev.down || 0, rtt: prev.rtt || 0, med: (prev.med == null ? null : prev.med), jit: prev.jit || 0, bl: (prev.bl == null ? null : prev.bl), ts: prev.ts || 0, att: Date.now(), fails: f };
+        results[base] = { down: prev.down || 0, rtt: prev.rtt || 0, med: (prev.med == null ? null : prev.med), jit: prev.jit || 0, bl: (prev.bl == null ? null : prev.bl), ts: prev.ts || 0, tsp: prev.tsp || 0, att: Date.now(), fails: f };
         if (f === MAX_FAILS) console.log('  ! [' + base + '] помечен как мёртвый (' + f + ' неудач)');
       }
       writeJSON(RKEY, results);
       chain(list, i + 1, poolN);
     });
+  }
+
+  // ЛЁГКИЙ ПИНГ-СВИП: только med/rtt/jit (+tsp); скорость/bl/ts не трогаются
+  function sweepRun(arr) {
+    var list = [];
+    for (var i = 0; i < arr.length; i++) {
+      var nm = nameOf(arr[i]);
+      if (!looksLikeNode(nm)) continue;
+      if (nm.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) continue;
+      var e = results[baseName(nm)];
+      if (e && (e.fails || 0) >= MAX_FAILS) continue; // мёртвые — на бэкоффе DEAD_MS
+      list.push(nm);
+    }
+    if (net === 'cell' && !cellAll) list = list.slice(0, SWEEP_CELL_TOP);
+    if (!list.length) {
+      console.log('RH-Speed: свип: нечего мерить');
+      send(arr.length, 0, 0); return;
+    }
+    var start = parseInt($persistentStore.read(K_SWEEP_IDX) || '0', 10) || 0;
+    if (start >= list.length) start = 0;
+    var t0 = Date.now(), idx = start, sweptN = 0;
+    console.log('RH-Speed: пинг-свип ' + list.length + ' узлов (с #' + (start + 1) + ')');
+    function step() {
+      if ((idx - start) >= list.length || (Date.now() - t0) > SWEEP_BUDGET_MS) {
+        $persistentStore.write(String(idx % list.length), K_SWEEP_IDX);
+        writeJSON(RKEY, results);
+        var partial = (idx - start) < list.length;
+        console.log('RH-Speed: свип готов, узлов ' + sweptN + (partial ? ' (бюджет исчерпан, продолжу со след. прогона)' : ''));
+        send(arr.length, 0, sweptN);
+        return;
+      }
+      var name = list[idx % list.length]; idx++;
+      var base = baseName(name);
+      rttSamples(name, RTT_SAMPLES, [], SWEEP_TIMEOUT, function (acc) {
+        var prev = results[base] || {};
+        if (acc.length) {
+          var mn = acc[0], mx = acc[0];
+          for (var i2 = 1; i2 < acc.length; i2++) { if (acc[i2] < mn) mn = acc[i2]; if (acc[i2] > mx) mx = acc[i2]; }
+          prev.rtt = mn;
+          prev.med = median(acc);
+          prev.jit = Math.round(mx - mn);
+          prev.tsp = Date.now();
+          prev.fails = 0; // ответил — жив
+          results[base] = prev;
+          sweptN++;
+        } else {
+          prev.fails = (prev.fails || 0) + 1;
+          prev.att = Date.now();
+          results[base] = prev;
+          if (prev.fails === MAX_FAILS) console.log('  ! [' + base + '] мёртв по свипу (' + prev.fails + ' неудач)');
+        }
+        step();
+      });
+    }
+    step();
   }
 
   $config.getSubPolicies(POOL_GROUP, function (subs) {
@@ -264,9 +320,9 @@ function main() {
       if (due.length >= BATCH) break;
     }
     if (!due.length) {
-      console.log('RH-Speed: всё готово, замер не нужен');
-      hb({ s: 'cron', n: net, p: arr.length, d: 0, m: 0, f: 0 });
-      finish(); return;
+      // скорость свежая у всех — лёгкий пинг-свип вместо простоя
+      sweepRun(arr);
+      return;
     }
     console.log('RH-Speed: меряю ' + due.length + ' узлов (' + net + ', batch=' + BATCH + ')');
     chain(due, 0, arr.length);
