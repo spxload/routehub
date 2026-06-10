@@ -2,18 +2,11 @@ name = "routehub"
 main = "routehub-worker.js"
 compatibility_date = "2026-06-01"
 
-# МИГРАЦИЯ НА KV (worker v1.0.0):
-#  1. Создать KV-неймспейс в дашборде Cloudflare (Workers -> KV) с любым
-#     именем (напр. routehub-kv) и вставить его ID ниже вместо заглушки.
-#     ПОКА ID НЕ ВСТАВЛЕН — деплой будет ПАДАТЬ, работает старая версия (v0.9.4
-#     на гисте) — это безопасно.
-#  2. Добавить СЕКРЕТЫ в Cloudflare (Settings -> Variables -> Secrets):
-#     SUBSCRIPTION_URL, SUB_HWID (те же значения, что в GitHub Secrets).
-#  3. GIST_TOKEN (уже есть в секретах) + GIST_ID/MASTER_FILE ниже — нужны только
-#     для РАЗОВОГО сида (перенос devices/metrics из гиста в KV при первом
-#     запуске). После переезда их можно удалить (и гист тоже).
-#  4. cron ниже — фоновое обновление подписки в KV раз в 2 часа (как было у
-#     GitHub Actions). Лимиты бесплатного плана проверить в дашборде.
+# Worker v1.1.0: KV — единственное хранилище (sub_cache, devices, metrics:<kN>).
+# Секреты Cloudflare (тип Secret, НЕ Text — plaintext-переменные стираются
+# каждым деплоем из этого файла): SUBSCRIPTION_URL, SUB_HWID.
+# Гист/GitHub Actions/publish_nodes.py больше не используются.
+# cron — фоновое обновление подписки в KV раз в 2 часа.
 
 [triggers]
 crons = ["0 */2 * * *"]
@@ -24,6 +17,3 @@ id = "fd80cc3ca9b344109e5f203f9b345f37"
 
 [vars]
 CONFIG_URL = "https://raw.githubusercontent.com/spxload/routehub/main/routehub.conf"
-# только для разового сида из гиста; после переезда удалить вместе с гистом
-GIST_ID = "b14194982ad9d058c21d393d0f342147"
-MASTER_FILE = "lastdep-nodes.txt"

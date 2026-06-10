@@ -1,20 +1,24 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
-// VERSION: worker v1.0.1 (2026-06-10) — ФИКС /refresh: ходит к Lastdep НАПРЯМУЮ
-//   и при сбое возвращает ok:false + точную ошибку. Раньше сбой апстрима
-//   маскировался откатом на сид-кэш (ok:true, updated:1970) — нельзя было
-//   отличить живое обновление от старого кэша.
-// VERSION: worker v1.0.0 (2026-06-10) — МИГРАЦИЯ НА KV.
+// VERSION: worker v1.1.0 (2026-06-11) — ЧИСТКА: гист-сид удалён, KV —
+//   единственное хранилище. env GIST_TOKEN/GIST_ID/MASTER_FILE больше не нужны.
+// VERSION: worker v1.0.1 — /refresh ходит к Lastdep напрямую, сбой = ok:false+причина.
+// VERSION: worker v1.0.0 — МИГРАЦИЯ НА KV:
 //   * Данные в Cloudflare KV (binding RH_KV): sub_cache (узлы+заголовки
-//     подписки), devices, metrics:<kN>. Гист и GitHub Actions больше не нужны
-//     (гист читается ОДИН раз как сид, если KV пуст и GIST_* заданы).
-//   * Worker САМ качает подписку Lastdep (заголовки/сортировка — как в
+//     подписки), devices (реестр+флаги; править в KV-дашборде), metrics:<kN>.
+//   * Worker САМ качает подписку Lastdep (заголовки/сортировка — как было в
 //     publish_nodes.py): stale-while-revalidate — кэш старше FRESH_MS (10 мин)
-//     при ЛЮБОМ запросе обновляется синхронно; сбой апстрима -> старый кэш.
-//     Заголовки подписки (subscription-userinfo и пр.) берутся живьём.
+//     при ЛЮБОМ запросе обновляется синхронно (ручное/авто обновление Loon
+//     неразличимы — оба получают свежее); сбой апстрима -> старый кэш.
+//     Заголовки подписки (subscription-userinfo = остаток ГБ и пр.) берутся живьём.
 //   * Cron Trigger (раз в 2 ч) — фоновое обновление кэша.
-//   * GET /refresh?key=kN — принудительное обновление (открыть в Safari).
 //   * Балл: задержка = med (медиана проб), фолбэк rtt. Метка ↓ — rtt (min).
+//
+// ОДНА ССЫЛКА НА ВСЕХ — НЕВОЗМОЖНА без ?key: Loon не передаёт никакого
+//   идентификатора устройства в запросе подписки/конфига (UA общий, IP
+//   меняется, cookie не хранятся). key=kN — единственный идентификатор;
+//   привязка устройства к ключу — АВТОМАТИЧЕСКАЯ (nonce при первом POST
+//   /speed), запасной свободный ключ создаётся сам (ensureFreeSpare).
 //
 // GET  /config?key=kN  -> конфиг (AI-тиеры, script-path, argument).
 // GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; no-store; заголовки подписки.
@@ -22,8 +26,7 @@
 // GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
 // POST /speed          -> метрики устройства (KV).
 // GET  /whoami         -> детект сети/оператора по request.cf.
-// env: RH_KV (KV), SUBSCRIPTION_URL+SUB_HWID (секреты CF), CONFIG_URL;
-//      сид: GIST_TOKEN (секрет), GIST_ID, MASTER_FILE — удалить после переезда.
+// env: RH_KV (KV binding), SUBSCRIPTION_URL + SUB_HWID (секреты CF), CONFIG_URL.
 // =============================================================
 
 const METRIC_SEP = ' \u00B7 ';
@@ -34,7 +37,6 @@ const NODATA = '\u2205';               // ∅
 const BLK = ['\u2581', '\u2583', '\u2585', '\u2587', '\u2588']; // ▁▃▅▇█
 const SUP_PLUS = '\u207A';             // ⁺
 const SUP_DIG = ['\u2070', '\u00B9', '\u00B2', '\u00B3', '\u2074', '\u2075', '\u2076', '\u2077', '\u2078', '\u2079'];
-const GIST_API = 'https://api.github.com/gists/';
 const KEY_RE = /^k\d+$/;
 const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
@@ -102,9 +104,6 @@ function scoreOf(m, maxDown) {
 
 function jsonResp(obj, status) {
   return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
-}
-function ghHeaders(token) {
-  return { 'Authorization': 'token ' + token, 'User-Agent': 'routehub-worker', 'Accept': 'application/vnd.github+json' };
 }
 
 async function kvGetJSON(env, k) { const s = await env.RH_KV.get(k); if (!s) return null; try { return JSON.parse(s); } catch (e) { return null; } }
@@ -208,46 +207,14 @@ async function getSub(env, force) {
     return fresh;
   } catch (e) {
     if (c && c.text) return c;
-    const seeded = await seedSubFromGist(env);
-    if (seeded) return seeded;
     throw e;
   }
-}
-async function seedSubFromGist(env) {
-  if (!env.GIST_TOKEN || !env.GIST_ID) return null;
-  try {
-    const r = await fetch(GIST_API + env.GIST_ID, { headers: ghHeaders(env.GIST_TOKEN) });
-    if (!r.ok) return null;
-    const j = await r.json(); const f = j.files || {};
-    const mf = f[env.MASTER_FILE || 'lastdep-nodes.txt'];
-    if (!mf || !mf.content) return null;
-    const text = b64ToUtf8(mf.content);
-    if (!text) return null;
-    let meta = {};
-    if (f['subinfo.json'] && f['subinfo.json'].content) { try { meta = JSON.parse(f['subinfo.json'].content) || {}; } catch (e) {} }
-    const c = { ts: 0, text: text.split('\n').map(function (l) { return l.trim(); }).filter(Boolean).join('\n'), meta: meta, n: 0, seeded: 1 };
-    await kvPutJSON(env, 'sub_cache', c);
-    return c;
-  } catch (e) { return null; }
 }
 
 async function loadRegistry(env) {
   let reg = await kvGetJSON(env, 'devices');
   if (reg) return reg;
-  try {
-    if (env.GIST_TOKEN && env.GIST_ID) {
-      const r = await fetch(GIST_API + env.GIST_ID, { headers: ghHeaders(env.GIST_TOKEN) });
-      if (r.ok) {
-        const j = await r.json(); const f = j.files || {};
-        if (f['devices.json'] && f['devices.json'].content) { try { reg = JSON.parse(f['devices.json'].content); } catch (e) {} }
-        for (const name in f) {
-          const m = name.match(/^metrics-(k\d+)\.json$/);
-          if (m && f[name].content) { try { await env.RH_KV.put('metrics:' + m[1], f[name].content); } catch (e) {} }
-        }
-      }
-    }
-  } catch (e) {}
-  if (!reg) reg = { k1: { status: 'free' } };
+  reg = { k1: { status: 'free' } };
   await kvPutJSON(env, 'devices', reg);
   return reg;
 }
@@ -368,7 +335,6 @@ async function handleStatus(url, env) {
     sub_ts: c ? new Date(c.ts).toISOString() : null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
     sub_nodes: c ? (c.n || (c.text ? c.text.split('\n').length : 0)) : 0,
-    sub_seeded: c ? !!c.seeded : null,
     server_now: new Date().toISOString(),
   });
 }
@@ -440,8 +406,6 @@ async function handleNodes(url, env) {
   return new Response(utf8ToB64(out), { headers: headers });
 }
 
-// ПРИНУДИТЕЛЬНОЕ обновление: апстрим НАПРЯМУЮ, БЕЗ отката на кэш —
-// сбой виден как ok:false + причина (раньше маскировался сид-кэшем, ok:true/1970)
 async function handleRefresh(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
