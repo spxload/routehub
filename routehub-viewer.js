@@ -1,18 +1,21 @@
 // =============================================================
 // routehub-viewer.js — RouteHub, ручной просмотр метрик узлов (Этап E/H)
-var VERSION = 'viewer v0.5.0 (2026-06-09)';
+var VERSION = 'viewer v0.6.0 (2026-06-10)';
 //
 // Тип: generic (запуск ВРУЧНУЮ из Loon). Читает локальные метрики спидтеста
 //   (rh_speed_wifi / rh_speed_cell), считает ТОТ ЖЕ композитный балл, что и
-//   Worker (вариант B, routehub-worker.js v0.9.4), и выводит:
+//   Worker (routehub-worker.js v0.9.4), и выводит:
 //     - console.log: полная таблица по каждому узлу (Wi-Fi и сотовая отдельно)
 //       с датой/временем последнего теста — смотреть в логе Loon;
+//     - ИСТОРИЯ ЗАПУСКОВ (rh_runlog): когда срабатывали спидтест/netwatch,
+//       сеть, пул/нужно/ок/сбой, РАЗРЫВЫ (>25 мин = Loon/VPN не работал);
+//     - сырой $loon (проверка, что отдаёт API об устройстве);
 //     - $notification: сводка (протестировано/мертвы/свежесть/топ).
-//   Балл, веса и пороги floor синхронны с Worker — если меняешь там, меняй тут.
+//   Балл, веса и floor синхронны с Worker — меняешь там, меняй тут.
 //
 // Метрики (на узел, своё для wifi/cell): down(Мбит/с), rtt(мин из 3, мс),
-//   jit(разброс проб, мс), bl(задержка под нагрузкой, мс), ts(время теста),
-//   fails(неудачи; >=MAX_FAILS = мёртв). Тест — через speed.cloudflare.com.
+//   jit(разброс проб, мс), bl(медиана 3 проб под нагрузкой, мс), ts, fails.
+//   Тест — speed.cloudflare.com через узел.
 // =============================================================
 
 var SCORE_WS = 0.40, SCORE_WR = 0.30, SCORE_WJ = 0.20, SCORE_WB = 0.10;
@@ -21,6 +24,7 @@ var MAX_FAILS = 5;
 var DOWN_HOST = 'speed.cloudflare.com';
 var BLK = ['\u2581', '\u2583', '\u2585', '\u2587', '\u2588']; // ▁▃▅▇█
 var SUP_PLUS = '\u207A';
+var K_RUNLOG = 'rh_runlog';
 
 function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
 function readJSON(key) { try { var s = $persistentStore.read(key); return s ? JSON.parse(s) : {}; } catch (e) { return {}; } }
@@ -72,7 +76,7 @@ function buildBlock(cache, title) {
   var lines = [];
   lines.push('===== ' + title + ' =====  (узлов: ' + rows.length + ', макс ' + maxDown + ' \u041C\u0431\u0438\u0442/\u0441)');
   lines.push(' #  балл |  скорость   | rtt | jit |  bl | обновлён (назад) | узел');
-  var tested = 0, deadN = 0, newest = 0, oldest = 0, best = null, worst = null;
+  var tested = 0, deadN = 0, newest = 0, oldest = 0, best = null;
   for (var j = 0; j < rows.length; j++) {
     var r = rows[j], en = r.e;
     if (isDead(en)) {
@@ -83,7 +87,6 @@ function buildBlock(cache, title) {
     tested++;
     if (en.ts) { if (!newest || en.ts > newest) newest = en.ts; if (!oldest || en.ts < oldest) oldest = en.ts; }
     if (!best || r.score > best.score) best = r;
-    if (!worst || r.score < worst.score) worst = r;
     var pct = maxDown > 0 ? Math.round(en.down / maxDown * 100) : 0;
     var sc = Math.round(r.score * 100);
     lines.push(
@@ -100,6 +103,30 @@ function buildBlock(cache, title) {
   return { lines: lines, tested: tested, dead: deadN, newest: newest, oldest: oldest, best: best, title: title };
 }
 
+// история запусков (heartbeat спидтеста и netwatch)
+function buildHistory() {
+  var lg = readJSON(K_RUNLOG);
+  if (!Array.isArray(lg) || !lg.length) return ['===== ИСТОРИЯ ЗАПУСКОВ =====', 'Журнал пуст (rh_runlog). Появится после первых срабатываний RH-Speed/RH-Net.'];
+  var lines = ['===== ИСТОРИЯ ЗАПУСКОВ ===== (последние ' + lg.length + ', разрыв >25 мин помечен)'];
+  var gaps = 0;
+  for (var i = lg.length - 1; i >= 0; i--) {
+    var e = lg[i];
+    var src = (e.s === 'net') ? '\uD83D\uDCF6 net ' : '\u23F0 cron';
+    var parts = [fmtDate(e.t), src, pad(e.n || '?', 4)];
+    if (e.s === 'cron') {
+      if (e.x) parts.push('-> ' + e.x);
+      else parts.push('пул=' + (e.p == null ? '?' : e.p) + ' нужно=' + (e.d == null ? '?' : e.d) + ' ок=' + (e.m == null ? '?' : e.m) + ' сбой=' + (e.f == null ? '?' : e.f) + (e.c ? ' ДОГОН' : ''));
+    } else {
+      if (e.w) parts.push('WHITELIST');
+      if (e.o) parts.push(e.o);
+    }
+    if (e.gap) { parts.push('\u26A0 РАЗРЫВ ' + e.gap + ' мин до этого'); gaps++; }
+    lines.push(parts.join('  '));
+  }
+  lines.push(gaps ? ('\u26A0 Разрывов: ' + gaps + ' (Loon/VPN не работал или iOS усыпил расширение)') : 'Разрывов нет — расписание шло непрерывно.');
+  return lines;
+}
+
 function main() {
   var wifi = readJSON('rh_speed_wifi');
   var cell = readJSON('rh_speed_cell');
@@ -108,15 +135,20 @@ function main() {
 
   var head = [];
   head.push('RouteHub viewer \u2014 ' + VERSION);
-  head.push('БАЛЛ (вариант B): нормировка 0..1, веса down 0.40 / rtt 0.30 / jit 0.20 / bl 0.10.');
+  head.push('БАЛЛ: нормировка 0..1, веса down 0.40 / rtt 0.30 / jit 0.20 / bl 0.10.');
   head.push('Floor: rtt ' + FLOOR_RTT + ' / jit ' + FLOOR_JIT + ' / bl ' + FLOOR_BL + ' мс. Балл 0..100, выше = лучше \u2014 по нему порядок узлов.');
-  head.push('Тест: ' + DOWN_HOST + ' через узел. rtt=мин из 3; jit=разброс проб; bl=задержка под нагрузкой.');
+  head.push('Тест: ' + DOWN_HOST + ' через узел. rtt=мин из 3; jit=разброс проб; bl=медиана 3 проб под нагрузкой.');
   head.push('Метка в имени узла = скорость% (НЕ балл). Порядок в подписке = балл.');
+  // сырой $loon — проверить, что отдаёт API об устройстве (батареи по доке нет)
+  try { head.push('$loon = ' + (typeof $loon === 'object' ? JSON.stringify($loon) : String($loon))); }
+  catch (e) { head.push('$loon: недоступен (' + e + ')'); }
   console.log(head.join('\n'));
 
+  console.log('\n' + buildHistory().join('\n'));
+
   if (!hasW && !hasC) {
-    console.log('Нет данных спидтеста. Запусти RH-Speed или дождись окна (cron 20 мин).');
-    $notification.post('RouteHub viewer', 'Нет данных спидтеста', 'Спидтест ещё не отработал.');
+    console.log('\nНет данных спидтеста. Запусти RH-Speed или дождись окна (cron 20 мин).');
+    $notification.post('RouteHub viewer', 'Нет данных спидтеста', 'История запусков \u2014 в логе Loon.');
     $done(); return;
   }
 
@@ -133,7 +165,7 @@ function main() {
   }
 
   console.log('\n' + parts.join('\n\n'));
-  $notification.post('RouteHub \u2014 метрики узлов', sum.join('   '), 'Полная таблица по каждому узлу (балл, скорость, rtt, jit, bl, дата теста) \u2014 в логе Loon.');
+  $notification.post('RouteHub \u2014 метрики узлов', sum.join('   '), 'Таблица узлов + история запусков (разрывы) \u2014 в логе Loon.');
   $done();
 }
 

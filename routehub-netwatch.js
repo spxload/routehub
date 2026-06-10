@@ -1,21 +1,28 @@
 // =============================================================
-// routehub-netwatch.js — RouteHub, диспетчер смены сети (Этап E, модель двух подписок)
-var VERSION = 'netwatch v0.4.0 (2026-06-08)';
+// routehub-netwatch.js — RouteHub, диспетчер смены сети (Этап E, модель одной подписки)
+var VERSION = 'netwatch v0.5.0 (2026-06-10)';
 //
 // Тип: network-changed. ЕДИНСТВЕННЫЙ скрипт этого типа (И4).
 //   Аргумент "<key>|<origin>|<opts>".
 //
-// ЗАДАЧИ (модель двух подписок, C-draft-14):
+// ЗАДАЧИ:
 //   1. Детект типа сети: ssid -> маяки generate_204 -> Яндекс.
 //   2. Детект whitelist РКН (пуш).
-//   3. ФЛИП родительских select-групп по сети: RH-AI/RH-АВТО/RH-Звонки -> *-W или *-C.
-//      Узел внутри выбирает fallback-ребёнок сам (Германия-якорь порядком фильтров,
-//      обход последним). Скрипт узлы НЕ выбирает (RH-Core/RH-Health выключены).
+//   3. ФЛИП родительских select-групп по сети: RH-AI/RH-АВТО/RH-Звонки -> *-W/-C.
+//      Узел внутри выбирает fallback-ребёнок сам. Скрипт узлы НЕ выбирает.
+//
+// v0.5.0:
+//   * HEARTBEAT в rh_runlog (кольцо 50, общее со спидтестом): каждая смена
+//     сети фиксируется (время, сеть, whitelist, оператор); разрыв >25 мин
+//     помечается (Loon/VPN не работал). Смотреть в RH-Viewer.
+//   * ДОГОН: при смене сети (wifi/cell) ставит rh_catchup=1 — ближайший
+//     cron-прогон RH-Speed сбросит бэкофф неудач и перемеряет сбойные узлы
+//     (актуально после звонка по сотовой: интернет рвётся -> network-changed).
 //
 // Сеть не переключает. Гонка: RH_script_lock вокруг флипа.
 // =============================================================
 
-var FLIP_GROUPS = ['RH-AI', 'RH-АВТО', 'RH-Звонки'];
+var FLIP_GROUPS = ['RH-AI', 'RH-\u0410\u0412\u0422\u041E', 'RH-\u0417\u0432\u043E\u043D\u043A\u0438'];
 
 var GEN_BEACONS = ['http://www.gstatic.com/generate_204', 'http://cp.cloudflare.com/generate_204'];
 var YANDEX_PING = 'https://ya.ru';
@@ -27,11 +34,29 @@ var HOME_KEY = 'rh_home_ssids';
 var ASO_KEY = 'rh_home_aso';
 var LAST_NET_KEY = 'rh_last_net';
 var LOCK_KEY = 'RH_script_lock';
+var K_RUNLOG = 'rh_runlog';
+var K_CATCHUP = 'rh_catchup';
+var GAP_MS = 25 * 60 * 1000;
+var RUNLOG_MAX = 50;
 
 var now = function () { return Date.now(); };
 function log(m) { console.log('[RH-Net] ' + m); }
 function readJSON(k, d) { try { var s = $persistentStore.read(k); return s ? JSON.parse(s) : d; } catch (e) { return d; } }
 function writeJSON(k, o) { try { $persistentStore.write(JSON.stringify(o), k); } catch (e) {} }
+
+// heartbeat: событие в кольцевой журнал + детект разрыва (общий со спидтестом)
+function hb(ev) {
+  try {
+    var lg = readJSON(K_RUNLOG, []);
+    if (!Array.isArray(lg)) lg = [];
+    var prev = lg.length ? lg[lg.length - 1] : null;
+    ev.t = now();
+    if (prev && prev.t && (ev.t - prev.t) > GAP_MS) ev.gap = Math.round((ev.t - prev.t) / 60000);
+    lg.push(ev);
+    if (lg.length > RUNLOG_MAX) lg = lg.slice(-RUNLOG_MAX);
+    writeJSON(K_RUNLOG, lg);
+  } catch (e) {}
+}
 
 function setPolicy(group, node) {
   try { var r = $config.setSelectPolicy(group, node); if (r === true || r === undefined) return true; } catch (e) {}
@@ -108,7 +133,11 @@ async function main() {
 
   // флип СРАЗУ (кроме offline) — это главное действие
   var netTag = (net === 'wifi') ? 'wifi' : ((net === 'cell' || net === 'cell-whitelist') ? 'cell' : '');
-  if (netTag) flip(netTag);
+  if (netTag) {
+    flip(netTag);
+    // догон: ближайший cron-RH-Speed перемеряет сбойные узлы без бэкоффа
+    $persistentStore.write('1', K_CATCHUP);
+  }
 
   // оператор (диагностика / Этап F) — только на сотовой
   if (net === 'cell' || net === 'cell-whitelist') {
@@ -121,6 +150,7 @@ async function main() {
   writeJSON(NET_KEY, { net: net, ssid: ssid, operator: operator, whitelist: whitelist, ts: now() });
   log('сеть=' + net + (ssid ? ' ssid=[' + ssid + ']' : '') + (whitelist ? ' WHITELIST' : ''));
   $persistentStore.write(net, LAST_NET_KEY);
+  hb({ s: 'net', n: net, w: whitelist ? 1 : 0, o: operator || undefined });
 
   if (whitelist) {
     $notification.post('\uD83D\uDEA7 RouteHub', 'Похоже на whitelist РКН',
