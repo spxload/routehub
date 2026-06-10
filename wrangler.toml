@@ -20,7 +20,7 @@ crons = ["0 */2 * * *"]
 
 [[kv_namespaces]]
 binding = "RH_KV"
-id = "ВСТАВЬ_ID_НЕЙМСПЕЙСА"
+id = "fd80cc3ca9b344109e5f203f9b345f37"
 
 [vars]
 CONFIG_URL = "https://raw.githubusercontent.com/spxload/routehub/main/routehub.conf"
