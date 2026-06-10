@@ -1,27 +1,25 @@
 // =============================================================
 // routehub-viewer.js — RouteHub, ручной просмотр метрик узлов (Этап E/H)
-var VERSION = 'viewer v0.6.0 (2026-06-10)';
+var VERSION = 'viewer v0.6.1 (2026-06-10)';
 //
-// Тип: generic (запуск ВРУЧНУЮ из Loon). Читает локальные метрики спидтеста
-//   (rh_speed_wifi / rh_speed_cell), считает ТОТ ЖЕ композитный балл, что и
-//   Worker (routehub-worker.js v0.9.4), и выводит:
-//     - console.log: полная таблица по каждому узлу (Wi-Fi и сотовая отдельно)
-//       с датой/временем последнего теста — смотреть в логе Loon;
-//     - ИСТОРИЯ ЗАПУСКОВ (rh_runlog): когда срабатывали спидтест/netwatch,
-//       сеть, пул/нужно/ок/сбой, РАЗРЫВЫ (>25 мин = Loon/VPN не работал);
-//     - сырой $loon (проверка, что отдаёт API об устройстве);
-//     - $notification: сводка (протестировано/мертвы/свежесть/топ).
-//   Балл, веса и floor синхронны с Worker — меняешь там, меняй тут.
+// Тип: generic (запуск ВРУЧНУЮ из Loon). Читает rh_speed_wifi/rh_speed_cell,
+//   считает ТОТ ЖЕ балл, что Worker (v1.0.0: задержка = med, фолбэк rtt):
+//     - console.log: таблица по узлам (балл/скорость+%/rtt/med/jit/bl/дата);
+//     - ИСТОРИЯ ЗАПУСКОВ (rh_runlog): cron/net, разрывы >25 мин;
+//     - $notification: сводка.
+//   v0.6.1: убран вывод $loon (факт зафиксирован: только модель/версии,
+//   батареи нет); колонка med; балл по med. Синхронно с Worker — меняешь там,
+//   меняй тут.
 //
-// Метрики (на узел, своё для wifi/cell): down(Мбит/с), rtt(мин из 3, мс),
-//   jit(разброс проб, мс), bl(медиана 3 проб под нагрузкой, мс), ts, fails.
-//   Тест — speed.cloudflare.com через узел.
+// Метрики: down(Мбит/с), rtt(мин из 3), med(медиана 3 — балл по ней),
+//   jit(разброс), bl(медиана 3 под нагрузкой). Цель пинга — та же, что у
+//   fallback-групп Loon (cp.cloudflare.com/generate_204); скорость —
+//   speed.cloudflare.com.
 // =============================================================
 
 var SCORE_WS = 0.40, SCORE_WR = 0.30, SCORE_WJ = 0.20, SCORE_WB = 0.10;
 var FLOOR_RTT = 30, FLOOR_JIT = 10, FLOOR_BL = 20;
 var MAX_FAILS = 5;
-var DOWN_HOST = 'speed.cloudflare.com';
 var BLK = ['\u2581', '\u2583', '\u2585', '\u2587', '\u2588']; // ▁▃▅▇█
 var SUP_PLUS = '\u207A';
 var K_RUNLOG = 'rh_runlog';
@@ -36,8 +34,8 @@ function speedBlock(d) {
 function scoreOf(m, maxDown) {
   if (isDead(m)) return -1;
   var sN = maxDown > 0 ? clamp01((+m.down || 0) / maxDown) : 0;
-  var rtt = +m.rtt || 0;
-  var rN = clamp01(FLOOR_RTT / Math.max(rtt, FLOOR_RTT));
+  var lat = (m.med != null) ? (+m.med || 0) : (+m.rtt || 0);
+  var rN = clamp01(FLOOR_RTT / Math.max(lat, FLOOR_RTT));
   var jit = (m.jit == null) ? null : (+m.jit || 0);
   var jN = (jit == null) ? 1 : clamp01(FLOOR_JIT / Math.max(jit, FLOOR_JIT));
   if (m.bl == null) {
@@ -56,9 +54,9 @@ function fmtDate(ts) { if (!ts) return '\u2014'; var d = new Date(ts); return tw
 function fmtAge(ts) {
   if (!ts) return '\u2014';
   var s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 3600) return Math.floor(s / 60) + '\u043C';     // м
-  if (s < 86400) return Math.floor(s / 3600) + '\u0447';  // ч
-  return Math.floor(s / 86400) + '\u0434';                // д
+  if (s < 3600) return Math.floor(s / 60) + '\u043C';
+  if (s < 86400) return Math.floor(s / 3600) + '\u0447';
+  return Math.floor(s / 86400) + '\u0434';
 }
 function shortName(n) { return String(n).replace(/^\[Lastdep\]\s*/, ''); }
 
@@ -75,7 +73,7 @@ function buildBlock(cache, title) {
 
   var lines = [];
   lines.push('===== ' + title + ' =====  (узлов: ' + rows.length + ', макс ' + maxDown + ' \u041C\u0431\u0438\u0442/\u0441)');
-  lines.push(' #  балл |  скорость   | rtt | jit |  bl | обновлён (назад) | узел');
+  lines.push(' #  балл |  скорость   | rtt | med | jit |  bl | обновлён (назад) | узел');
   var tested = 0, deadN = 0, newest = 0, oldest = 0, best = null;
   for (var j = 0; j < rows.length; j++) {
     var r = rows[j], en = r.e;
@@ -94,6 +92,7 @@ function buildBlock(cache, title) {
       padL(sc, 3) + ' | ' +
       padL(en.down, 4) + '\u041C\u0431 ' + speedBlock(en.down) + padL(pct, 3) + '% | ' +
       padL(en.rtt, 3) + ' | ' +
+      padL(en.med == null ? '-' : en.med, 3) + ' | ' +
       padL(en.jit == null ? '-' : en.jit, 3) + ' | ' +
       padL(en.bl == null ? '-' : en.bl, 3) + ' | ' +
       pad(fmtDate(en.ts) + ' (' + fmtAge(en.ts) + ')', 16) + ' | ' +
@@ -103,7 +102,6 @@ function buildBlock(cache, title) {
   return { lines: lines, tested: tested, dead: deadN, newest: newest, oldest: oldest, best: best, title: title };
 }
 
-// история запусков (heartbeat спидтеста и netwatch)
 function buildHistory() {
   var lg = readJSON(K_RUNLOG);
   if (!Array.isArray(lg) || !lg.length) return ['===== ИСТОРИЯ ЗАПУСКОВ =====', 'Журнал пуст (rh_runlog). Появится после первых срабатываний RH-Speed/RH-Net.'];
@@ -135,13 +133,11 @@ function main() {
 
   var head = [];
   head.push('RouteHub viewer \u2014 ' + VERSION);
-  head.push('БАЛЛ: нормировка 0..1, веса down 0.40 / rtt 0.30 / jit 0.20 / bl 0.10.');
+  head.push('БАЛЛ: нормировка 0..1, веса down 0.40 / задержка 0.30 / jit 0.20 / bl 0.10.');
+  head.push('Задержка для балла = med (медиана проб); rtt (min) — для метки \u2193 в имени.');
   head.push('Floor: rtt ' + FLOOR_RTT + ' / jit ' + FLOOR_JIT + ' / bl ' + FLOOR_BL + ' мс. Балл 0..100, выше = лучше \u2014 по нему порядок узлов.');
-  head.push('Тест: ' + DOWN_HOST + ' через узел. rtt=мин из 3; jit=разброс проб; bl=медиана 3 проб под нагрузкой.');
+  head.push('Пинг: cp.cloudflare.com/generate_204 (та же цель, что у групп Loon). Скорость: speed.cloudflare.com.');
   head.push('Метка в имени узла = скорость% (НЕ балл). Порядок в подписке = балл.');
-  // сырой $loon — проверить, что отдаёт API об устройстве (батареи по доке нет)
-  try { head.push('$loon = ' + (typeof $loon === 'object' ? JSON.stringify($loon) : String($loon))); }
-  catch (e) { head.push('$loon: недоступен (' + e + ')'); }
   console.log(head.join('\n'));
 
   console.log('\n' + buildHistory().join('\n'));

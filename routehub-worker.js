@@ -1,30 +1,33 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
-// VERSION: worker v0.9.4 (2026-06-09) — /nodes сортирует узлы по КОМПОЗИТНОМУ
-//   баллу (вариант B): нормировка 0..1 (скорость к макс набора; rtt/jit/bl к
-//   "полу" FLOOR) + веса 0.40/0.30/0.20/0.10 (down/rtt/jit/bl); bl=null -> вес
-//   перераспределяется на остальные. Раньше сортировка была чисто по скорости
-//   (Германия с высокой скоростью, но плохим пингом залезала первой). Метка в
-//   имени без изменений (скорость+%, опц. ↓rtt) — сам балл виден в
-//   routehub-viewer. Floor: rtt 30 / jit 10 / bl 20 мс (подстроить по данным).
-// VERSION: worker v0.9.3 (2026-06-09) — /nodes пересылает профильные
-//   заголовки подписки из гиста (subinfo.json): subscription-userinfo
-//   (остаток трафика/срок), profile-title, profile-web-page-url,
-//   support-url, announce и пр. Нет файла/значения -> заголовок не ставится.
-// VERSION: worker v0.9.2 (2026-06-08) — модель ОДНОЙ подписки. Чистка:
-//   убраны /net, rawNodesUrl, запись/сидинг nodes-kN.txt, флаг ai_fallback.
-//   /nodes отдаёт оба набора в одном ответе: блок 🛜, блок 📱, затем обход.
-//   /config считает узлы по флагу и СТРОИТ постраные AI-фильтры и группы.
+// VERSION: worker v1.0.0 (2026-06-10) — МИГРАЦИЯ НА KV.
+//   * Данные в Cloudflare KV (binding RH_KV): sub_cache (узлы+заголовки
+//     подписки), devices, metrics:<kN>. Гист и GitHub Actions больше не нужны
+//     (гист читается ОДИН раз как сид, если KV пуст и GIST_* заданы).
+//   * Worker САМ качает подписку Lastdep (заголовки/сортировка — как в
+//     publish_nodes.py): stale-while-revalidate — кэш старше FRESH_MS (10 мин)
+//     при ЛЮБОМ запросе (ручное и авто-обновление Loon неразличимы)
+//     обновляется синхронно с апстрима; сбой апстрима -> отдаётся старый кэш.
+//     Заголовки подписки (subscription-userinfo и пр.) берутся живьём из
+//     ответа Lastdep — subinfo.json/publish_nodes.py больше не нужны.
+//   * Cron Trigger (wrangler [triggers], раз в 2 ч) — фоновое обновление кэша.
+//   * GET /refresh?key=kN — ПРИНУДИТЕЛЬНОЕ обновление (открыть в Safari),
+//     минуя даже 10-минутный порог.
+//   * Балл: задержка берётся из med (медиана проб, speedtest v0.5.1+),
+//     фолбэк на rtt (min) для старых данных. Метка ↓ в имени — по-прежнему rtt.
+// VERSION: worker v0.9.4 — сортировка /nodes по композитному баллу (вариант B):
+//   нормировка 0..1 + веса 0.40/0.30/0.20/0.10 (down/rtt/jit/bl); floor 30/10/20.
 //
 // GET  /config?key=kN  -> конфиг: Lastdep -> /nodes; AI-тиеры подставлены;
 //        script-path -> raw-URL; RH-Speed/RH-Net получают argument=key|origin|opts.
-// GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; Cache-Control:no-store;
-//        профильные заголовки подписки из subinfo.json.
-//        &dbg=1 -> пишет reg.nodes_ts/nodes_n.
-// GET  /status?key=kN  -> диагностика.
-// POST /speed          -> метрики устройства (скорость wifi/cell).
+// GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; no-store;
+//        заголовки подписки из живого ответа Lastdep (через KV-кэш).
+// GET  /refresh?key=kN -> принудительно обновить подписку в KV сейчас.
+// GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
+// POST /speed          -> метрики устройства (KV).
 // GET  /whoami         -> детект сети/оператора по request.cf.
-// env: GIST_TOKEN (secret), GIST_ID, GH_USER, MASTER_FILE, CONFIG_URL
+// env: RH_KV (KV), SUBSCRIPTION_URL+SUB_HWID (секреты CF), CONFIG_URL;
+//      сид: GIST_TOKEN (секрет), GIST_ID, MASTER_FILE — удалить после переезда.
 // =============================================================
 
 const METRIC_SEP = ' \u00B7 ';
@@ -41,10 +44,19 @@ const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
 
+const FRESH_MS = 10 * 60 * 1000;       // кэш подписки свежее 10 мин -> не ходим к Lastdep
+const NODE_PREFIXES = ['vless://', 'vmess://', 'trojan://', 'ss://'];
+// профильные заголовки подписки (как в publish_nodes.py; content-disposition исключён)
+const META_HEADERS = ['subscription-userinfo', 'subscription-ping-onopen-enabled',
+  'subscriptions-collapse', 'profile-title', 'profile-update-interval',
+  'profile-web-page-url', 'announce', 'announce-url', 'support-url',
+  'provider', 'ping-result'];
+
 const DE = '\uD83C\uDDE9\uD83C\uDDEA'; // 🇩🇪
 const RU = '\uD83C\uDDF7\uD83C\uDDFA'; // 🇷🇺
 const BY = '\uD83C\uDDE7\uD83C\uDDFE'; // 🇧🇾
 const FLAG_RE = /[\u{1F1E6}-\u{1F1FF}]{2}/u;
+const FLAG_START_RE = /^\s*([\u{1F1E6}-\u{1F1FF}]{2})/u;
 // близость к Германии (меньше = ближе): тай-брейк при равном числе узлов
 const PROX = {
   '\uD83C\uDDE9\uD83C\uDDEA': 0,  '\uD83C\uDDF3\uD83C\uDDF1': 1,  '\uD83C\uDDE8\uD83C\uDDFF': 2,
@@ -76,18 +88,16 @@ function supNum(n) {
 }
 
 // --- Композитный балл узла (вариант B) ---------------------------------------
-// Нормировка к 0..1: скорость — к максимуму набора; rtt/jit/bl — к "полу" FLOOR
-// (узел с задержкой <= floor получает ~1.0, дальше плавно падает; один аномально
-// медленный узел не искажает шкалу). bl=null -> его вес делится на остальные.
-// Веса: down 0.40, rtt 0.30, jit 0.20, bl 0.10. ВЫШЕ балл = лучше.
+// Задержка для балла = med (медиана проб), фолбэк rtt (min). bl=null -> вес
+// перераспределяется. Веса: down 0.40, rtt 0.30, jit 0.20, bl 0.10. ВЫШЕ = лучше.
 const SCORE_WS = 0.40, SCORE_WR = 0.30, SCORE_WJ = 0.20, SCORE_WB = 0.10;
 const FLOOR_RTT = 30, FLOOR_JIT = 10, FLOOR_BL = 20;
 function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
 function scoreOf(m, maxDown) {
   if (!m || m.dead) return -1;
   const sN = maxDown > 0 ? clamp01((+m.down || 0) / maxDown) : 0;
-  const rtt = +m.rtt || 0;
-  const rN = clamp01(FLOOR_RTT / Math.max(rtt, FLOOR_RTT));
+  const lat = (m.med != null) ? (+m.med || 0) : (+m.rtt || 0);
+  const rN = clamp01(FLOOR_RTT / Math.max(lat, FLOOR_RTT));
   const jit = (m.jit == null) ? null : (+m.jit || 0);
   const jN = (jit == null) ? 1 : clamp01(FLOOR_JIT / Math.max(jit, FLOOR_JIT));
   if (m.bl == null) {
@@ -99,33 +109,34 @@ function scoreOf(m, maxDown) {
   return SCORE_WS * sN + SCORE_WR * rN + SCORE_WJ * jN + SCORE_WB * bN;
 }
 
-function ghHeaders(token) {
-  return { 'Authorization': 'token ' + token, 'User-Agent': 'routehub-worker', 'Accept': 'application/vnd.github+json' };
-}
 function jsonResp(obj, status) {
   return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
 }
-
-async function gistGet(env) {
-  const r = await fetch(GIST_API + env.GIST_ID, { headers: ghHeaders(env.GIST_TOKEN) });
-  if (!r.ok) throw new Error('gist read ' + r.status);
-  const j = await r.json();
-  return j.files || {};
+function ghHeaders(token) {
+  return { 'Authorization': 'token ' + token, 'User-Agent': 'routehub-worker', 'Accept': 'application/vnd.github+json' };
 }
-async function gistPatch(env, filesObj) {
-  const body = { files: {} };
-  for (const name in filesObj) body.files[name] = { content: filesObj[name] };
-  const r = await fetch(GIST_API + env.GIST_ID, {
-    method: 'PATCH',
-    headers: Object.assign(ghHeaders(env.GIST_TOKEN), { 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error('gist write ' + r.status);
-}
-function fileContent(files, name) { return files[name] && typeof files[name].content === 'string' ? files[name].content : null; }
 
-function b64decode(s) { try { return atob((s || '').replace(/\s+/g, '')); } catch (e) { return ''; } }
-function b64encode(s) { return btoa(s); }
+// --- KV ---
+async function kvGetJSON(env, k) { const s = await env.RH_KV.get(k); if (!s) return null; try { return JSON.parse(s); } catch (e) { return null; } }
+async function kvPutJSON(env, k, o) { await env.RH_KV.put(k, JSON.stringify(o)); }
+
+// --- base64 (utf-8 безопасно) ---
+function b64ToUtf8(s) {
+  try {
+    let n = (s || '').replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+    n += '='.repeat((4 - n.length % 4) % 4);
+    const bin = atob(n);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  } catch (e) { return ''; }
+}
+function utf8ToB64(s) {
+  const bytes = new TextEncoder().encode(s);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
 
 function fragOf(line) { const i = line.indexOf('#'); return i >= 0 ? line.slice(i + 1) : ''; }
 function withFrag(line, frag) { const i = line.indexOf('#'); const head = i >= 0 ? line.slice(0, i) : line; return head + '#' + frag; }
@@ -134,6 +145,7 @@ function stripMetric(name) { const i = name.indexOf(METRIC_SEP); return (i >= 0 
 function norm(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 function matchKey(name) { return norm(stripMetric(name)); }
 function flagOf(name) { const m = String(name).match(FLAG_RE); return m ? m[0] : ''; }
+function startFlag(name) { const m = String(name).match(FLAG_START_RE); return m ? m[1] : null; }
 function tagOf(name) {
   if (name.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) return 'bypass';
   if (name.indexOf('[VPN]') >= 0) return 'vpn';
@@ -146,10 +158,115 @@ function classifyNet(asOrg) {
   return 'wifi';
 }
 
-function ensureRegistry(files) {
-  const raw = fileContent(files, 'devices.json');
-  if (raw) { try { return JSON.parse(raw); } catch (e) {} }
-  return { k1: { status: 'free' } };
+// --- ПОДПИСКА: живая загрузка с Lastdep (логика publish_nodes.py) ---
+async function fetchUpstream(env) {
+  if (!env.SUBSCRIPTION_URL) throw new Error('SUBSCRIPTION_URL не задан (секрет CF)');
+  const r = await fetch(env.SUBSCRIPTION_URL, {
+    headers: {
+      'X-HWID': env.SUB_HWID || '',
+      'User-Agent': 'Shadowrocket/3274 CFNetwork/3860.400.51 Darwin/25.3.0 iPhone14,7',
+      'X-VER-OS': '26.3.1', 'X-DEVICE-MODEL': 'iPhone', 'X-DEVICE-OS': 'iOS',
+      'Accept': '*/*', 'Accept-Language': 'ru',
+    },
+  });
+  if (!r.ok) throw new Error('upstream ' + r.status);
+  const meta = {};
+  for (const k of META_HEADERS) {
+    const v = r.headers.get(k);
+    if (v && v.trim()) meta[k] = v.trim();
+  }
+  const raw = await r.text();
+  const body = raw.replace(/\s+/g, '');
+  let text = raw;
+  const dec = b64ToUtf8(body);
+  if (dec && NODE_PREFIXES.some(function (p) { return dec.indexOf(p) >= 0; })) text = dec;
+  let lines = text.split('\n').map(function (l) { return l.trim(); })
+    .filter(function (l) { return NODE_PREFIXES.some(function (p) { return l.startsWith(p); }); });
+  if (!lines.length) throw new Error('узлов в подписке не найдено');
+  lines = sortMaster(lines);
+  return { ts: Date.now(), text: lines.join('\n'), meta: meta, n: lines.length };
+}
+
+// сортировка как в publish_nodes.py: DE первой; дальше страны по числу [VPN]-узлов;
+// без флага — в конец; внутри — по имени. Флаг = в НАЧАЛЕ имени.
+function sortMaster(lines) {
+  const cnt = {};
+  for (const l of lines) {
+    const nm = decodeName(fragOf(l));
+    if (nm.indexOf('[VPN]') < 0) continue;
+    const fl = startFlag(nm);
+    if (fl) cnt[fl] = (cnt[fl] || 0) + 1;
+  }
+  function keyOf(l) {
+    const nm = decodeName(fragOf(l));
+    const fl = startFlag(nm);
+    if (!fl) return { a: 2, b: 0, c: 'zzz', nm: nm };
+    if (fl === DE) return { a: 0, b: 0, c: '', nm: nm };
+    return { a: 1, b: -(cnt[fl] || 0), c: fl, nm: nm };
+  }
+  return lines.map(function (l) { return { l: l, k: keyOf(l) }; })
+    .sort(function (x, y) {
+      return (x.k.a - y.k.a) || (x.k.b - y.k.b) ||
+        (x.k.c < y.k.c ? -1 : x.k.c > y.k.c ? 1 : 0) ||
+        (x.k.nm < y.k.nm ? -1 : x.k.nm > y.k.nm ? 1 : 0);
+    })
+    .map(function (o) { return o.l; });
+}
+
+// кэш подписки: свежее FRESH_MS -> кэш; иначе живая загрузка (сбой -> старый кэш)
+async function getSub(env, force) {
+  const c = await kvGetJSON(env, 'sub_cache');
+  if (!force && c && c.text && (Date.now() - c.ts) < FRESH_MS) return c;
+  try {
+    const fresh = await fetchUpstream(env);
+    await kvPutJSON(env, 'sub_cache', fresh);
+    return fresh;
+  } catch (e) {
+    if (c && c.text) return c;
+    // последний шанс — разовый сид из гиста (если ещё не удалён)
+    const seeded = await seedSubFromGist(env);
+    if (seeded) return seeded;
+    throw e;
+  }
+}
+async function seedSubFromGist(env) {
+  if (!env.GIST_TOKEN || !env.GIST_ID) return null;
+  try {
+    const r = await fetch(GIST_API + env.GIST_ID, { headers: ghHeaders(env.GIST_TOKEN) });
+    if (!r.ok) return null;
+    const j = await r.json(); const f = j.files || {};
+    const mf = f[env.MASTER_FILE || 'lastdep-nodes.txt'];
+    if (!mf || !mf.content) return null;
+    const text = b64ToUtf8(mf.content);
+    if (!text) return null;
+    let meta = {};
+    if (f['subinfo.json'] && f['subinfo.json'].content) { try { meta = JSON.parse(f['subinfo.json'].content) || {}; } catch (e) {} }
+    const c = { ts: 0, text: text.split('\n').map(function (l) { return l.trim(); }).filter(Boolean).join('\n'), meta: meta, n: 0, seeded: 1 };
+    await kvPutJSON(env, 'sub_cache', c);
+    return c;
+  } catch (e) { return null; }
+}
+
+// --- реестр устройств (KV; разовый сид devices+metrics из гиста) ---
+async function loadRegistry(env) {
+  let reg = await kvGetJSON(env, 'devices');
+  if (reg) return reg;
+  try {
+    if (env.GIST_TOKEN && env.GIST_ID) {
+      const r = await fetch(GIST_API + env.GIST_ID, { headers: ghHeaders(env.GIST_TOKEN) });
+      if (r.ok) {
+        const j = await r.json(); const f = j.files || {};
+        if (f['devices.json'] && f['devices.json'].content) { try { reg = JSON.parse(f['devices.json'].content); } catch (e) {} }
+        for (const name in f) {
+          const m = name.match(/^metrics-(k\d+)\.json$/);
+          if (m && f[name].content) { try { await env.RH_KV.put('metrics:' + m[1], f[name].content); } catch (e) {} }
+        }
+      }
+    }
+  } catch (e) {}
+  if (!reg) reg = { k1: { status: 'free' } };
+  await kvPutJSON(env, 'devices', reg);
+  return reg;
 }
 function ensureFreeSpare(reg) {
   for (const k in reg) if (reg[k].status === 'free') return;
@@ -209,7 +326,6 @@ function aiBlocks(tiers) {
     gW.push('RH-Filter-W-AI' + id);
     gC.push('RH-Filter-C-AI' + id);
   });
-  // AIrest = одиночные: исключаем RU/BY И все страны тиров (Loon не дедупит фильтры группы)
   const exclAlt = [RU, BY].concat(tiers).join('|');
   fW.push('RH-Filter-W-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*\\[VPN\\].*' + ICON_WIFI);
   fC.push('RH-Filter-C-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*\\[VPN\\].*' + ICON_CELL);
@@ -219,8 +335,8 @@ function aiBlocks(tiers) {
   const u = 'url=http://cp.cloudflare.com/generate_204, interval=600';
   const groups =
     'RH-AI = select, RH-AI-W, RH-AI-C, img-url=https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/AI.png\n' +
-    'RH-AI-W = fallback, ' + gW.join(', ') + ', RH-Filter-Обход, ' + u + '\n' +
-    'RH-AI-C = fallback, ' + gC.join(', ') + ', RH-Filter-Обход, ' + u;
+    'RH-AI-W = fallback, ' + gW.join(', ') + ', RH-Filter-\u041e\u0431\u0445\u043e\u0434, ' + u + '\n' +
+    'RH-AI-C = fallback, ' + gC.join(', ') + ', RH-Filter-\u041e\u0431\u0445\u043e\u0434, ' + u;
   return { filters: filters, groups: groups };
 }
 
@@ -228,69 +344,59 @@ async function handleConfig(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
 
-  const files = await gistGet(env);
-  const reg = ensureRegistry(files);
+  const reg = await loadRegistry(env);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
-  const flagsChanged = ensureFlags(reg);
-  if (flagsChanged || !fileContent(files, 'devices.json')) {
-    await gistPatch(env, { 'devices.json': JSON.stringify(reg, null, 2) });
-  }
+  if (ensureFlags(reg)) await kvPutJSON(env, 'devices', reg);
 
   const cr = await fetch(env.CONFIG_URL, { headers: { 'User-Agent': 'routehub-worker' } });
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
 
-  // постраные AI-тиеры (динамически по текущему составу узлов)
-  const masterLines = b64decode(fileContent(files, env.MASTER_FILE) || '')
-    .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
-  let state = {};
-  const sraw = fileContent(files, 'metrics-' + key + '.json');
-  if (sraw) { try { state = JSON.parse(sraw) || {}; } catch (e) { state = {}; } }
+  const sub = await getSub(env, false);
+  const masterLines = sub.text.split('\n').filter(Boolean);
+  const state = (await kvGetJSON(env, 'metrics:' + key)) || {};
   const blocks = aiBlocks(buildAiTiers(masterLines, state));
   conf = conf.replace('# __RH_AI_FILTERS__', blocks.filters);
   conf = conf.replace('# __RH_AI_GROUPS__', blocks.groups);
 
-  // одна подписка: оба набора в /nodes
-  const sub = url.origin + '/nodes?key=' + key + ',udp=true,enabled=true';
-  conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + sub);
-  // script-path -> абсолютный raw-URL
+  const subUrl = url.origin + '/nodes?key=' + key + ',udp=true,enabled=true';
+  conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + subUrl);
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
-  // argument спидтесту: key|origin|opts
   const sFlags = [];
   if (reg[key].cell_unlim) sFlags.push('cellall');
   if (reg[key].ewma) sFlags.push('ewma');
   conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + sFlags.join(','));
-  // argument netwatch: key|origin|opts
   const nOpts = reg[key].auto_refresh ? 'autorefresh' : '';
   conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + url.origin + '|' + nOpts);
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 
-// --- GET /status ---
 async function handleStatus(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
-  const files = await gistGet(env);
-  const reg = ensureRegistry(files);
+  const reg = await loadRegistry(env);
   const e = reg[key];
   if (!e) return jsonResp({ error: 'unknown key' }, 403);
+  const c = await kvGetJSON(env, 'sub_cache');
   return jsonResp({
     key: key, status: e.status || null, net: e.net || null,
     net_ts: e.net_ts || null, nodes_ts: e.nodes_ts || null, nodes_n: e.nodes_n || 0,
-    last_seen: e.last_seen || null, server_now: new Date().toISOString(),
+    last_seen: e.last_seen || null,
+    sub_ts: c ? new Date(c.ts).toISOString() : null,
+    sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
+    sub_nodes: c ? (c.n || (c.text ? c.text.split('\n').length : 0)) : 0,
+    server_now: new Date().toISOString(),
   });
 }
 
-// рендер ОДНОЙ метки для протестированного узла
 function labelOf(icon, m, max, showRtt) {
   if (m.dead) return icon + DEAD;
   const pct = max > 0 ? Math.round(m.down / max * 100) : 0;
   return icon + speedBlock(m.down) + ' ' + supNum(pct) + (showRtt ? (' ' + m.down + '\u2193' + m.rtt) : '');
 }
 
-// одна подписка: оба набора (🛜 + 📱), затем обход; порядок блоков — по баллу (B)
 function renderNodesBoth(masterLines, state, showRtt) {
   const bypassRaw = [];
   const wTested = [], cTested = [], wUntested = [], cUntested = [];
@@ -314,13 +420,11 @@ function renderNodesBoth(masterLines, state, showRtt) {
       const nm = it.base + METRIC_SEP + labelOf(icon, it.m, max, showRtt);
       arr.push({ line: withFrag(it.line, encodeURIComponent(nm)), score: it.m.dead ? -1 : scoreOf(it.m, max) });
     }
-    // вариант B: порядок по композитному баллу (скорость+задержка+джиттер+bufferbloat)
     arr.sort(function (a, b) { return b.score - a.score; });
     return arr.map(function (x) { return x.line; });
   }
   const wifiBlock = buildBlock(wTested, ICON_WIFI, maxW).concat(wUntested);
   const cellBlock = buildBlock(cTested, ICON_CELL, maxC).concat(cUntested);
-  // обход: DE первой, дальше по числу узлов, потом остальные (RU оставлен, скорости нет)
   const bcnt = {};
   for (const b of bypassRaw) if (b.flag) bcnt[b.flag] = (bcnt[b.flag] || 0) + 1;
   bypassRaw.sort(function (a, b) {
@@ -332,48 +436,51 @@ function renderNodesBoth(masterLines, state, showRtt) {
   return wifiBlock.concat(cellBlock, bypassOut).join('\n');
 }
 
-// --- GET /nodes: оба набора + обход, no-store, + профильные заголовки ---
 async function handleNodes(url, env) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
-  const files = await gistGet(env);
-  const reg = ensureRegistry(files);
+  const reg = await loadRegistry(env);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
   const showRtt = !!reg[key].show_rtt;
   if (url.searchParams.get('dbg') === '1') {
     reg[key].nodes_ts = new Date().toISOString();
     reg[key].nodes_n = (reg[key].nodes_n || 0) + 1;
-    try { await gistPatch(env, { 'devices.json': JSON.stringify(reg, null, 2) }); } catch (e) {}
+    try { await kvPutJSON(env, 'devices', reg); } catch (e) {}
   }
-  const masterLines = b64decode(fileContent(files, env.MASTER_FILE) || '')
-    .split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
-  let state = {};
-  const sraw = fileContent(files, 'metrics-' + key + '.json');
-  if (sraw) { try { state = JSON.parse(sraw) || {}; } catch (e) { state = {}; } }
+  const sub = await getSub(env, false);
+  const masterLines = sub.text.split('\n').filter(Boolean);
+  const state = (await kvGetJSON(env, 'metrics:' + key)) || {};
   const out = renderNodesBoth(masterLines, state, showRtt);
-  // профильные заголовки подписки из subinfo.json (остаток/имя/кнопки/анонс)
   const headers = {};
-  const subRaw = fileContent(files, 'subinfo.json');
-  if (subRaw) {
-    try {
-      const meta = JSON.parse(subRaw);
-      for (const k in meta) { if (meta[k]) headers[k] = String(meta[k]); }
-    } catch (e) {}
-  }
-  // обязательные заголовки ставим последними — они приоритетнее пересланных
+  for (const k in (sub.meta || {})) { if (sub.meta[k]) headers[k] = String(sub.meta[k]); }
   headers['Content-Type'] = 'text/plain; charset=utf-8';
   headers['Cache-Control'] = 'no-store';
-  return new Response(b64encode(out), { headers: headers });
+  return new Response(utf8ToB64(out), { headers: headers });
+}
+
+async function handleRefresh(url, env) {
+  const key = url.searchParams.get('key') || '';
+  if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
+  const reg = await loadRegistry(env);
+  if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
+  try {
+    const fresh = await getSub(env, true);
+    return jsonResp({ ok: true, nodes: fresh.n || fresh.text.split('\n').length, updated: new Date(fresh.ts).toISOString() });
+  } catch (e) {
+    return jsonResp({ ok: false, error: String(e && e.message || e) }, 502);
+  }
 }
 
 function metricOf(s) {
   if (s.dead) return { dead: true };
-  return {
+  const o = {
     down: Math.max(0, Math.round(+s.down || 0)),
     rtt: Math.max(0, Math.round(+s.rtt || 0)),
     jit: Math.max(0, Math.round(+s.jit || 0)),
     bl: (s.bl == null ? null : Math.max(0, Math.round(+s.bl))),
   };
+  if (s.med != null) o.med = Math.max(0, Math.round(+s.med));
+  return o;
 }
 
 async function handleSpeed(req, env) {
@@ -385,8 +492,7 @@ async function handleSpeed(req, env) {
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
   if (!nonce) return jsonResp({ error: 'no nonce' }, 400);
 
-  const files = await gistGet(env);
-  const reg = ensureRegistry(files);
+  const reg = await loadRegistry(env);
   if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
   ensureFlags(reg);
 
@@ -398,7 +504,7 @@ async function handleSpeed(req, env) {
   } else if (e.status === 'bound') {
     if (e.nonce !== nonce) {
       e.status = 'conflict';
-      await gistPatch(env, { 'devices.json': JSON.stringify(reg, null, 2) });
+      await kvPutJSON(env, 'devices', reg);
       return jsonResp({ error: 'nonce conflict' }, 409);
     }
     e.last_seen = now;
@@ -406,10 +512,7 @@ async function handleSpeed(req, env) {
     return jsonResp({ error: 'key in conflict' }, 409);
   }
 
-  const metricsFile = 'metrics-' + key + '.json';
-  let state = {};
-  const sraw = fileContent(files, metricsFile);
-  if (sraw) { try { state = JSON.parse(sraw) || {}; } catch (er) { state = {}; } }
+  const state = (await kvGetJSON(env, 'metrics:' + key)) || {};
   let sentW = 0, sentC = 0;
   function apply(arr, slot) {
     if (!Array.isArray(arr)) return;
@@ -427,10 +530,8 @@ async function handleSpeed(req, env) {
   let labeled = 0;
   for (const k in state) if (state[k] && (state[k].w || state[k].c)) labeled++;
 
-  await gistPatch(env, {
-    [metricsFile]: JSON.stringify(state),
-    'devices.json': JSON.stringify(reg, null, 2),
-  });
+  await kvPutJSON(env, 'metrics:' + key, state);
+  await kvPutJSON(env, 'devices', reg);
 
   return jsonResp({ ok: true, key: key, status: e.status, labeled: labeled, sent_wifi: sentW, sent_cell: sentC });
 }
@@ -442,11 +543,16 @@ export default {
       if (req.method === 'GET' && url.pathname === '/whoami') return handleWhoami(req);
       if (req.method === 'GET' && url.pathname === '/config') return await handleConfig(url, env);
       if (req.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env);
+      if (req.method === 'GET' && url.pathname === '/refresh') return await handleRefresh(url, env);
       if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env);
       if (req.method === 'POST' && url.pathname === '/speed') return await handleSpeed(req, env);
       return new Response('routehub-worker: not found', { status: 404 });
     } catch (err) {
       return new Response('error: ' + (err && err.message ? err.message : 'unknown'), { status: 500 });
     }
+  },
+  // фоновое обновление подписки (Cron Trigger, раз в 2 часа)
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(getSub(env, true).catch(function () {}));
   },
 };
