@@ -1,9 +1,12 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.6.0 (2026-06-10)';
+var VERSION = 'speedtest v0.6.1 (2026-06-11)';
 //
 // Тип: cron (весь день, каждые 20 мин). Аргумент: "<key>|<origin>|<opts>".
 //
+// v0.6.1 — ЧИСТКА УШЕДШИХ УЗЛОВ: записи кэша, которых нет в текущем пуле
+//   (провайдер ротирует/переименовывает узлы), удаляются при каждом прогоне —
+//   иначе висят вечно со старой датой. Вернётся узел — перемеряется заново.
 // v0.6.0 — ПИНГ-СВИП: когда скорость у всех свежая (нечего мерить полным
 //   замером), прогон делает ЛЁГКИЙ свип задержки: 3 пробы generate_204 на
 //   узел, обновляются ТОЛЬКО med/rtt/jit (+tsp = время свипа); скорость/bl/ts
@@ -308,6 +311,19 @@ function main() {
       finish(); return;
     }
     console.log('RH-Speed: пул=' + arr.length);
+
+    // ЧИСТКА УШЕДШИХ: записи кэша, которых нет в текущем пуле, удаляются
+    // (ротация узлов провайдером; вернётся — перемеряется заново)
+    var poolSet = {};
+    for (var pi = 0; pi < arr.length; pi++) {
+      var pn = nameOf(arr[pi]);
+      if (looksLikeNode(pn)) poolSet[baseName(pn)] = 1;
+    }
+    var gone = 0;
+    for (var rk in results) {
+      if (results.hasOwnProperty(rk) && !poolSet[rk]) { delete results[rk]; gone++; }
+    }
+    if (gone) { writeJSON(RKEY, results); console.log('RH-Speed: удалено ушедших из подписки: ' + gone); }
 
     var BATCH = (net === 'wifi' || cellAll) ? arr.length : BATCH_CELL;
 

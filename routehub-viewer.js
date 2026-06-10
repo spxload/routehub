@@ -1,15 +1,18 @@
 // =============================================================
 // routehub-viewer.js — RouteHub, ручной просмотр метрик узлов (Этап E/H)
-var VERSION = 'viewer v0.6.2 (2026-06-10)';
+var VERSION = 'viewer v0.6.3 (2026-06-11)';
 //
 // Тип: generic (запуск ВРУЧНУЮ из Loon). Читает rh_speed_wifi/rh_speed_cell,
 //   считает ТОТ ЖЕ балл, что Worker (задержка = med, фолбэк rtt):
 //     - console.log: таблица (балл/скорость+%/rtt/med/jit/bl/дата скорости +
-//       возраст пинга «п:»);
+//       возраст пинга «пинг»);
 //     - ИСТОРИЯ ЗАПУСКОВ (rh_runlog): cron/net/свип, разрывы >25 мин;
 //     - $notification: сводка.
-//   v0.6.2: возраст пинг-свипа (tsp) в таблице; свип в истории. Синхронно с
-//   Worker/speedtest — меняешь там, меняй тут.
+//   v0.6.3: у живых, но сбоящих узлов в конце строки показывается ⚠fails=N
+//   (замер скорости падает — дата скорости не обновляется, после 5 неудач
+//   узел уйдёт в ⛔DEAD). Кэш ушедших из подписки узлов спидтест теперь
+//   чистит сам (v0.6.1) — «вечные» старые даты исчезают.
+//   v0.6.2: возраст пинг-свипа (tsp) в таблице; свип в истории.
 //
 // Метрики: down(Мбит/с, кэш 24ч), rtt(мин из 3), med(медиана — балл по ней),
 //   jit, bl. med/rtt/jit обновляются пинг-свипом (~каждые 20 мин). Цель пинга —
@@ -96,7 +99,8 @@ function buildBlock(cache, title) {
       padL(en.bl == null ? '-' : en.bl, 3) + ' | ' +
       pad(fmtDate(en.ts) + ' (' + fmtAge(en.ts) + ')', 14) + ' | ' +
       padL(en.tsp ? fmtAge(en.tsp) : '\u2014', 4) + ' | ' +
-      shortName(r.name)
+      shortName(r.name) +
+      (en.fails ? ' \u26A0fails=' + en.fails : '')
     );
   }
   return { lines: lines, tested: tested, dead: deadN, newest: newest, oldest: oldest, best: best, title: title };
@@ -142,7 +146,7 @@ function main() {
   head.push('Задержка для балла = med; rtt (min) — для метки \u2193. med/rtt/jit обновляются пинг-свипом (~20 мин), скорость — раз в 24ч.');
   head.push('Floor: rtt ' + FLOOR_RTT + ' / jit ' + FLOOR_JIT + ' / bl ' + FLOOR_BL + ' мс. Балл 0..100, выше = лучше \u2014 по нему порядок узлов.');
   head.push('Пинг: cp.cloudflare.com/generate_204 (та же цель, что у групп Loon). Скорость: speed.cloudflare.com.');
-  head.push('Метка в имени узла = скорость% (НЕ балл). Порядок в подписке = балл.');
+  head.push('Метка в имени узла = скорость% (НЕ балл). Порядок в подписке = балл. \u26A0fails=N — замер скорости падает, дата не обновится.');
   console.log(head.join('\n'));
 
   console.log('\n' + buildHistory().join('\n'));
