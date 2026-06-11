@@ -1,5 +1,8 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.3.0 (2026-06-11) — ОБХОД КЭША КОНФИГА: fetch(CONFIG_URL)
+//   с cache:'no-store' + ?t=now — /config больше не отдаёт устаревший routehub.conf
+//   из кэша CDN GitHub после коммита. Подписка (/nodes, KV) — без изменений.
 // VERSION: worker v1.2.0 (2026-06-11) — ЗВОНКИ: маркер ☎ (voiceOk) в метке
 //   узлов, годных для голоса (jit<=30, bl<=50, med<=160; раздельно 🛜/📱).
 //   Группы RH-Звонки фильтруются по ☎ (фильтр 🛜.*☎ / 📱.*☎ в conf).
@@ -312,7 +315,9 @@ async function handleConfig(url, env) {
   if (!reg[key]) return new Response('unknown key', { status: 403 });
   if (ensureFlags(reg)) await kvPutJSON(env, 'devices', reg);
 
-  const cr = await fetch(env.CONFIG_URL, { headers: { 'User-Agent': 'routehub-worker' } });
+  // Обход кэша: no-store (кэш Workers) + ?t=now (CDN GitHub считает ресурс новым)
+  const cfgUrl = env.CONFIG_URL + (env.CONFIG_URL.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
+  const cr = await fetch(cfgUrl, { headers: { 'User-Agent': 'routehub-worker' }, cache: 'no-store' });
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
 
