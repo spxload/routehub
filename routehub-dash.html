@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<!--
+  routehub-dash.html v0.1.0 — локальный дашборд RouteHub.
+  Отдаётся скриптом-перехватчиком routehub-dash.js на http://routehub.local
+  (механизм как у BoxJS: http-request rewrite, $done({response})).
+  HTTP-домен — MITM НЕ требуется.
+
+  Данные: при загрузке читает встроенный JSON (плейсхолдеры подставляет
+  скрипт из $persistentStore — локальный кэш). Параллельно делает fetch на
+  Worker /dashboard за свежими данными. Worker недоступен -> показывает кэш
+  из localStorage + плашку, кнопки гасит.
+
+  Плейсхолдеры, подставляемые скриптом:
+    __RH_CACHE__   -> JSON последнего кэша (или null)
+    __RH_KEY__     -> ключ устройства (kN)
+    __RH_ORIGIN__  -> origin Worker (https://...workers.dev)
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>RouteHub</title>
+<style>
+  :root {
+    --bg: #f5f5f0; --card: #ffffff; --line: rgba(0,0,0,.10);
+    --tx: #23231f; --tx2: #66655f; --tx3: #9a988f;
+    --ok-bg: #e1f5ee; --ok-tx: #0f6e56;
+    --warn-bg: #faeeda; --warn-tx: #854f0b;
+    --bad-bg: #fcebeb; --bad-tx: #a32d2d;
+    --info-bg: #e6f1fb; --info-tx: #185fa5;
+    --r: 10px; --r-lg: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1a; --card: #26261f; --line: rgba(255,255,255,.12);
+      --tx: #e8e6dc; --tx2: #b0aea4; --tx3: #76746b;
+      --ok-bg: #085041; --ok-tx: #9fe1cb;
+      --warn-bg: #633806; --warn-tx: #fac775;
+      --bad-bg: #791f1f; --bad-tx: #f7c1c1;
+      --info-bg: #0c447c; --info-tx: #b5d4f4;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 14px; background: var(--bg); color: var(--tx);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  .hd { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .hd .logo { width: 34px; height: 34px; border-radius: 9px; background: var(--info-bg);
+    color: var(--info-tx); display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 15px; flex: 0 0 auto; }
+  .hd .ti { font-size: 16px; margin: 0; }
+  .hd h1 { font-size: 16px; font-weight: 600; margin: 0; }
+  .hd .sub { font-size: 12px; color: var(--tx3); margin: 0; }
+  .badge { margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; padding: 4px 10px; border-radius: var(--r); font-weight: 500; }
+  .badge.ok { background: var(--ok-bg); color: var(--ok-tx); }
+  .badge.bad { background: var(--bad-bg); color: var(--bad-tx); }
+  .badge .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+  .rkn { padding: 10px 12px; border-radius: var(--r); margin-bottom: 12px;
+    font-size: 13px; display: none; align-items: center; gap: 8px; }
+  .rkn.show { display: flex; }
+  .rkn.normal { background: var(--ok-bg); color: var(--ok-tx); }
+  .rkn.whitelist { background: var(--warn-bg); color: var(--warn-tx); }
+  .rkn.block { background: var(--bad-bg); color: var(--bad-tx); }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  .stat { background: var(--card); border-radius: var(--r); padding: 12px;
+    border: .5px solid var(--line); }
+  .stat .lbl { font-size: 12px; color: var(--tx2); margin: 0 0 4px; display: flex;
+    align-items: center; gap: 5px; }
+  .stat .val { font-size: 18px; font-weight: 600; margin: 0; }
+  .stat .note { font-size: 11px; color: var(--tx3); margin: 4px 0 0; }
+
+  .acts { display: flex; gap: 8px; margin-bottom: 16px; }
+  .btn { flex: 1; padding: 10px; border-radius: var(--r); border: .5px solid var(--line);
+    background: var(--card); color: var(--tx); font-size: 13px; font-weight: 500;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    cursor: pointer; font-family: inherit; }
+  .btn:active { transform: scale(.98); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .ic { width: 15px; height: 15px; flex: 0 0 auto; }
+
+  .sec { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+  
+  .sec h2 { font-size: 14px; font-weight: 600; margin: 0; }
+  .sec .cnt { margin-left: auto; font-size: 12px; color: var(--tx3); }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .tab { padding: 6px 14px; border-radius: 999px; border: .5px solid var(--line);
+    background: var(--card); color: var(--tx2); font-size: 13px; cursor: pointer;
+    font-family: inherit; }
+  .tab.on { background: var(--info-bg); color: var(--info-tx); border-color: transparent; }
+
+  .list { background: var(--card); border-radius: var(--r); border: .5px solid var(--line);
+    overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+    border-bottom: .5px solid var(--line); }
+  .row:last-child { border-bottom: none; }
+  .row .sc { font-size: 13px; font-weight: 600; width: 26px; text-align: center;
+    flex: 0 0 auto; }
+  .row .nm { font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .row .call { display: inline-flex; align-items: center; gap: 3px; font-size: 11px;
+    padding: 2px 7px; border-radius: 999px; background: var(--ok-bg); color: var(--ok-tx);
+    flex: 0 0 auto; }
+  .row .call .ic { width: 11px; height: 11px; }
+  .row .spd { font-size: 12px; color: var(--tx3); width: 56px; text-align: right;
+    flex: 0 0 auto; }
+  .empty { padding: 16px; text-align: center; color: var(--tx3); font-size: 13px; }
+  .ft { margin-top: 14px; text-align: center; font-size: 11px; color: var(--tx3); }
+</style>
+</head>
+<body>
+
+<div class="hd">
+  <div class="logo">RH</div>
+  <div>
+    <h1>RouteHub</h1>
+    <p class="sub" id="sub">устройство — · worker —</p>
+  </div>
+  <span class="badge bad" id="live"><span class="dot"></span><span id="liveTx">кэш</span></span>
+</div>
+
+<div class="rkn" id="rkn"></div>
+
+<div class="grid">
+  <div class="stat">
+    <p class="lbl">конфиг</p>
+    <p class="val" id="confVer">—</p>
+    <p class="note" id="confNote">версия от Worker</p>
+  </div>
+  <div class="stat">
+    <p class="lbl">подписка</p>
+    <p class="val" id="subAge">—</p>
+    <p class="note" id="subNote">возраст кэша</p>
+  </div>
+  <div class="stat">
+    <p class="lbl">трафик</p>
+    <p class="val" id="gb">—</p>
+    <p class="note" id="gbNote">остаток</p>
+  </div>
+  <div class="stat">
+    <p class="lbl">обновлено</p>
+    <p class="val" id="dataAge">—</p>
+    <p class="note" id="dataNote">данные дашборда</p>
+  </div>
+</div>
+
+<div class="acts">
+  <button class="btn" id="btnRefresh"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>обновить подписку</span></button>
+  <button class="btn" id="btnReload"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><polyline points="19 12 12 19 5 12"/></svg><span>обновить данные</span></button>
+</div>
+
+<div class="sec">
+  <h2>узлы</h2>
+  <span class="cnt" id="nodeCnt"></span>
+</div>
+<div class="tabs">
+  <div class="tab on" id="tabW">Wi-Fi</div>
+  <div class="tab" id="tabC">сотовая</div>
+</div>
+<div class="list" id="list"><div class="empty">нет данных</div></div>
+
+<p class="ft" id="ft"></p>
+
+<script>
+(function () {
+  var CACHE = __RH_CACHE__;
+  var KEY = "__RH_KEY__";
+  var ORIGIN = "__RH_ORIGIN__";
+  var LS = "rh_dash_cache";
+  var slot = "wifi";
+  var data = null;
+
+  function $(id) { return document.getElementById(id); }
+
+  // источник данных: встроенный кэш -> localStorage (на случай прямого открытия в браузере)
+  function loadInitial() {
+    if (CACHE && typeof CACHE === "object") return CACHE;
+    try { var s = localStorage.getItem(LS); if (s) return JSON.parse(s); } catch (e) {}
+    return null;
+  }
+
+  function fmtAge(min) {
+    if (min == null) return "—";
+    if (min < 1) return "только что";
+    if (min < 60) return min + " мин";
+    var h = Math.floor(min / 60); return h + " ч";
+  }
+  function tsAgeMin(iso) {
+    if (!iso) return null;
+    var t = Date.parse(iso); if (isNaN(t)) return null;
+    return Math.max(0, Math.round((Date.now() - t) / 60000));
+  }
+  function fmtTime(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso); if (isNaN(d)) return "—";
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  function render(live) {
+    if (!data) return;
+    $("sub").textContent = "устройство " + (data.key || KEY) + " · worker " + (data.worker || "—");
+    $("confVer").textContent = data.conf_ver || "—";
+    $("subAge").textContent = fmtAge(data.sub_age_min);
+    $("subNote").textContent = (data.sub_nodes || 0) + " узлов в кэше";
+
+    if (data.traffic && data.traffic.left_gb != null) {
+      $("gb").textContent = data.traffic.left_gb + " ГБ";
+      $("gbNote").textContent = "из " + data.traffic.total_gb + " ГБ";
+    } else { $("gb").textContent = "—"; $("gbNote").textContent = "нет данных"; }
+
+    var dAge = tsAgeMin(data._fetched_at);
+    $("dataAge").textContent = dAge == null ? "—" : fmtAge(dAge);
+    $("dataNote").textContent = "/config " + fmtTime(data.last_config_ts) + " · /nodes " + fmtTime(data.last_nodes_ts);
+
+    // живой/кэш
+    var live_ = !!live;
+    var b = $("live");
+    b.className = "badge " + (live_ ? "ok" : "bad");
+    $("liveTx").textContent = live_ ? "живой" : "кэш";
+    $("btnRefresh").disabled = !live_;
+
+    // режим РКН
+    var rkn = data.rkn;
+    var r = $("rkn");
+    if (rkn && rkn.mode) {
+      r.className = "rkn show " + rkn.mode;
+      var tx = { normal: "Режим: норма — все узлы работают",
+                 whitelist: "Режим РКН (whitelist) — основные узлы недоступны, трафик на обходе",
+                 block: "Полная блокировка — обход тоже недоступен" };
+      r.innerHTML = '<span>' + (tx[rkn.mode] || rkn.mode) + '</span>';
+    } else { r.className = "rkn"; }
+
+    renderNodes();
+    var src = live_ ? "обновлено с Worker" : "данные из локального кэша";
+    $("ft").textContent = src + (data.server_now ? " · сервер " + fmtTime(data.server_now) : "");
+  }
+
+  function renderNodes() {
+    var arr = (data.nodes && data.nodes[slot]) || [];
+    var el = $("list");
+    $("nodeCnt").textContent = arr.length + " шт";
+    if (!arr.length) { el.innerHTML = '<div class="empty">нет измеренных узлов</div>'; return; }
+    var html = "";
+    for (var i = 0; i < arr.length; i++) {
+      var n = arr[i];
+      var call = n.voice ? '<span class="call"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>звонки</span>' : '';
+      var spd = (n.down != null ? n.down + " Мбит" : "");
+      html += '<div class="row"><span class="sc">' + (n.score != null ? n.score : "—") + '</span>' +
+              '<span class="nm">' + esc(n.name) + '</span>' + call +
+              '<span class="spd">' + spd + '</span></div>';
+    }
+    el.innerHTML = html;
+  }
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
+
+  function fetchLive() {
+    if (!ORIGIN || ORIGIN.indexOf("http") !== 0) return;
+    var url = ORIGIN + "/dashboard?key=" + KEY;
+    var done = false;
+    var to = setTimeout(function () { if (!done) { done = true; render(false); } }, 6000);
+    fetch(url, { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (j) {
+      if (done) return; done = true; clearTimeout(to);
+      if (j && !j.error) {
+        j._fetched_at = new Date().toISOString();
+        data = j;
+        try { localStorage.setItem(LS, JSON.stringify(j)); } catch (e) {}
+        render(true);
+      } else { render(false); }
+    }).catch(function () { if (!done) { done = true; clearTimeout(to); render(false); } });
+  }
+
+  function triggerRefresh() {
+    if (!ORIGIN) return;
+    $("btnRefresh").disabled = true;
+    fetch(ORIGIN + "/refresh?key=" + KEY, { cache: "no-store" }).then(function (r) { return r.json(); })
+      .then(function () { fetchLive(); }).catch(function () { $("btnRefresh").disabled = false; });
+  }
+
+  // init
+  data = loadInitial();
+  if (data && !data._fetched_at) data._fetched_at = data.sub_ts || null;
+  render(false);
+  $("tabW").onclick = function () { slot = "wifi"; $("tabW").classList.add("on"); $("tabC").classList.remove("on"); renderNodes(); };
+  $("tabC").onclick = function () { slot = "cell"; $("tabC").classList.add("on"); $("tabW").classList.remove("on"); renderNodes(); };
+  $("btnReload").onclick = fetchLive;
+  $("btnRefresh").onclick = triggerRefresh;
+  fetchLive();
+})();
+</script>
+</body>
+</html>
