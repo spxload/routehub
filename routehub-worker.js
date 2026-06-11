@@ -1,5 +1,10 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.4.0 (2026-06-11) — ДАШБОРД: GET /dashboard?key=kN (JSON):
+//   версия конфига, возраст кэша подписки, время последних /config и /nodes,
+//   остаток ГБ (из subscription-userinfo), узлы W/C с метриками+☎, режим РКН
+//   (из KV rkn:<kN>, пишет скрипт routehub-rkn на устройстве). last_config_ts/
+//   last_nodes_ts пишутся при КАЖДОМ запросе /config и /nodes.
 // VERSION: worker v1.3.0 (2026-06-11) — ОБХОД КЭША КОНФИГА: fetch(CONFIG_URL)
 //   с cache:'no-store' + ?t=now — /config больше не отдаёт устаревший routehub.conf
 //   из кэша CDN GitHub после коммита. Подписка (/nodes, KV) — без изменений.
@@ -29,6 +34,7 @@
 // GET  /config?key=kN  -> конфиг (AI-тиеры, script-path, argument).
 // GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; no-store; заголовки подписки.
 // GET  /refresh?key=kN -> принудительно обновить подписку в KV СЕЙЧАС (без отката на кэш).
+// GET  /dashboard?key=kN -> JSON для дашборда (статус обновлений, узлы, ГБ, режим РКН).
 // GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
 // POST /speed          -> метрики устройства (KV).
 // GET  /whoami         -> детект сети/оператора по request.cf.
@@ -119,6 +125,29 @@ function voiceOk(m) {
   if (bl != null && bl > VOICE_BL) return false;
   if (lat > VOICE_MED) return false;
   return true;
+}
+
+function parseUserinfo(meta) {
+  const u = meta && meta['subscription-userinfo'];
+  if (!u) return null;
+  const o = {};
+  String(u).split(';').forEach(function (kv) {
+    const p = kv.split('='); if (p.length === 2) o[p[0].trim()] = +p[1];
+  });
+  if (o.total == null) return null;
+  const used = (o.upload || 0) + (o.download || 0);
+  const left = Math.max(0, o.total - used);
+  const GB = 1024 * 1024 * 1024;
+  return {
+    total_gb: +(o.total / GB).toFixed(1),
+    used_gb: +(used / GB).toFixed(1),
+    left_gb: +(left / GB).toFixed(1),
+    expire: o.expire || null,
+  };
+}
+function confVersion(conf) {
+  const m = String(conf).match(/C-draft-\d+/);
+  return m ? m[0] : null;
 }
 
 function jsonResp(obj, status) {
@@ -313,13 +342,17 @@ async function handleConfig(url, env) {
 
   const reg = await loadRegistry(env);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
-  if (ensureFlags(reg)) await kvPutJSON(env, 'devices', reg);
+  ensureFlags(reg);
+  reg[key].last_config_ts = new Date().toISOString();
+  try { await kvPutJSON(env, 'devices', reg); } catch (e) {}
 
   // Обход кэша: no-store (кэш Workers) + ?t=now (CDN GitHub считает ресурс новым)
   const cfgUrl = env.CONFIG_URL + (env.CONFIG_URL.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
   const cr = await fetch(cfgUrl, { headers: { 'User-Agent': 'routehub-worker' }, cache: 'no-store' });
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
+  const cv = confVersion(conf);
+  if (cv && reg[key].conf_ver !== cv) { reg[key].conf_ver = cv; try { await kvPutJSON(env, 'devices', reg); } catch (e) {} }
 
   const sub = await getSub(env, false);
   const masterLines = sub.text.split('\n').filter(Boolean);
@@ -412,11 +445,9 @@ async function handleNodes(url, env) {
   const reg = await loadRegistry(env);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
   const showRtt = !!reg[key].show_rtt;
-  if (url.searchParams.get('dbg') === '1') {
-    reg[key].nodes_ts = new Date().toISOString();
-    reg[key].nodes_n = (reg[key].nodes_n || 0) + 1;
-    try { await kvPutJSON(env, 'devices', reg); } catch (e) {}
-  }
+  reg[key].last_nodes_ts = new Date().toISOString();
+  reg[key].nodes_n = (reg[key].nodes_n || 0) + 1;
+  try { await kvPutJSON(env, 'devices', reg); } catch (e) {}
   const sub = await getSub(env, false);
   const masterLines = sub.text.split('\n').filter(Boolean);
   const state = (await kvGetJSON(env, 'metrics:' + key)) || {};
@@ -440,6 +471,68 @@ async function handleRefresh(url, env) {
   } catch (e) {
     return jsonResp({ ok: false, error: String(e && e.message || e) }, 502);
   }
+}
+
+function nodesForDash(masterLines, state) {
+  function pack(slot) {
+    const arr = []; let mx = 0;
+    for (const line of masterLines) {
+      const name = decodeName(fragOf(line));
+      const tag = tagOf(name);
+      if (tag !== 'vpn' && tag !== 'game') continue;
+      const st = state[matchKey(name)];
+      const m = st ? st[slot] : null;
+      if (!m || m.dead) continue;
+      if ((+m.down || 0) > mx) mx = +m.down || 0;
+      arr.push({ name: norm(stripMetric(name)), m: m });
+    }
+    return arr.map(function (it) {
+      return {
+        name: it.name,
+        down: it.m.down || 0,
+        rtt: it.m.rtt || 0,
+        med: (it.m.med != null ? it.m.med : it.m.rtt) || 0,
+        jit: it.m.jit || 0,
+        bl: (it.m.bl == null ? null : it.m.bl),
+        pct: mx > 0 ? Math.round((it.m.down || 0) / mx * 100) : 0,
+        score: +(scoreOf(it.m, mx) * 100).toFixed(0),
+        voice: voiceOk(it.m),
+      };
+    }).sort(function (a, b) { return b.score - a.score; });
+  }
+  return { wifi: pack('w'), cell: pack('c') };
+}
+
+async function handleDashboard(url, env) {
+  const key = url.searchParams.get('key') || '';
+  if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
+  const reg = await loadRegistry(env);
+  const e = reg[key];
+  if (!e) return jsonResp({ error: 'unknown key' }, 403);
+  const c = await kvGetJSON(env, 'sub_cache');
+  const state = (await kvGetJSON(env, 'metrics:' + key)) || {};
+  const masterLines = (c && c.text) ? c.text.split('\n').filter(Boolean) : [];
+  const nodes = nodesForDash(masterLines, state);
+  const rkn = (await kvGetJSON(env, 'rkn:' + key)) || null;
+  const traffic = c ? parseUserinfo(c.meta || {}) : null;
+  return jsonResp({
+    key: key,
+    worker: 'v1.4.0',
+    conf_ver: e.conf_ver || null,
+    status: e.status || null,
+    sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
+    sub_nodes: c ? (c.n || masterLines.length) : 0,
+    sub_ts: c ? new Date(c.ts).toISOString() : null,
+    last_config_ts: e.last_config_ts || null,
+    last_nodes_ts: e.last_nodes_ts || null,
+    traffic: traffic,
+    rkn: rkn,
+    counts: { wifi: nodes.wifi.length, cell: nodes.cell.length,
+      voice_wifi: nodes.wifi.filter(function (n) { return n.voice; }).length,
+      voice_cell: nodes.cell.filter(function (n) { return n.voice; }).length },
+    nodes: nodes,
+    server_now: new Date().toISOString(),
+  });
 }
 
 function metricOf(s) {
@@ -515,6 +608,7 @@ export default {
       if (req.method === 'GET' && url.pathname === '/config') return await handleConfig(url, env);
       if (req.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env);
       if (req.method === 'GET' && url.pathname === '/refresh') return await handleRefresh(url, env);
+      if (req.method === 'GET' && url.pathname === '/dashboard') return await handleDashboard(url, env);
       if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env);
       if (req.method === 'POST' && url.pathname === '/speed') return await handleSpeed(req, env);
       return new Response('routehub-worker: not found', { status: 404 });
