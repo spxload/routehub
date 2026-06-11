@@ -1,22 +1,27 @@
 // =============================================================
-// routehub-rkn.js v0.1.0 — детект режима сети по доступности узлов.
-// Тип: cron (раз в 10 мин). Ловит whitelist РКН в любой момент,
-// не только при смене сети (в отличие от netwatch).
+// routehub-rkn.js v0.2.0 — детект режима сети по доступности узлов.
+// Тип: cron (раз в 10 мин). Ловит whitelist РКН в любой момент.
 //
-// Таблица (проба generate_204 через группы):
-//   VPN отвечает                      -> normal     (всё работает)
-//   VPN молчит, Обход отвечает         -> whitelist  (РКН: основные узлы режут)
-//   VPN молчит, Обход молчит           -> block      (полная блокировка)
-//   (VPN отвечает, обход не проверяем — норма)
+// ФИКС v0.2.0 (было ложное срабатывание на Wi-Fi):
+//   * НЕСКОЛЬКО ПРОБ вместо одной. VPN считается живым, если ответила
+//     ХОТЯ БЫ ОДНА из PROBES проб (одиночный таймаут/моргание VPN больше
+//     не даёт ложный "whitelist").
+//   * ПОДТВЕРЖДЕНИЕ: ненормальный режим (whitelist/block) объявляется
+//     только если повторился CONFIRM раз подряд. Иначе остаётся normal.
+//     Счётчик хранится в rh_rkn (pend/pendN).
 //
-// Пробы идут через:
-//   RH-Проба-VPN  — fallback ТОЛЬКО из VPN-узлов (без обходного хвоста),
-//                   иначе падение VPN маскируется уходом в обход.
-//   RH-Обход      — fallback из обходных узлов.
+// Таблица вердикта (после проб):
+//   VPN ответил хоть раз            -> normal
+//   VPN молчит все пробы, обход жив -> whitelist (после подтверждения)
+//   VPN молчит, обход молчит        -> block     (после подтверждения)
 //
-// Результат: $persistentStore["rh_rkn"] = {"mode","ts"} и POST на
-// Worker /rkn (если задан origin) -> KV rkn:<kN> -> дашборд показывает.
-// Пуш при СМЕНЕ режима (не на каждый цикл).
+// Пробы через группы:
+//   RH-Проба-VPN  — fallback ТОЛЬКО VPN-узлы (без обходного хвоста).
+//   RH-Обход      — fallback обходных узлов.
+//
+// Результат: $persistentStore["rh_rkn"] = {mode,ts,pend,pendN,hist[]}.
+//   hist — последние смены режима (для дашборда). POST на Worker /rkn.
+//   Пуш — при СМЕНЕ подтверждённого режима.
 //
 // argument = "<key>|<origin>" (Worker подставляет: tag=RH-RKN).
 // =============================================================
@@ -30,21 +35,34 @@ try {
 var TEST_URL = "http://cp.cloudflare.com/generate_204";
 var VPN_GROUP = "RH-Проба-VPN";
 var BYPASS_GROUP = "RH-Обход";
+var PROBES = 3;        // проб на группу
+var PROBE_TIMEOUT = 5000;
+var CONFIRM = 2;       // подряд циклов для смены на ненормальный режим
+var HIST_MAX = 20;     // хранить последних смен режима
 
-// проба через указанную группу: callback(alive bool)
-function probe(group, cb) {
-  $httpClient.get({ url: TEST_URL, node: group, timeout: 6000 }, function (err, resp) {
+// одна проба: callback(alive bool)
+function probeOnce(group, cb) {
+  $httpClient.get({ url: TEST_URL, node: group, timeout: PROBE_TIMEOUT }, function (err, resp) {
     if (err) { cb(false); return; }
     var st = resp && resp.status;
-    // generate_204 -> 204; принимаем любой 2xx/3xx как «живой»
     cb(st >= 200 && st < 400);
   });
 }
 
-function decide(vpnAlive, bypassAlive) {
-  if (vpnAlive) return "normal";
-  if (bypassAlive) return "whitelist";
-  return "block";
+// несколько проб: alive, если ответила ХОТЯ БЫ ОДНА. callback(aliveAny bool)
+function probeGroup(group, n, cb) {
+  var done = 0, any = false;
+  function next() {
+    if (done >= n) { cb(any); return; }
+    probeOnce(group, function (ok) {
+      done++;
+      if (ok) any = true;
+      // ранний выход: VPN жив — дальше не пробуем
+      if (any) { cb(true); return; }
+      next();
+    });
+  }
+  next();
 }
 
 function readPrev() {
@@ -59,22 +77,46 @@ function modeLabel(m) {
   return m;
 }
 
-function finish(mode) {
-  var prev = readPrev();
-  var prevMode = prev && prev.mode;
-  var rec = { mode: mode, ts: new Date().toISOString() };
-  try { $persistentStore.write(JSON.stringify(rec), "rh_rkn"); } catch (e) {}
+// raw — сырой вердикт текущего цикла; применяем гистерезис подтверждения
+function finish(raw) {
+  var now = new Date().toISOString();
+  var prev = readPrev() || {};
+  var cur = prev.mode || "normal";       // текущий ПОДТВЕРЖДЁННЫЙ режим
+  var pend = prev.pend || null;          // какой ненорм. режим "копится"
+  var pendN = prev.pendN || 0;
+  var hist = Array.isArray(prev.hist) ? prev.hist : [];
 
-  // пуш только при смене режима
-  if (prevMode && prevMode !== mode) {
-    $notification.post("RouteHub", "Сменился режим сети", modeLabel(mode));
-  } else if (!prevMode && mode !== "normal") {
-    $notification.post("RouteHub", "Режим сети", modeLabel(mode));
+  var confirmed = cur;                   // что станет подтверждённым по итогу
+
+  if (raw === "normal") {
+    // норма применяется сразу, копление сбрасывается
+    confirmed = "normal";
+    pend = null; pendN = 0;
+  } else {
+    // ненормальный сырой вердикт — копим подтверждение
+    if (pend === raw) { pendN++; }
+    else { pend = raw; pendN = 1; }
+    if (pendN >= CONFIRM) {
+      confirmed = raw;       // подтвердилось
+    }
+    // иначе остаёмся в текущем подтверждённом (обычно normal)
   }
 
-  // отправка на Worker (если origin задан и достижим)
+  var changed = confirmed !== cur;
+  if (changed) {
+    hist.unshift({ mode: confirmed, ts: now });
+    if (hist.length > HIST_MAX) hist = hist.slice(0, HIST_MAX);
+  }
+
+  var rec = { mode: confirmed, ts: now, pend: pend, pendN: pendN, hist: hist, raw: raw };
+  try { $persistentStore.write(JSON.stringify(rec), "rh_rkn"); } catch (e) {}
+
+  if (changed) {
+    $notification.post("RouteHub", "Сменился режим сети", modeLabel(confirmed));
+  }
+
   if (ORIGIN && ORIGIN.indexOf("http") === 0) {
-    var body = JSON.stringify({ key: KEY, mode: mode, ts: rec.ts });
+    var body = JSON.stringify({ key: KEY, mode: confirmed, ts: now, hist: hist });
     $httpClient.post({ url: ORIGIN + "/rkn", timeout: 6000, headers: { "Content-Type": "application/json" }, body: body },
       function () { $done(); });
   } else {
@@ -82,10 +124,10 @@ function finish(mode) {
   }
 }
 
-// сначала пробуем VPN; если жив — норма без проверки обхода
-probe(VPN_GROUP, function (vpnAlive) {
+// цикл: VPN (несколько проб) -> если жив, норма; иначе обход -> вердикт
+probeGroup(VPN_GROUP, PROBES, function (vpnAlive) {
   if (vpnAlive) { finish("normal"); return; }
-  probe(BYPASS_GROUP, function (bypassAlive) {
-    finish(decide(false, bypassAlive));
+  probeGroup(BYPASS_GROUP, PROBES, function (bypassAlive) {
+    finish(bypassAlive ? "whitelist" : "block");
   });
 });
