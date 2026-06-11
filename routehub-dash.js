@@ -1,6 +1,6 @@
 // =============================================================
 // routehub-dash.js v0.1.0 — скрипт-перехватчик локального дашборда.
-// Тип: http-request на http://routehub.local (HTTP, MITM НЕ нужен).
+// Тип: http-request на http://routehub.io (HTTP, MITM НЕ нужен).
 // Механизм как у BoxJS: ловит запрос, возвращает HTML через
 // $done({response}). HTML вшит (base64) — работает офлайн/под whitelist.
 //
@@ -164,7 +164,7 @@ var HTML_B64 =
 'OyByZW5kZXIoZmFsc2UpOyB9IH0sIDYwMDApOwogICAgZmV0Y2godXJsLCB7IGNhY2hlOiAibm8tc3RvcmUiIH0pLnRoZW4oZnVuY3Rpb24gKHIpIHsgcmV0'+
 'dXJuIHIuanNvbigpOyB9KS50aGVuKGZ1bmN0aW9uIChqKSB7CiAgICAgIGlmIChkb25lKSByZXR1cm47IGRvbmUgPSB0cnVlOyBjbGVhclRpbWVvdXQodG8p'+
 'OwogICAgICBpZiAoaiAmJiAhai5lcnJvcikgewogICAgICAgIGouX2ZldGNoZWRfYXQgPSBuZXcgRGF0ZSgpLnRvSVNPU3RyaW5nKCk7CiAgICAgICAgZGF0'+
-'YSA9IGo7CiAgICAgICAgdHJ5IHsgbG9jYWxTdG9yYWdlLnNldEl0ZW0oTFMsIEpTT04uc3RyaW5naWZ5KGopKTsgfSBjYXRjaCAoZSkge30KICAgICAgICBy'+
+'YSA9IGo7CiAgICAgICAgdHJ5IHsgbG9jYWxTdG9yYWdlLnNldEl0ZW0oTFMsIEpTT04uc3RyaW5naWZ5KGopKTsgfSBjYXRjaCAoZSkge30KICAgICAgICБy'+
 'ZW5kZXIodHJ1ZSk7CiAgICAgIH0gZWxzZSB7IHJlbmRlcihmYWxzZSk7IH0KICAgIH0pLmNhdGNoKGZ1bmN0aW9uICgpIHsgaWYgKCFkb25lKSB7IGRvbmUg'+
 'PSB0cnVlOyBjbGVhclRpbWVvdXQodG8pOyByZW5kZXIoZmFsc2UpOyB9IH0pOwogIH0KCiAgZnVuY3Rpb24gdHJpZ2dlclJlZnJlc2goKSB7CiAgICBpZiAo'+
 'IU9SSUdJTikgcmV0dXJuOwogICAgJCgiYnRuUmVmcmVzaCIpLmRpc2FibGVkID0gdHJ1ZTsKICAgIGZldGNoKE9SSUdJTiArICIvcmVmcmVzaD9rZXk9IiAr'+
