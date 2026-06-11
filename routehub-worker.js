@@ -1,5 +1,9 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.5.0 (2026-06-11) — POST /rkn: приём режима сети
+//   (normal/whitelist/block) от routehub-rkn -> KV rkn:<kN> -> /dashboard.
+// VERSION: worker v1.4.1 (2026-06-11) — argument для RH-Dash/RH-DashCache
+//   (key|origin) — скрипты дашборда и обновлятора кэша получают ключ и origin.
 // VERSION: worker v1.4.0 (2026-06-11) — ДАШБОРД: GET /dashboard?key=kN (JSON):
 //   версия конфига, возраст кэша подписки, время последних /config и /nodes,
 //   остаток ГБ (из subscription-userinfo), узлы W/C с метриками+☎, режим РКН
@@ -37,6 +41,7 @@
 // GET  /dashboard?key=kN -> JSON для дашборда (статус обновлений, узлы, ГБ, режим РКН).
 // GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
 // POST /speed          -> метрики устройства (KV).
+// POST /rkn            -> режим сети от routehub-rkn (KV rkn:<kN>, для дашборда).
 // GET  /whoami         -> детект сети/оператора по request.cf.
 // env: RH_KV (KV binding), SUBSCRIPTION_URL + SUB_HWID (секреты CF), CONFIG_URL.
 // =============================================================
@@ -371,6 +376,9 @@ async function handleConfig(url, env) {
   conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + sFlags.join(','));
   const nOpts = reg[key].auto_refresh ? 'autorefresh' : '';
   conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + url.origin + '|' + nOpts);
+  conf = conf.replace('tag=RH-DashCache,', 'tag=RH-DashCache, argument=' + key + '|' + url.origin + ',');
+  conf = conf.replace('tag=RH-Dash,', 'tag=RH-Dash, argument=' + key + '|' + url.origin + ',');
+  conf = conf.replace('tag=RH-RKN,', 'tag=RH-RKN, argument=' + key + '|' + url.origin + ',');
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
@@ -517,7 +525,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.4.0',
+    worker: 'v1.5.0',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
@@ -545,6 +553,20 @@ function metricOf(s) {
   };
   if (s.med != null) o.med = Math.max(0, Math.round(+s.med));
   return o;
+}
+
+async function handleRkn(req, env) {
+  let data;
+  try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
+  const key = (data && data.key) || '';
+  if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
+  const reg = await loadRegistry(env);
+  if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
+  const mode = String((data && data.mode) || '');
+  if (['normal', 'whitelist', 'block'].indexOf(mode) < 0) return jsonResp({ error: 'bad mode' }, 400);
+  const rec = { mode: mode, ts: (data && data.ts) || new Date().toISOString() };
+  await kvPutJSON(env, 'rkn:' + key, rec);
+  return jsonResp({ ok: true, key: key, mode: mode });
 }
 
 async function handleSpeed(req, env) {
@@ -610,6 +632,7 @@ export default {
       if (req.method === 'GET' && url.pathname === '/refresh') return await handleRefresh(url, env);
       if (req.method === 'GET' && url.pathname === '/dashboard') return await handleDashboard(url, env);
       if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env);
+      if (req.method === 'POST' && url.pathname === '/rkn') return await handleRkn(req, env);
       if (req.method === 'POST' && url.pathname === '/speed') return await handleSpeed(req, env);
       return new Response('routehub-worker: not found', { status: 404 });
     } catch (err) {
