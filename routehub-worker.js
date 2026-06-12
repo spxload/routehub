@@ -1,5 +1,8 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.6.0 (2026-06-12) — AI-группы (aiBlocks): fallback
+//   interval=600 -> interval=120, max-timeout=2000 (синхрон с C-draft-23:
+//   узел недоступен за 2с, перепроверка 120с — fallback не «висит» на мёртвом).
 // VERSION: worker v1.5.0 (2026-06-11) — POST /rkn: приём режима сети
 //   (normal/whitelist/block) от routehub-rkn -> KV rkn:<kN> -> /dashboard.
 // VERSION: worker v1.4.1 (2026-06-11) — argument для RH-Dash/RH-DashCache
@@ -333,7 +336,7 @@ function aiBlocks(tiers) {
   gW.push('RH-Filter-W-AIrest');
   gC.push('RH-Filter-C-AIrest');
   const filters = fW.join('\n') + '\n' + fC.join('\n');
-  const u = 'url=http://cp.cloudflare.com/generate_204, interval=600';
+  const u = 'url=http://cp.cloudflare.com/generate_204, interval=120, max-timeout=2000';
   const groups =
     'RH-AI = select, RH-AI-W, RH-AI-C, img-url=https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/AI.png\n' +
     'RH-AI-W = fallback, ' + gW.join(', ') + ', RH-Filter-\u041e\u0431\u0445\u043e\u0434, ' + u + '\n' +
@@ -525,7 +528,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.5.0',
+    worker: 'v1.6.0',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
