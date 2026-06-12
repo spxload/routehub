@@ -1,22 +1,18 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
-// VERSION: worker v1.7.1 (2026-06-12) — ДАШБОРД-ЭТАП: иконка приложения.
-//   * GET /icon.png и /apple-touch-icon.png — отдаёт встроенный PNG (хаб и
-//     маршруты, 256px). Используется как #!icon плагина RouteHub-Dash (Worker
-//     доступен по HTTPS в момент загрузки плагина, домен rh.box тогда ещё не
-//     перехватывается Loon) и как apple-touch-icon для домашнего экрана.
+// VERSION: worker v1.7.2 (2026-06-12) — иконка приложения как SVG (надёжная
+//   передача; PNG-константа давала битый base64). /icon.svg, /icon.png,
+//   /apple-touch-icon.png -> один SVG (хаб и маршруты).
+// VERSION: worker v1.7.1 (2026-06-12) — ДАШБОРД-ЭТАП: иконка приложения (PNG, заменена в 1.7.2).
 // VERSION: worker v1.7.0 (2026-06-12) — ДАШБОРД-ЭТАП, шаг 0:
 //   * CORS: Access-Control-Allow-Origin:* на JSON-ответах + обработка
-//     OPTIONS (preflight). Без этого Safari блокирует чтение /dashboard
-//     со страницы http://routehub.io (live-режим не работал).
+//     OPTIONS (preflight). Без этого Safari блокирует чтение /dashboard.
 //   * Личный список RH-RU: GET /mylist?key=kN (текст DOMAIN-SUFFIX,...
 //     для [Remote Rule]), POST /addrule, POST /delrule (KV mylist:<kN>).
-//   * История режима РКН: POST /rkn дополнительно пишет кольцевой буфер
-//     rkn_hist:<kN> (последние 50, только при смене режима); /dashboard
-//     отдаёт последние 20 + mylist.
+//   * История режима РКН: POST /rkn пишет кольцевой буфер rkn_hist:<kN>
+//     (последние 50, только при смене режима); /dashboard отдаёт 20 + mylist.
 // VERSION: worker v1.6.0 (2026-06-12) — AI-группы (aiBlocks): fallback
-//   interval=600 -> interval=120, max-timeout=2000 (синхрон с C-draft-23:
-//   узел недоступен за 2с, перепроверка 120с — fallback не «висит» на мёртвом).
+//   interval=600 -> interval=120, max-timeout=2000 (синхрон с C-draft-23).
 // VERSION: worker v1.5.0 (2026-06-11) — POST /rkn: приём режима сети
 //   (normal/whitelist/block) от routehub-rkn -> KV rkn:<kN> -> /dashboard.
 // VERSION: worker v1.4.1 (2026-06-11) — argument для RH-Dash/RH-DashCache
@@ -31,34 +27,27 @@
 //   из кэша CDN GitHub после коммита. Подписка (/nodes, KV) — без изменений.
 // VERSION: worker v1.2.0 (2026-06-11) — ЗВОНКИ: маркер ☎ (voiceOk) в метке
 //   узлов, годных для голоса (jit<=30, bl<=50, med<=160; раздельно 🛜/📱).
-//   Группы RH-Звонки фильтруются по ☎ (фильтр 🛜.*☎ / 📱.*☎ в conf).
 // VERSION: worker v1.1.0 (2026-06-11) — ЧИСТКА: гист-сид удалён, KV —
 //   единственное хранилище. env GIST_TOKEN/GIST_ID/MASTER_FILE больше не нужны.
 // VERSION: worker v1.0.1 — /refresh ходит к Lastdep напрямую, сбой = ok:false+причина.
 // VERSION: worker v1.0.0 — МИГРАЦИЯ НА KV:
 //   * Данные в Cloudflare KV (binding RH_KV): sub_cache (узлы+заголовки
 //     подписки), devices (реестр+флаги; править в KV-дашборде), metrics:<kN>.
-//   * Worker САМ качает подписку Lastdep (заголовки/сортировка — как было в
-//     publish_nodes.py): stale-while-revalidate — кэш старше FRESH_MS (10 мин)
-//     при ЛЮБОМ запросе обновляется синхронно (ручное/авто обновление Loon
-//     неразличимы — оба получают свежее); сбой апстрима -> старый кэш.
-//     Заголовки подписки (subscription-userinfo = остаток ГБ и пр.) берутся живьём.
+//   * Worker САМ качает подписку Lastdep: stale-while-revalidate — кэш старше
+//     FRESH_MS (10 мин) при ЛЮБОМ запросе обновляется синхронно; сбой -> старый кэш.
 //   * Cron Trigger (раз в 2 ч) — фоновое обновление кэша.
 //   * Балл: задержка = med (медиана проб), фолбэк rtt. Метка ↓ — rtt (min).
 //
-// ОДНА ССЫЛКА НА ВСЕХ — НЕВОЗМОЖНА без ?key: Loon не передаёт никакого
-//   идентификатора устройства в запросе подписки/конфига (UA общий, IP
-//   меняется, cookie не хранятся). key=kN — единственный идентификатор;
-//   привязка устройства к ключу — АВТОМАТИЧЕСКАЯ (nonce при первом POST
-//   /speed), запасной свободный ключ создаётся сам (ensureFreeSpare).
+// ОДНА ССЫЛКА НА ВСЕХ — НЕВОЗМОЖНА без ?key: Loon не передаёт идентификатора
+//   устройства. key=kN — единственный идентификатор; привязка АВТОМАТИЧЕСКАЯ
+//   (nonce при первом POST /speed), запасной свободный ключ создаётся сам.
 //
 // GET  /config?key=kN  -> конфиг (AI-тиеры, script-path, argument).
 // GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; no-store; заголовки подписки.
-// GET  /refresh?key=kN -> принудительно обновить подписку в KV СЕЙЧАС (без отката на кэш).
-// GET  /dashboard?key=kN -> JSON для дашборда (статус обновлений, узлы, ГБ, режим РКН,
-//                           история РКН, личный список).
+// GET  /refresh?key=kN -> принудительно обновить подписку в KV СЕЙЧАС.
+// GET  /dashboard?key=kN -> JSON для дашборда (статус, узлы, ГБ, режим РКН, история, mylist).
 // GET  /mylist?key=kN  -> личный список RH-RU для [Remote Rule] (DOMAIN-SUFFIX,...).
-// GET  /icon.png /apple-touch-icon.png -> PNG-иконка приложения (для плагина и домашнего экрана).
+// GET  /icon.svg /icon.png /apple-touch-icon.png -> SVG-иконка приложения (плагин и домашний экран).
 // GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
 // POST /speed          -> метрики устройства (KV).
 // POST /rkn            -> режим сети от routehub-rkn (KV rkn:<kN> + rkn_hist:<kN>).
@@ -179,12 +168,9 @@ function confVersion(conf) {
 }
 
 const CORS = { 'Access-Control-Allow-Origin': '*' };
-const RH_ICON_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAABmJLR0QA/wD/AP+gvaeTAAAgAElEQVR4nOy9Z5Bdx5km+OUrD1NVKJgCUPCecAQIOhh6UjQiKVISW64lrdSa7d3u3WkTOzux07Ed3RPzY01P9M5MtAlNe4008hRJkaITCYIQLSCCIAAShCFcFYCCL5hCuXv2x01zTmbe9+6reoUCxUpE4d2b5uRJADWHQA/EwxQU0o/AsQ8AdwBgEAA4QAjzm0AAaAt0Qz9LF6kBp7T68RpGGzm5JzMlNlnnpmsKZNUkixIIA4SqgQ7lLkfBhCAcQyD9o6QABRBpdGGSjBQyx6DXFwDfWv0FdNyKuLAJ7MfDr3qBHLwY1bIu4HwIvJ9ZcM3fE0SyAJgARWZUOXIglNFNd1bcZJ8sJBKtkkSyXqQ58dD0lDpZQGRiQyAg5KWiBilYHXf8FBNGtnGEAGDl0LXLwY1dpYIcW6V79f5ChAhFEoOOACFNRZpkUMABCCRMI4w4SFK4AjzS35dT8gWXKgY1MfdiF7HJOd0YnyqhFqI55RPxnSAYRZakNyBDQVMQHFmoCFmm0AGLVrZ0g2sLBlZGd5cmDuPwkOFNCdjZ7mFGm8EHX5OdmZAg9LfYksmPSMqQYzo5wd3sP1lFK4XEbtIVDfQVdQHGUiX2hDF7eJ4qEEU8kt6mVHIuPm6P4VKVqMjK29t+9eY9SOlQAH8aRYZ+J0gV7n2hVE3a5C8RNwlBfdMRm9aRSTuyJSdZF7zJYKcfXVbZWUbT7nGT5XZWFJU+lkBYUUNNYW1B3CR48MhVgIYJ7gAEFsAvg2yp8GFlMcVUOO/J6IzGmGtgT7N3lFvNJUiQqHvtmGI3yT/wDqUlOhM/JmlnTw7qVdtQZ4d2cn4vPnv6tdQuUEnW8bnnf/G0FlpzWNXaZX73i4yIYwbXVlVJSlW1XaP72yL44P+4DGSDmJTUd9N9JCZ1nDsngfwTwT3UFNQfjg9oA9rWZcl1iJTgw0t2HSdHcjbWnXFEbcZl2NeAvNvyaUCsFkBzaMzU3FH8X7VTKuwSv4EkQyKZ1d9bDTLeYRTbnXNWFXWUOpA5K3LFDFWlIWBYCBp0WT4uVQ0vLXJ3WzMrZTHGqHTBnUMb6jXBKLs1c+ImSh2jiuJOIGFmkLPVDp6IT+JKnNDeULXa2QlAbT5HC6Qj9q+9wlfNYWUFE3MTUDi7tA1NScJYACGOmJQAGFAWXyZeR4uMjSMW1ePuJrFhwQrTNL1FsRrJHTcThIQrYjkKxKDoJyEcSMxxPHSeOyTzcobiTZjA1QSZSb6oJDxqYIE5kBb6CWREPNESmMABYJ49ANCQEX1RBhEAOTQJpYxLEs60V0cBGiC9OQ4QU0NA0YHBSEsHWoP9wlAYzCYa6r4Q3xTAQUUVQ9hPHL/9hMRAm+VRmM/AHACtCgQRA3oCRqQTgVdHXDfeBLKtaeUcDDbHQVeSwsViMjOiNFuWXEOSDQuCOzlYNJUkAONLYxoCmAhilG0UnLqg0E0iqZGzL2XEUlYTcGzBPGTw2Olw7e7eIWcpgYAAAAASUVORK5CYII=';
+const RH_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#063D33"/><stop offset="0.55" stop-color="#04342C"/><stop offset="1" stop-color="#022019"/></linearGradient><radialGradient id="glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#5DCAA5" stop-opacity="0.35"/><stop offset="1" stop-color="#5DCAA5" stop-opacity="0"/></radialGradient><linearGradient id="route" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7FE0C0"/><stop offset="1" stop-color="#4FB892"/></linearGradient></defs><rect width="1024" height="1024" rx="224" fill="url(#bg)"/><circle cx="512" cy="512" r="430" fill="url(#glow)"/><g fill="none" stroke="url(#route)" stroke-width="46" stroke-linecap="round"><path d="M236 760 C 380 560, 392 512, 512 512"/><path d="M788 264 C 644 464, 632 512, 512 512"/><path d="M236 286 C 408 372, 452 452, 512 512"/><path d="M788 738 C 636 636, 588 560, 512 512"/></g><g fill="#7FE0C0"><circle cx="236" cy="760" r="34"/><circle cx="788" cy="264" r="34"/><circle cx="236" cy="286" r="34"/><circle cx="788" cy="738" r="34"/></g><circle cx="512" cy="512" r="96" fill="#04342C"/><circle cx="512" cy="512" r="92" fill="none" stroke="#9FE1CB" stroke-width="14"/><circle cx="512" cy="512" r="46" fill="#9FE1CB"/></svg>`;
 function iconResp() {
-  const bin = atob(RH_ICON_B64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Response(bytes, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' } });
+  return new Response(RH_ICON_SVG, { headers: { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' } });
 }
 function jsonResp(obj, status) {
   return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
@@ -593,7 +579,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.7.1',
+    worker: 'v1.7.2',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
@@ -710,7 +696,7 @@ export default {
           'Access-Control-Max-Age': '86400',
         } });
       }
-      if (req.method === 'GET' && (url.pathname === '/icon.png' || url.pathname === '/apple-touch-icon.png')) return iconResp();
+      if (req.method === 'GET' && (url.pathname === '/icon.svg' || url.pathname === '/icon.png' || url.pathname === '/apple-touch-icon.png')) return iconResp();
       if (req.method === 'GET' && url.pathname === '/whoami') return handleWhoami(req);
       if (req.method === 'GET' && url.pathname === '/config') return await handleConfig(url, env);
       if (req.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env);
