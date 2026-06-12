@@ -2,7 +2,7 @@
 #!desc= Панель управления RouteHub. Маршрутизация, узлы, режим РКН, личный список доменов. Тап открывает дашборд.
 #!author= RouteHub
 #!homepage= http://rh.box
-#!icon= https://raw.githubusercontent.com/spxload/routehub/main/assets/routehub-icon.png
+#!icon= https://routehub.proton4iker.workers.dev/icon.png
 #!system= iOS,iPadOS,macOS
 #!loon_version= 3.2.1(733)
 #!tag= RouteHub
@@ -11,5 +11,7 @@
 # реальная логика дашборда — в http-request routehub-dash.js главного конфига
 # (перехват http://rh.box). Плагин нужен только для пункта RouteHub с иконкой
 # в списке плагинов Loon и перехода по #!homepage на дашборд (дока Loon 7.1).
+# Иконку отдаёт Worker (/icon.png) — он доступен по HTTPS в момент загрузки
+# плагина (домен rh.box тогда ещё не перехватывается Loon).
 # Инъекция argument (key|origin) остаётся в [Script] главного конфига —
 # плагин её НЕ дублирует (один источник правды).
