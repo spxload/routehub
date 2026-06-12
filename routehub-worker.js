@@ -1,5 +1,14 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.7.0 (2026-06-12) — ДАШБОРД-ЭТАП, шаг 0:
+//   * CORS: Access-Control-Allow-Origin:* на JSON-ответах + обработка
+//     OPTIONS (preflight). Без этого Safari блокирует чтение /dashboard
+//     со страницы http://routehub.io (live-режим не работал).
+//   * Личный список RH-RU: GET /mylist?key=kN (текст DOMAIN-SUFFIX,...
+//     для [Remote Rule]), POST /addrule, POST /delrule (KV mylist:<kN>).
+//   * История режима РКН: POST /rkn дополнительно пишет кольцевой буфер
+//     rkn_hist:<kN> (последние 50, только при смене режима); /dashboard
+//     отдаёт последние 20 + mylist.
 // VERSION: worker v1.6.0 (2026-06-12) — AI-группы (aiBlocks): fallback
 //   interval=600 -> interval=120, max-timeout=2000 (синхрон с C-draft-23:
 //   узел недоступен за 2с, перепроверка 120с — fallback не «висит» на мёртвом).
@@ -41,10 +50,14 @@
 // GET  /config?key=kN  -> конфиг (AI-тиеры, script-path, argument).
 // GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; no-store; заголовки подписки.
 // GET  /refresh?key=kN -> принудительно обновить подписку в KV СЕЙЧАС (без отката на кэш).
-// GET  /dashboard?key=kN -> JSON для дашборда (статус обновлений, узлы, ГБ, режим РКН).
+// GET  /dashboard?key=kN -> JSON для дашборда (статус обновлений, узлы, ГБ, режим РКН,
+//                           история РКН, личный список).
+// GET  /mylist?key=kN  -> личный список RH-RU для [Remote Rule] (DOMAIN-SUFFIX,...).
 // GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
 // POST /speed          -> метрики устройства (KV).
-// POST /rkn            -> режим сети от routehub-rkn (KV rkn:<kN>, для дашборда).
+// POST /rkn            -> режим сети от routehub-rkn (KV rkn:<kN> + rkn_hist:<kN>).
+// POST /addrule        -> {key, domain} добавить домен в личный список (KV mylist:<kN>).
+// POST /delrule        -> {key, domain} убрать домен из личного списка.
 // GET  /whoami         -> детект сети/оператора по request.cf.
 // env: RH_KV (KV binding), SUBSCRIPTION_URL + SUB_HWID (секреты CF), CONFIG_URL.
 // =============================================================
@@ -58,6 +71,7 @@ const BLK = ['\u2581', '\u2583', '\u2585', '\u2587', '\u2588']; // ▁▃▅▇�
 const SUP_PLUS = '\u207A';             // ⁺
 const SUP_DIG = ['\u2070', '\u00B9', '\u00B2', '\u00B3', '\u2074', '\u2075', '\u2076', '\u2077', '\u2078', '\u2079'];
 const KEY_RE = /^k\d+$/;
+const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9-]+\.)+[a-z]{2,}$/;
 const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
   'tele2', 't2 mobile', 'yota', 'mobile', 'cellular', 'wireless', 'lte', 'gsm'];
@@ -158,12 +172,14 @@ function confVersion(conf) {
   return m ? m[0] : null;
 }
 
+const CORS = { 'Access-Control-Allow-Origin': '*' };
 function jsonResp(obj, status) {
-  return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+  return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
 }
 
 async function kvGetJSON(env, k) { const s = await env.RH_KV.get(k); if (!s) return null; try { return JSON.parse(s); } catch (e) { return null; } }
 async function kvPutJSON(env, k, o) { await env.RH_KV.put(k, JSON.stringify(o)); }
+async function loadMylist(env, key) { return (await kvGetJSON(env, 'mylist:' + key)) || []; }
 
 function b64ToUtf8(s) {
   try {
@@ -371,6 +387,8 @@ async function handleConfig(url, env) {
 
   const subUrl = url.origin + '/nodes?key=' + key + ',udp=true,enabled=true';
   conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + subUrl);
+  const mylistUrl = url.origin + '/mylist?key=' + key;
+  conf = conf.replace('# __RH_MYLIST_URL__', mylistUrl);
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
   const sFlags = [];
@@ -484,6 +502,38 @@ async function handleRefresh(url, env) {
   }
 }
 
+async function handleMylist(url, env) {
+  const key = url.searchParams.get('key') || '';
+  if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
+  const reg = await loadRegistry(env);
+  if (!reg[key]) return new Response('unknown key', { status: 403 });
+  const list = await loadMylist(env, key);
+  const lines = ['# RouteHub личный список RH-RU (' + key + '), доменов: ' + list.length];
+  for (const d of list) lines.push('DOMAIN-SUFFIX,' + d);
+  return new Response(lines.join('\n'), {
+    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
+}
+
+async function handleRule(req, env, add) {
+  let data;
+  try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
+  const key = (data && data.key) || '';
+  if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
+  const reg = await loadRegistry(env);
+  if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
+  const domain = String((data && data.domain) || '').trim().toLowerCase();
+  if (!DOMAIN_RE.test(domain)) return jsonResp({ error: 'bad domain' }, 400);
+  let list = await loadMylist(env, key);
+  if (add) {
+    if (list.indexOf(domain) < 0) list.push(domain);
+  } else {
+    list = list.filter(function (d) { return d !== domain; });
+  }
+  await kvPutJSON(env, 'mylist:' + key, list);
+  return jsonResp({ ok: true, key: key, domains: list });
+}
+
 function nodesForDash(masterLines, state) {
   function pack(slot) {
     const arr = []; let mx = 0;
@@ -525,10 +575,12 @@ async function handleDashboard(url, env) {
   const masterLines = (c && c.text) ? c.text.split('\n').filter(Boolean) : [];
   const nodes = nodesForDash(masterLines, state);
   const rkn = (await kvGetJSON(env, 'rkn:' + key)) || null;
+  const rknHist = (await kvGetJSON(env, 'rkn_hist:' + key)) || [];
+  const mylist = await loadMylist(env, key);
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.6.0',
+    worker: 'v1.7.0',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
@@ -538,6 +590,8 @@ async function handleDashboard(url, env) {
     last_nodes_ts: e.last_nodes_ts || null,
     traffic: traffic,
     rkn: rkn,
+    rkn_hist: rknHist.slice(-20),
+    mylist: mylist,
     counts: { wifi: nodes.wifi.length, cell: nodes.cell.length,
       voice_wifi: nodes.wifi.filter(function (n) { return n.voice; }).length,
       voice_cell: nodes.cell.filter(function (n) { return n.voice; }).length },
@@ -569,6 +623,12 @@ async function handleRkn(req, env) {
   if (['normal', 'whitelist', 'block'].indexOf(mode) < 0) return jsonResp({ error: 'bad mode' }, 400);
   const rec = { mode: mode, ts: (data && data.ts) || new Date().toISOString() };
   await kvPutJSON(env, 'rkn:' + key, rec);
+  let hist = (await kvGetJSON(env, 'rkn_hist:' + key)) || [];
+  if (!hist.length || hist[hist.length - 1].mode !== mode) {
+    hist.push(rec);
+    if (hist.length > 50) hist = hist.slice(-50);
+    await kvPutJSON(env, 'rkn_hist:' + key, hist);
+  }
   return jsonResp({ ok: true, key: key, mode: mode });
 }
 
@@ -629,13 +689,24 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     try {
+      if (req.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Max-Age': '86400',
+        } });
+      }
       if (req.method === 'GET' && url.pathname === '/whoami') return handleWhoami(req);
       if (req.method === 'GET' && url.pathname === '/config') return await handleConfig(url, env);
       if (req.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env);
       if (req.method === 'GET' && url.pathname === '/refresh') return await handleRefresh(url, env);
       if (req.method === 'GET' && url.pathname === '/dashboard') return await handleDashboard(url, env);
+      if (req.method === 'GET' && url.pathname === '/mylist') return await handleMylist(url, env);
       if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env);
       if (req.method === 'POST' && url.pathname === '/rkn') return await handleRkn(req, env);
+      if (req.method === 'POST' && url.pathname === '/addrule') return await handleRule(req, env, true);
+      if (req.method === 'POST' && url.pathname === '/delrule') return await handleRule(req, env, false);
       if (req.method === 'POST' && url.pathname === '/speed') return await handleSpeed(req, env);
       return new Response('routehub-worker: not found', { status: 404 });
     } catch (err) {
