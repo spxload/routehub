@@ -1,5 +1,10 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.7.1 (2026-06-12) — ДАШБОРД-ЭТАП: иконка приложения.
+//   * GET /icon.png и /apple-touch-icon.png — отдаёт встроенный PNG (хаб и
+//     маршруты, 256px). Используется как #!icon плагина RouteHub-Dash (Worker
+//     доступен по HTTPS в момент загрузки плагина, домен rh.box тогда ещё не
+//     перехватывается Loon) и как apple-touch-icon для домашнего экрана.
 // VERSION: worker v1.7.0 (2026-06-12) — ДАШБОРД-ЭТАП, шаг 0:
 //   * CORS: Access-Control-Allow-Origin:* на JSON-ответах + обработка
 //     OPTIONS (preflight). Без этого Safari блокирует чтение /dashboard
@@ -53,6 +58,7 @@
 // GET  /dashboard?key=kN -> JSON для дашборда (статус обновлений, узлы, ГБ, режим РКН,
 //                           история РКН, личный список).
 // GET  /mylist?key=kN  -> личный список RH-RU для [Remote Rule] (DOMAIN-SUFFIX,...).
+// GET  /icon.png /apple-touch-icon.png -> PNG-иконка приложения (для плагина и домашнего экрана).
 // GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
 // POST /speed          -> метрики устройства (KV).
 // POST /rkn            -> режим сети от routehub-rkn (KV rkn:<kN> + rkn_hist:<kN>).
@@ -173,6 +179,13 @@ function confVersion(conf) {
 }
 
 const CORS = { 'Access-Control-Allow-Origin': '*' };
+const RH_ICON_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAABmJLR0QA/wD/AP+gvaeTAAAgAElEQVR4nOy9Z5Bdx5km+OUrD1NVKJgCUPCecAQIOhh6UjQiKVISW64lrdSa7d3u3WkTOzux07Ed3RPzY01P9M5MtAlNe4008hRJkaITCYIQLSCCIAAShCFcFYCCL5hCuXv2x01zTmbe9+6reoUCxUpE4d2b5uRJADWHQA/EwxQU0o/AsQ8AdwBgEAA4QAjzm0AAaAt0Qz9LF6kBp7T68RpGGzm5JzMlNlnnpmsKZNUkixIIA4SqgQ7lLkfBhCAcQyD9o6QABRBpdGGSjBQyx6DXFwDfWv0FdNyKuLAJ7MfDr3qBHLwY1bIu4HwIvJ9ZcM3fE0SyAJgARWZUOXIglNFNd1bcZJ8sJBKtkkSyXqQ58dD0lDpZQGRiQyAg5KWiBilYHXf8FBNGtnGEAGDl0LXLwY1dpYIcW6V79f5ChAhFEoOOACFNRZpkUMABCCRMI4w4SFK4AjzS35dT8gWXKgY1MfdiF7HJOd0YnyqhFqI55RPxnSAYRZakNyBDQVMQHFmoCFmm0AGLVrZ0g2sLBlZGd5cmDuPwkOFNCdjZ7mFGm8EHX5OdmZAg9LfYksmPSMqQYzo5wd3sP1lFK4XEbtIVDfQVdQHGUiX2hDF7eJ4qEEU8kt6mVHIuPm6P4VKVqMjK29t+9eY9SOlQAH8aRYZ+J0gV7n2hVE3a5C8RNwlBfdMRm9aRSTuyJSdZF7zJYKcfXVbZWUbT7nGT5XZWFJU+lkBYUUNNYW1B3CR48MhVgIYJ7gAEFsAvg2yp8GFlMcVUOO/J6IzGmGtgT7N3lFvNJUiQqHvtmGI3yT/wDqUlOhM/JmlnTw7qVdtQZ4d2cn4vPnv6tdQuUEnW8bnnf/G0FlpzWNXaZX73i4yIYwbXVlVJSlW1XaP72yL44P+4DGSDmJTUd9N9JCZ1nDsngfwTwT3UFNQfjg9oA9rWZcl1iJTgw0t2HSdHcjbWnXFEbcZl2NeAvNvyaUCsFkBzaMzU3FH8X7VTKuwSv4EkQyKZ1d9bDTLeYRTbnXNWFXWUOpA5K3LFDFWlIWBYCBp0WT4uVQ0vLXJ3WzMrZTHGqHTBnUMb6jXBKLs1c+ImSh2jiuJOIGFmkLPVDp6IT+JKnNDeULXa2QlAbT5HC6Qj9q+9wlfNYWUFE3MTUDi7tA1NScJYACGOmJQAGFAWXyZeR4uMjSMW1ePuJrFhwQrTNL1FsRrJHTcThIQrYjkKxKDoJyEcSMxxPHSeOyTzcobiTZjA1QSZSb6oJDxqYIE5kBb6CWREPNESmMABYJ49ANCQEX1RBhEAOTQJpYxLEs60V0cBGiC9OQ4QU0NA0YHBSEsHWoP9wlAYzCYa6r4Q3xTAQUUVQ9hPHL/9hMRAm+VRmM/AHACtCgQRA3oCRqQTgVdHXDfeBLKtaeUcDDbHQVeSwsViMjOiNFuWXEOSDQuCOzlYNJUkAONLYxoCmAhilG0UnLqg0E0iqZGzL2XEUlYTcGzBPGTw2Olw7e7eIWcpgYAAAAASUVORK5CYII=';
+function iconResp() {
+  const bin = atob(RH_ICON_B64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Response(bytes, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' } });
+}
 function jsonResp(obj, status) {
   return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
 }
@@ -580,7 +593,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.7.0',
+    worker: 'v1.7.1',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
@@ -697,6 +710,7 @@ export default {
           'Access-Control-Max-Age': '86400',
         } });
       }
+      if (req.method === 'GET' && (url.pathname === '/icon.png' || url.pathname === '/apple-touch-icon.png')) return iconResp();
       if (req.method === 'GET' && url.pathname === '/whoami') return handleWhoami(req);
       if (req.method === 'GET' && url.pathname === '/config') return await handleConfig(url, env);
       if (req.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env);
