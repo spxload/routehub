@@ -1,0 +1,15 @@
+#!name= RouteHub
+#!desc= Панель управления RouteHub. Маршрутизация, узлы, режим РКН, личный список доменов. Тап открывает дашборд.
+#!author= RouteHub
+#!homepage= http://rh.box
+#!icon= https://raw.githubusercontent.com/spxload/routehub/main/assets/routehub-icon.png
+#!system= iOS,iPadOS,macOS
+#!loon_version= 3.2.1(733)
+#!tag= RouteHub
+
+# Визитка-вход в дашборд. Скриптов и правил намеренно НЕТ:
+# реальная логика дашборда — в http-request routehub-dash.js главного конфига
+# (перехват http://rh.box). Плагин нужен только для пункта RouteHub с иконкой
+# в списке плагинов Loon и перехода по #!homepage на дашборд (дока Loon 7.1).
+# Инъекция argument (key|origin) остаётся в [Script] главного конфига —
+# плагин её НЕ дублирует (один источник правды).
