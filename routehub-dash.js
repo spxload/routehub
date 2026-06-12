@@ -1,69 +1,450 @@
 // =============================================================
-// routehub-dash.js v0.1.0 — скрипт-перехватчик локального дашборда.
-// Тип: http-request на http://routehub.io (HTTP, MITM НЕ нужен).
-// Механизм как у BoxJS: ловит запрос, возвращает HTML через
-// $done({response}). HTML вшит (base64) — работает офлайн/под whitelist.
+// routehub-dash.js v0.2.0 — локальный дашборд RouteHub (диспетчер + HTML).
+// Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
+// argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
-// argument = "<key>|<origin>"  (Worker подставляет при отдаче конфига):
-//   key    — kN устройства
-//   origin — https://...workers.dev (для fetch свежих данных из HTML)
+// МАРШРУТЫ (все GET):
+//   /            -> HTML-дашборд (вшит ниже, 5 вкладок).
+//   /local       -> JSON локального состояния: rh_watch, rh_rkn, rh_net_state,
+//                   rh_runlog (последние 60), кэш rh_dash (фолбэк страницы).
+//   /add?d=      -> добавить домен в список наблюдения (обход ВКЛ) + Worker /addrule.
+//   /del?d=      -> удалить домен; если обход был ВКЛ — Worker /delrule.
+//   /toggle?d=   -> переключить тумблер обхода; ВКЛ->addrule, ВЫКЛ->delrule.
+//   /sync        -> сверка: Worker /mylist vs локальные ВКЛ; досылка/удаление расхождений.
+//   /check?d=    -> проверка ОДНОГО домена fetch-ом ПО ПРАВИЛАМ конфига (T1:
+//                   node игнорируется, поэтому канал проверки определяют правила:
+//                   обход-ВКЛ домен в норме идёт RH-RU->DIRECT (= «ожил?»),
+//                   под whitelist -> обход (= «обход спасает?»); результат
+//                   подписывается режимом на момент проверки).
 //
-// Кэш дашборда: ключ rh_dash в $persistentStore (пишет routehub-dashcache.js).
-// При перехвате скрипт читает кэш и ключ/origin, подставляет в HTML.
+// ИСТОЧНИК ПРАВДЫ списка — store rh_watch; KV mylist:<kN> — зеркало (только ВКЛ).
+// Мутации списка — ТОЛЬКО через этот диспетчер. Чтение /dashboard — страница
+// делает напрямую с Worker (CORS открыт с worker v1.7.0).
+// Засев rh_watch (решение Дианы 2026-06-12): ТОЛЬКО whoosh.bike (обход ВКЛ).
 // =============================================================
 
-var KEY = "k1", ORIGIN = "";
+var VERSION = 'dash v0.2.0';
+var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
-  var a = (typeof $argument !== "undefined" && $argument) ? String($argument) : "";
-  if (a) { var p = a.split("|"); if (p[0]) KEY = p[0]; if (p[1]) ORIGIN = p[1]; }
-} catch (e) {}
+  var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
+  if (a) { var ap = a.split('|'); if (ap[0]) KEY = ap[0]; if (ap[1]) ORIGIN = ap[1]; }
+} catch (e0) {}
 
-var cache = "null";
-try { var s = $persistentStore.read("rh_dash"); if (s) cache = s; } catch (e) {}
+var K_WATCH = 'rh_watch';
+var K_RKN = 'rh_rkn';
+var K_NET = 'rh_net_state';
+var K_RUNLOG = 'rh_runlog';
+var K_DASH = 'rh_dash';
+var DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
-var HTML_B64 = 'PCFET0NUWVBFIGh0bWw+CjwhLS0KICByb3V0ZWh1Yi1kYXNoLmh0bWwgdjAuMS4wIOKAlCDQu9C+0LrQsNC70YzQvdGL0Lkg0LTQsNGI0LHQvtGA0LQgUm91dGVIdWIuCiAg0J7RgtC00LDRkdGC0YHRjyDRgdC60YDQuNC/0YLQvtC8LdC/0LXRgNC10YXQstCw0YLRh9C40LrQvtC8IHJvdXRlaHViLWRhc2guanMg0L3QsCBodHRwOi8vcm91dGVodWIuaW8KICAo0LzQtdGF0LDQvdC40LfQvCDQutCw0Log0YMgQm94SlM6IGh0dHAtcmVxdWVzdCByZXdyaXRlLCAkZG9uZSh7cmVzcG9uc2V9KSkuCiAgSFRUUC3QtNC+0LzQtdC9IOKAlCBNSVRNINCd0JUg0YLRgNC10LHRg9C10YLRgdGPLgoKICDQlNCw0L3QvdGL0LU6INC/0YDQuCDQt9Cw0LPRgNGD0LfQutC1INGH0LjRgtCw0LXRgiDQstGB0YLRgNC+0LXQvdC90YvQuSBKU09OICjQv9C70LXQudGB0YXQvtC70LTQtdGA0Ysg0L/QvtC00YHRgtCw0LLQu9GP0LXRggogINGB0LrRgNC40L/RgiDQuNC3ICRwZXJzaXN0ZW50U3RvcmUg4oCUINC70L7QutCw0LvRjNC90YvQuSDQutGN0YgpLiDQn9Cw0YDQsNC70LvQtdC70YzQvdC+INC00LXQu9Cw0LXRgiBmZXRjaCDQvdCwCiAgV29ya2VyIC9kYXNoYm9hcmQg0LfQsCDRgdCy0LXQttC40LzQuCDQtNCw0L3QvdGL0LzQuC4gV29ya2VyINC90LXQtNC+0YHRgtGD0L/QtdC9IC0+INC/0L7QutCw0LfRi9Cy0LDQtdGCINC60Y3RiAogINC40LcgbG9jYWxTdG9yYWdlICsg0L/Qu9Cw0YjQutGDLCDQutC90L7Qv9C60Lgg0LPQsNGB0LjRgi4KCiAg0J/Qu9C10LnRgdGF0L7Qu9C00LXRgNGLLCDQv9C+0LTRgdGC0LDQstC70Y/QtdC80YvQtSDRgdC60YDQuNC/0YLQvtC8OgogICAgW0NBQ0hFXSAgIC0+IEpTT04g0L/QvtGB0LvQtdC00L3QtdCz0L4g0LrRjdGI0LAgKNC40LvQuCBudWxsKQogICAgW0tFWV0gICAgIC0+INC60LvRjtGHINGD0YHRgtGA0L7QudGB0YLQstCwIChrTikKICAgIFtPUklHSU5dICAtPiBvcmlnaW4gV29ya2VyIChodHRwczovLy4uLndvcmtlcnMuZGV2KQotLT4KPGh0bWwgbGFuZz0icnUiPgo8aGVhZD4KPG1ldGEgY2hhcnNldD0idXRmLTgiPgo8bWV0YSBuYW1lPSJ2aWV3cG9ydCIgY29udGVudD0id2lkdGg9ZGV2aWNlLXdpZHRoLCBpbml0aWFsLXNjYWxlPTEsIG1heGltdW0tc2NhbGU9MSI+Cjx0aXRsZT5Sb3V0ZUh1YjwvdGl0bGU+CjxzdHlsZT4KICA6cm9vdCB7CiAgICAtLWJnOiAjZjVmNWYwOyAtLWNhcmQ6ICNmZmZmZmY7IC0tbGluZTogcmdiYSgwLDAsMCwuMTApOwogICAgLS10eDogIzIzMjMxZjsgLS10eDI6ICM2NjY1NWY7IC0tdHgzOiAjOWE5ODhmOwogICAgLS1vay1iZzogI2UxZjVlZTsgLS1vay10eDogIzBmNmU1NjsKICAgIC0td2Fybi1iZzogI2ZhZWVkYTsgLS13YXJuLXR4OiAjODU0ZjBiOwogICAgLS1iYWQtYmc6ICNmY2ViZWI7IC0tYmFkLXR4OiAjYTMyZDJkOwogICAgLS1pbmZvLWJnOiAjZTZmMWZiOyAtLWluZm8tdHg6ICMxODVmYTU7CiAgICAtLXI6IDEwcHg7IC0tci1sZzogMTRweDsKICB9CiAgQG1lZGlhIChwcmVmZXJzLWNvbG9yLXNjaGVtZTogZGFyaykgewogICAgOnJvb3QgewogICAgICAtLWJnOiAjMWMxYzFhOyAtLWNhcmQ6ICMyNjI2MWY7IC0tbGluZTogcmdiYSgyNTUsMjU1LDI1NSwuMTIpOwogICAgICAtLXR4OiAjZThlNmRjOyAtLXR4MjogI2IwYWVhNDsgLS10eDM6ICM3Njc0NmI7CiAgICAgIC0tb2stYmc6ICMwODUwNDE7IC0tb2stdHg6ICM5ZmUxY2I7CiAgICAgIC0td2Fybi1iZzogIzYzMzgwNjsgLS13YXJuLXR4OiAjZmFjNzc1OwogICAgICAtLWJhZC1iZzogIzc5MWYxZjsgLS1iYWQtdHg6ICNmN2MxYzE7CiAgICAgIC0taW5mby1iZzogIzBjNDQ3YzsgLS1pbmZvLXR4OiAjYjVkNGY0OwogICAgfQogIH0KICAqIHsgYm94LXNpemluZzogYm9yZGVyLWJveDsgLXdlYmtpdC10YXAtaGlnaGxpZ2h0LWNvbG9yOiB0cmFuc3BhcmVudDsgfQogIGJvZHkgewogICAgbWFyZ2luOiAwOyBwYWRkaW5nOiAxNHB4OyBiYWNrZ3JvdW5kOiB2YXIoLS1iZyk7IGNvbG9yOiB2YXIoLS10eCk7CiAgICBmb250LWZhbWlseTogLWFwcGxlLXN5c3RlbSwgQmxpbmtNYWNTeXN0ZW1Gb250LCAiU0YgUHJvIFRleHQiLCBzeXN0ZW0tdWksIHNhbnMtc2VyaWY7CiAgICBmb250LXNpemU6IDE1cHg7IGxpbmUtaGVpZ2h0OiAxLjU7IC13ZWJraXQtZm9udC1zbW9vdGhpbmc6IGFudGlhbGlhc2VkOwogIH0KICAuaGQgeyBkaXNwbGF5OiBmbGV4OyBhbGlnbi1pdGVtczogY2VudGVyOyBnYXA6IDEwcHg7IG1hcmdpbi1ib3R0b206IDE0cHg7IH0KICAuaGQgLmxvZ28geyB3aWR0aDogMzRweDsgaGVpZ2h0OiAzNHB4OyBib3JkZXItcmFkaXVzOiA5cHg7IGJhY2tncm91bmQ6IHZhcigtLWluZm8tYmcpOwogICAgY29sb3I6IHZhcigtLWluZm8tdHgpOyBkaXNwbGF5OiBmbGV4OyBhbGlnbi1pdGVtczogY2VudGVyOyBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjsKICAgIGZvbnQtd2VpZ2h0OiA2MDA7IGZvbnQtc2l6ZTogMTVweDsgZmxleDogMCAwIGF1dG87IH0KICAuaGQgLnRpIHsgZm9udC1zaXplOiAxNnB4OyBtYXJnaW46IDA7IH0KICAuaGQgaDEgeyBmb250LXNpemU6IDE2cHg7IGZvbnQtd2VpZ2h0OiA2MDA7IG1hcmdpbjogMDsgfQogIC5oZCAuc3ViIHsgZm9udC1zaXplOiAxMnB4OyBjb2xvcjogdmFyKC0tdHgzKTsgbWFyZ2luOiAwOyB9CiAgLmJhZGdlIHsgbWFyZ2luLWxlZnQ6IGF1dG87IGRpc3BsYXk6IGlubGluZS1mbGV4OyBhbGlnbi1pdGVtczogY2VudGVyOyBnYXA6IDVweDsKICAgIGZvbnQtc2l6ZTogMTJweDsgcGFkZGluZzogNHB4IDEwcHg7IGJvcmRlci1yYWRpdXM6IHZhcigtLXIpOyBmb250LXdlaWdodDogNTAwOyB9CiAgLmJhZGdlLm9rIHsgYmFja2dyb3VuZDogdmFyKC0tb2stYmcpOyBjb2xvcjogdmFyKC0tb2stdHgpOyB9CiAgLmJhZGdlLmJhZCB7IGJhY2tncm91bmQ6IHZhcigtLWJhZC1iZyk7IGNvbG9yOiB2YXIoLS1iYWQtdHgpOyB9CiAgLmJhZGdlIC5kb3QgeyB3aWR0aDogOHB4OyBoZWlnaHQ6IDhweDsgYm9yZGVyLXJhZGl1czogNTAlOyBiYWNrZ3JvdW5kOiBjdXJyZW50Q29sb3I7IH0KCiAgLnJrbiB7IHBhZGRpbmc6IDEwcHggMTJweDsgYm9yZGVyLXJhZGl1czogdmFyKC0tcik7IG1hcmdpbi1ib3R0b206IDEycHg7CiAgICBmb250LXNpemU6IDEzcHg7IGRpc3BsYXk6IG5vbmU7IGFsaWduLWl0ZW1zOiBjZW50ZXI7IGdhcDogOHB4OyB9CiAgLnJrbi5zaG93IHsgZGlzcGxheTogZmxleDsgfQogIC5ya24ubm9ybWFsIHsgYmFja2dyb3VuZDogdmFyKC0tb2stYmcpOyBjb2xvcjogdmFyKC0tb2stdHgpOyB9CiAgLnJrbi53aGl0ZWxpc3QgeyBiYWNrZ3JvdW5kOiB2YXIoLS13YXJuLWJnKTsgY29sb3I6IHZhcigtLXdhcm4tdHgpOyB9CiAgLnJrbi5ibG9jayB7IGJhY2tncm91bmQ6IHZhcigtLWJhZC1iZyk7IGNvbG9yOiB2YXIoLS1iYWQtdHgpOyB9CgogIC5ncmlkIHsgZGlzcGxheTogZ3JpZDsgZ3JpZC10ZW1wbGF0ZS1jb2x1bW5zOiAxZnIgMWZyOyBnYXA6IDEwcHg7IG1hcmdpbi1ib3R0b206IDEycHg7IH0KICAuc3RhdCB7IGJhY2tncm91bmQ6IHZhcigtLWNhcmQpOyBib3JkZXItcmFkaXVzOiB2YXIoLS1yKTsgcGFkZGluZzogMTJweDsKICAgIGJvcmRlcjogLjVweCBzb2xpZCB2YXIoLS1saW5lKTsgfQogIC5zdGF0IC5sYmwgeyBmb250LXNpemU6IDEycHg7IGNvbG9yOiB2YXIoLS10eDIpOyBtYXJnaW46IDAgMCA0cHg7IGRpc3BsYXk6IGZsZXg7CiAgICBhbGlnbi1pdGVtczogY2VudGVyOyBnYXA6IDVweDsgfQogIC5zdGF0IC52YWwgeyBmb250LXNpemU6IDE4cHg7IGZvbnQtd2VpZ2h0OiA2MDA7IG1hcmdpbjogMDsgfQogIC5zdGF0IC5ub3RlIHsgZm9udC1zaXplOiAxMXB4OyBjb2xvcjogdmFyKC0tdHgzKTsgbWFyZ2luOiA0cHggMCAwOyB9CgogIC5hY3RzIHsgZGlzcGxheTogZmxleDsgZ2FwOiA4cHg7IG1hcmdpbi1ib3R0b206IDE2cHg7IH0KICAuYnRuIHsgZmxleDogMTsgcGFkZGluZzogMTBweDsgYm9yZGVyLXJhZGl1czogdmFyKC0tcik7IGJvcmRlcjogLjVweCBzb2xpZCB2YXIoLS1saW5lKTsKICAgIGJhY2tncm91bmQ6IHZhcigtLWNhcmQpOyBjb2xvcjogdmFyKC0tdHgpOyBmb250LXNpemU6IDEzcHg7IGZvbnQtd2VpZ2h0OiA1MDA7CiAgICBkaXNwbGF5OiBmbGV4OyBhbGlnbi1pdGVtczogY2VudGVyOyBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjsgZ2FwOiA2cHg7CiAgICBjdXJzb3I6IHBvaW50ZXI7IGZvbnQtZmFtaWx5OiBpbmhlcml0OyB9CiAgLmJ0bjphY3RpdmUgeyB0cmFuc2Zvcm06IHNjYWxlKC45OCk7IH0KICAuYnRuOmRpc2FibGVkIHsgb3BhY2l0eTogLjQ7IGN1cnNvcjogZGVmYXVsdDsgfQogIC5pYyB7IHdpZHRoOiAxNXB4OyBoZWlnaHQ6IDE1cHg7IGZsZXg6IDAgMCBhdXRvOyB9CgogIC5zZWMgeyBkaXNwbGF5OiBmbGV4OyBhbGlnbi1pdGVtczogY2VudGVyOyBnYXA6IDhweDsgbWFyZ2luOiAwIDAgOHB4OyB9CiAgCiAgLnNlYyBoMiB7IGZvbnQtc2l6ZTogMTRweDsgZm9udC13ZWlnaHQ6IDYwMDsgbWFyZ2luOiAwOyB9CiAgLnNlYyAuY250IHsgbWFyZ2luLWxlZnQ6IGF1dG87IGZvbnQtc2l6ZTogMTJweDsgY29sb3I6IHZhcigtLXR4Myk7IH0KCiAgLnRhYnMgeyBkaXNwbGF5OiBmbGV4OyBnYXA6IDZweDsgbWFyZ2luLWJvdHRvbTogMTBweDsgfQogIC50YWIgeyBwYWRkaW5nOiA2cHggMTRweDsgYm9yZGVyLXJhZGl1czogOTk5cHg7IGJvcmRlcjogLjVweCBzb2xpZCB2YXIoLS1saW5lKTsKICAgIGJhY2tncm91bmQ6IHZhcigtLWNhcmQpOyBjb2xvcjogdmFyKC0tdHgyKTsgZm9udC1zaXplOiAxM3B4OyBjdXJzb3I6IHBvaW50ZXI7CiAgICBmb250LWZhbWlseTogaW5oZXJpdDsgfQogIC50YWIub24geyBiYWNrZ3JvdW5kOiB2YXIoLS1pbmZvLWJnKTsgY29sb3I6IHZhcigtLWluZm8tdHgpOyBib3JkZXItY29sb3I6IHRyYW5zcGFyZW50OyB9CgogIC5saXN0IHsgYmFja2dyb3VuZDogdmFyKC0tY2FyZCk7IGJvcmRlci1yYWRpdXM6IHZhcigtLXIpOyBib3JkZXI6IC41cHggc29saWQgdmFyKC0tbGluZSk7CiAgICBvdmVyZmxvdzogaGlkZGVuOyB9CiAgLnJvdyB7IGRpc3BsYXk6IGZsZXg7IGFsaWduLWl0ZW1zOiBjZW50ZXI7IGdhcDogOHB4OyBwYWRkaW5nOiA5cHggMTJweDsKICAgIGJvcmRlci1ib3R0b206IC41cHggc29saWQgdmFyKC0tbGluZSk7IH0KICAucm93Omxhc3QtY2hpbGQgeyBib3JkZXItYm90dG9tOiBub25lOyB9CiAgLnJvdyAuc2MgeyBmb250LXNpemU6IDEzcHg7IGZvbnQtd2VpZ2h0OiA2MDA7IHdpZHRoOiAyNnB4OyB0ZXh0LWFsaWduOiBjZW50ZXI7CiAgICBmbGV4OiAwIDAgYXV0bzsgfQogIC5yb3cgLm5tIHsgZm9udC1zaXplOiAxM3B4OyBmbGV4OiAxOyBvdmVyZmxvdzogaGlkZGVuOyB0ZXh0LW92ZXJmbG93OiBlbGxpcHNpczsKICAgIHdoaXRlLXNwYWNlOiBub3dyYXA7IH0KICAucm93IC5jYWxsIHsgZGlzcGxheTogaW5saW5lLWZsZXg7IGFsaWduLWl0ZW1zOiBjZW50ZXI7IGdhcDogM3B4OyBmb250LXNpemU6IDExcHg7CiAgICBwYWRkaW5nOiAycHggN3B4OyBib3JkZXItcmFkaXVzOiA5OTlweDsgYmFja2dyb3VuZDogdmFyKC0tb2stYmcpOyBjb2xvcjogdmFyKC0tb2stdHgpOwogICAgZmxleDogMCAwIGF1dG87IH0KICAucm93IC5jYWxsIC5pYyB7IHdpZHRoOiAxMXB4OyBoZWlnaHQ6IDExcHg7IH0KICAucm93IC5zcGQgeyBmb250LXNpemU6IDEycHg7IGNvbG9yOiB2YXIoLS10eDMpOyB3aWR0aDogNTZweDsgdGV4dC1hbGlnbjogcmlnaHQ7CiAgICBmbGV4OiAwIDAgYXV0bzsgfQogIC5lbXB0eSB7IHBhZGRpbmc6IDE2cHg7IHRleHQtYWxpZ246IGNlbnRlcjsgY29sb3I6IHZhcigtLXR4Myk7IGZvbnQtc2l6ZTogMTNweDsgfQogIC5mdCB7IG1hcmdpbi10b3A6IDE0cHg7IHRleHQtYWxpZ246IGNlbnRlcjsgZm9udC1zaXplOiAxMXB4OyBjb2xvcjogdmFyKC0tdHgzKTsgfQo8L3N0eWxlPgo8L2hlYWQ+Cjxib2R5PgoKPGRpdiBjbGFzcz0iaGQiPgogIDxkaXYgY2xhc3M9ImxvZ28iPlJIPC9kaXY+CiAgPGRpdj4KICAgIDxoMT5Sb3V0ZUh1YjwvaDE+CiAgICA8cCBjbGFzcz0ic3ViIiBpZD0ic3ViIj7Rg9GB0YLRgNC+0LnRgdGC0LLQviDigJQgwrcgd29ya2VyIOKAlDwvcD4KICA8L2Rpdj4KICA8c3BhbiBjbGFzcz0iYmFkZ2UgYmFkIiBpZD0ibGl2ZSI+PHNwYW4gY2xhc3M9ImRvdCI+PC9zcGFuPjxzcGFuIGlkPSJsaXZlVHgiPtC60Y3RiDwvc3Bhbj48L3NwYW4+CjwvZGl2PgoKPGRpdiBjbGFzcz0icmtuIiBpZD0icmtuIj48L2Rpdj4KCjxkaXYgY2xhc3M9ImdyaWQiPgogIDxkaXYgY2xhc3M9InN0YXQiPgogICAgPHAgY2xhc3M9ImxibCI+0LrQvtC90YTQuNCzPC9wPgogICAgPHAgY2xhc3M9InZhbCIgaWQ9ImNvbmZWZXIiPuKAlDwvcD4KICAgIDxwIGNsYXNzPSJub3RlIiBpZD0iY29uZk5vdGUiPtCy0LXRgNGB0LjRjyDQvtGCIFdvcmtlcjwvcD4KICA8L2Rpdj4KICA8ZGl2IGNsYXNzPSJzdGF0Ij4KICAgIDxwIGNsYXNzPSJsYmwiPtC/0L7QtNC/0LjRgdC60LA8L3A+CiAgICA8cCBjbGFzcz0idmFsIiBpZD0ic3ViQWdlIj7igJQ8L3A+CiAgICA8cCBjbGFzcz0ibm90ZSIgaWQ9InN1Yk5vdGUiPtCy0L7Qt9GA0LDRgdGCINC60Y3RiNCwPC9wPgogIDwvZGl2PgogIDxkaXYgY2xhc3M9InN0YXQiPgogICAgPHAgY2xhc3M9ImxibCI+0YLRgNCw0YTQuNC6PC9wPgogICAgPHAgY2xhc3M9InZhbCIgaWQ9ImdiIj7igJQ8L3A+CiAgICA8cCBjbGFzcz0ibm90ZSIgaWQ9ImdiTm90ZSI+0L7RgdGC0LDRgtC+0Lo8L3A+CiAgPC9kaXY+CiAgPGRpdiBjbGFzcz0ic3RhdCI+CiAgICA8cCBjbGFzcz0ibGJsIj7QvtCx0L3QvtCy0LvQtdC90L48L3A+CiAgICA8cCBjbGFzcz0idmFsIiBpZD0iZGF0YUFnZSI+4oCUPC9wPgogICAgPHAgY2xhc3M9Im5vdGUiIGlkPSJkYXRhTm90ZSI+0LTQsNC90L3Ri9C1INC00LDRiNCx0L7RgNC00LA8L3A+CiAgPC9kaXY+CjwvZGl2PgoKPGRpdiBjbGFzcz0iYWN0cyI+CiAgPGJ1dHRvbiBjbGFzcz0iYnRuIiBpZD0iYnRuUmVmcmVzaCI+PHN2ZyBjbGFzcz0iaWMiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMjEgMTJhOSA5IDAgMSAxLTIuNjQtNi4zNiIvPjxwb2x5bGluZSBwb2ludHM9IjIxIDMgMjEgOSAxNSA5Ii8+PC9zdmc+PHNwYW4+0L7QsdC90L7QstC40YLRjCDQv9C+0LTQv9C40YHQutGDPC9zcGFuPjwvYnV0dG9uPgogIDxidXR0b24gY2xhc3M9ImJ0biIgaWQ9ImJ0blJlbG9hZCI+PHN2ZyBjbGFzcz0iaWMiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgNXYxNCIvPjxwb2x5bGluZSBwb2ludHM9IjE5IDEyIDEyIDE5IDUgMTIiLz48L3N2Zz48c3Bhbj7QvtCx0L3QvtCy0LjRgtGMINC00LDQvdC90YvQtTwvc3Bhbj48L2J1dHRvbj4KPC9kaXY+Cgo8ZGl2IGNsYXNzPSJzZWMiPgogIDxoMj7Rg9C30LvRizwvaDI+CiAgPHNwYW4gY2xhc3M9ImNudCIgaWQ9Im5vZGVDbnQiPjwvc3Bhbj4KPC9kaXY+CjxkaXYgY2xhc3M9InRhYnMiPgogIDxkaXYgY2xhc3M9InRhYiBvbiIgaWQ9InRhYlciPldpLUZpPC9kaXY+CiAgPGRpdiBjbGFzcz0idGFiIiBpZD0idGFiQyI+0YHQvtGC0L7QstCw0Y88L2Rpdj4KPC9kaXY+CjxkaXYgY2xhc3M9Imxpc3QiIGlkPSJsaXN0Ij48ZGl2IGNsYXNzPSJlbXB0eSI+0L3QtdGCINC00LDQvdC90YvRhTwvZGl2PjwvZGl2PgoKPHAgY2xhc3M9ImZ0IiBpZD0iZnQiPjwvcD4KCjxzY3JpcHQ+CihmdW5jdGlvbiAoKSB7CiAgdmFyIENBQ0hFID0gX19SSF9DQUNIRV9fOwogIHZhciBLRVkgPSAiX19SSF9LRVlfXyI7CiAgdmFyIE9SSUdJTiA9ICJfX1JIX09SSUdJTl9fIjsKICB2YXIgTFMgPSAicmhfZGFzaF9jYWNoZSI7CiAgdmFyIHNsb3QgPSAid2lmaSI7CiAgdmFyIGRhdGEgPSBudWxsOwoKICBmdW5jdGlvbiAkKGlkKSB7IHJldHVybiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZChpZCk7IH0KCiAgLy8g0LjRgdGC0L7Rh9C90LjQuiDQtNCw0L3QvdGL0YU6INCy0YHRgtGA0L7QtdC90L3Ri9C5INC60Y3RiCAtPiBsb2NhbFN0b3JhZ2UgKNC90LAg0YHQu9GD0YfQsNC5INC/0YDRj9C80L7Qs9C+INC+0YLQutGA0YvRgtC40Y8g0LIg0LHRgNCw0YPQt9C10YDQtSkKICBmdW5jdGlvbiBsb2FkSW5pdGlhbCgpIHsKICAgIGlmIChDQUNIRSAmJiB0eXBlb2YgQ0FDSEUgPT09ICJvYmplY3QiKSByZXR1cm4gQ0FDSEU7CiAgICB0cnkgeyB2YXIgcyA9IGxvY2FsU3RvcmFnZS5nZXRJdGVtKExTKTsgaWYgKHMpIHJldHVybiBKU09OLnBhcnNlKHMpOyB9IGNhdGNoIChlKSB7fQogICAgcmV0dXJuIG51bGw7CiAgfQoKICBmdW5jdGlvbiBmbXRBZ2UobWluKSB7CiAgICBpZiAobWluID09IG51bGwpIHJldHVybiAi4oCUIjsKICAgIGlmIChtaW4gPCAxKSByZXR1cm4gItGC0L7Qu9GM0LrQviDRh9GC0L4iOwogICAgaWYgKG1pbiA8IDYwKSByZXR1cm4gbWluICsgIiDQvNC40L0iOwogICAgdmFyIGggPSBNYXRoLmZsb29yKG1pbiAvIDYwKTsgcmV0dXJuIGggKyAiINGHIjsKICB9CiAgZnVuY3Rpb24gdHNBZ2VNaW4oaXNvKSB7CiAgICBpZiAoIWlzbykgcmV0dXJuIG51bGw7CiAgICB2YXIgdCA9IERhdGUucGFyc2UoaXNvKTsgaWYgKGlzTmFOKHQpKSByZXR1cm4gbnVsbDsKICAgIHJldHVybiBNYXRoLm1heCgwLCBNYXRoLnJvdW5kKChEYXRlLm5vdygpIC0gdCkgLyA2MDAwMCkpOwogIH0KICBmdW5jdGlvbiBmbXRUaW1lKGlzbykgewogICAgaWYgKCFpc28pIHJldHVybiAi4oCUIjsKICAgIHZhciBkID0gbmV3IERhdGUoaXNvKTsgaWYgKGlzTmFOKGQpKSByZXR1cm4gIuKAlCI7CiAgICBmdW5jdGlvbiBwKG4pIHsgcmV0dXJuIChuIDwgMTAgPyAiMCIgOiAiIikgKyBuOyB9CiAgICByZXR1cm4gcChkLmdldEhvdXJzKCkpICsgIjoiICsgcChkLmdldE1pbnV0ZXMoKSk7CiAgfQoKICBmdW5jdGlvbiByZW5kZXIobGl2ZSkgewogICAgaWYgKCFkYXRhKSByZXR1cm47CiAgICAkKCJzdWIiKS50ZXh0Q29udGVudCA9ICLRg9GB0YLRgNC+0LnRgdGC0LLQviAiICsgKGRhdGEua2V5IHx8IEtFWSkgKyAiIMK3IHdvcmtlciAiICsgKGRhdGEud29ya2VyIHx8ICLigJQiKTsKICAgICQoImNvbmZWZXIiKS50ZXh0Q29udGVudCA9IGRhdGEuY29uZl92ZXIgfHwgIuKAlCI7CiAgICAkKCJzdWJBZ2UiKS50ZXh0Q29udGVudCA9IGZtdEFnZShkYXRhLnN1Yl9hZ2VfbWluKTsKICAgICQoInN1Yk5vdGUiKS50ZXh0Q29udGVudCA9IChkYXRhLnN1Yl9ub2RlcyB8fCAwKSArICIg0YPQt9C70L7QsiDQsiDQutGN0YjQtSI7CgogICAgaWYgKGRhdGEudHJhZmZpYyAmJiBkYXRhLnRyYWZmaWMubGVmdF9nYiAhPSBudWxsKSB7CiAgICAgICQoImdiIikudGV4dENvbnRlbnQgPSBkYXRhLnRyYWZmaWMubGVmdF9nYiArICIg0JPQkSI7CiAgICAgICQoImdiTm90ZSIpLnRleHRDb250ZW50ID0gItC40LcgIiArIGRhdGEudHJhZmZpYy50b3RhbF9nYiArICIg0JPQkSI7CiAgICB9IGVsc2UgeyAkKCJnYiIpLnRleHRDb250ZW50ID0gIuKAlCI7ICQoImdiTm90ZSIpLnRleHRDb250ZW50ID0gItC90LXRgiDQtNCw0L3QvdGL0YUiOyB9CgogICAgdmFyIGRBZ2UgPSB0c0FnZU1pbihkYXRhLl9mZXRjaGVkX2F0KTsKICAgICQoImRhdGFBZ2UiKS50ZXh0Q29udGVudCA9IGRBZ2UgPT0gbnVsbCA/ICLigJQiIDogZm10QWdlKGRBZ2UpOwogICAgJCgiZGF0YU5vdGUiKS50ZXh0Q29udGVudCA9ICIvY29uZmlnICIgKyBmbXRUaW1lKGRhdGEubGFzdF9jb25maWdfdHMpICsgIiDCtyAvbm9kZXMgIiArIGZtdFRpbWUoZGF0YS5sYXN0X25vZGVzX3RzKTsKCiAgICAvLyDQttC40LLQvtC5L9C60Y3RiAogICAgdmFyIGxpdmVfID0gISFsaXZlOwogICAgdmFyIGIgPSAkKCJsaXZlIik7CiAgICBiLmNsYXNzTmFtZSA9ICJiYWRnZSAiICsgKGxpdmVfID8gIm9rIiA6ICJiYWQiKTsKICAgICQoImxpdmVUeCIpLnRleHRDb250ZW50ID0gbGl2ZV8gPyAi0LbQuNCy0L7QuSIgOiAi0LrRjdGIIjsKICAgICQoImJ0blJlZnJlc2giKS5kaXNhYmxlZCA9ICFsaXZlXzsKCiAgICAvLyDRgNC10LbQuNC8INCg0JrQnQogICAgdmFyIHJrbiA9IGRhdGEucmtuOwogICAgdmFyIHIgPSAkKCJya24iKTsKICAgIGlmIChya24gJiYgcmtuLm1vZGUpIHsKICAgICAgci5jbGFzc05hbWUgPSAicmtuIHNob3cgIiArIHJrbi5tb2RlOwogICAgICB2YXIgdHggPSB7IG5vcm1hbDogItCg0LXQttC40Lw6INC90L7RgNC80LAg4oCUINCy0YHQtSDRg9C30LvRiyDRgNCw0LHQvtGC0LDRjtGCIiwKICAgICAgICAgICAgICAgICB3aGl0ZWxpc3Q6ICLQoNC10LbQuNC8INCg0JrQnSAod2hpdGVsaXN0KSDigJQg0L7RgdC90L7QstC90YvQtSDRg9C30LvRiyDQvdC10LTQvtGB0YLRg9C/0L3Riywg0YLRgNCw0YTQuNC6INC90LAg0L7QsdGF0L7QtNC1IiwKICAgICAgICAgICAgICAgICBibG9jazogItCf0L7Qu9C90LDRjyDQsdC70L7QutC40YDQvtCy0LrQsCDigJQg0L7QsdGF0L7QtCDRgtC+0LbQtSDQvdC10LTQvtGB0YLRg9C/0LXQvSIgfTsKICAgICAgci5pbm5lckhUTUwgPSAnPHNwYW4+JyArICh0eFtya24ubW9kZV0gfHwgcmtuLm1vZGUpICsgJzwvc3Bhbj4nOwogICAgfSBlbHNlIHsgci5jbGFzc05hbWUgPSAicmtuIjsgfQoKICAgIHJlbmRlck5vZGVzKCk7CiAgICB2YXIgc3JjID0gbGl2ZV8gPyAi0L7QsdC90L7QstC70LXQvdC+INGBIFdvcmtlciIgOiAi0LTQsNC90L3Ri9C1INC40Lcg0LvQvtC60LDQu9GM0L3QvtCz0L4g0LrRjdGI0LAiOwogICAgJCgiZnQiKS50ZXh0Q29udGVudCA9IHNyYyArIChkYXRhLnNlcnZlcl9ub3cgPyAiIMK3INGB0LXRgNCy0LXRgCAiICsgZm10VGltZShkYXRhLnNlcnZlcl9ub3cpIDogIiIpOwogIH0KCiAgZnVuY3Rpb24gcmVuZGVyTm9kZXMoKSB7CiAgICB2YXIgYXJyID0gKGRhdGEubm9kZXMgJiYgZGF0YS5ub2Rlc1tzbG90XSkgfHwgW107CiAgICB2YXIgZWwgPSAkKCJsaXN0Iik7CiAgICAkKCJub2RlQ250IikudGV4dENvbnRlbnQgPSBhcnIubGVuZ3RoICsgIiDRiNGCIjsKICAgIGlmICghYXJyLmxlbmd0aCkgeyBlbC5pbm5lckhUTUwgPSAnPGRpdiBjbGFzcz0iZW1wdHkiPtC90LXRgiDQuNC30LzQtdGA0LXQvdC90YvRhSDRg9C30LvQvtCyPC9kaXY+JzsgcmV0dXJuOyB9CiAgICB2YXIgaHRtbCA9ICIiOwogICAgZm9yICh2YXIgaSA9IDA7IGkgPCBhcnIubGVuZ3RoOyBpKyspIHsKICAgICAgdmFyIG4gPSBhcnJbaV07CiAgICAgIHZhciBjYWxsID0gbi52b2ljZSA/ICc8c3BhbiBjbGFzcz0iY2FsbCI+PHN2ZyBjbGFzcz0iaWMiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMjIgMTYuOXYzYTIgMiAwIDAgMS0yLjIgMiAxOS44IDE5LjggMCAwIDEtOC42LTMgMTkuNSAxOS41IDAgMCAxLTYtNiAxOS44IDE5LjggMCAwIDEtMy04LjZBMiAyIDAgMCAxIDQuMSAyaDNhMiAyIDAgMCAxIDIgMS43Yy4xLjkuNCAxLjguNyAyLjdhMiAyIDAgMCAxLS41IDIuMUw4LjEgOS45YTE2IDE2IDAgMCAwIDYgNmwxLjQtMS4yYTIgMiAwIDAgMSAyLjEtLjVjLjkuMyAxLjguNiAyLjcuN2EyIDIgMCAwIDEgMS43IDJ6Ii8+PC9zdmc+0LfQstC+0L3QutC4PC9zcGFuPicgOiAnJzsKICAgICAgdmFyIHNwZCA9IChuLmRvd24gIT0gbnVsbCA/IG4uZG93biArICIg0JzQsdC40YIiIDogIiIpOwogICAgICBodG1sICs9ICc8ZGl2IGNsYXNzPSJyb3ciPjxzcGFuIGNsYXNzPSJzYyI+JyArIChuLnNjb3JlICE9IG51bGwgPyBuLnNjb3JlIDogIuKAlCIpICsgJzwvc3Bhbj4nICsKICAgICAgICAgICAgICAnPHNwYW4gY2xhc3M9Im5tIj4nICsgZXNjKG4ubmFtZSkgKyAnPC9zcGFuPicgKyBjYWxsICsKICAgICAgICAgICAgICAnPHNwYW4gY2xhc3M9InNwZCI+JyArIHNwZCArICc8L3NwYW4+PC9kaXY+JzsKICAgIH0KICAgIGVsLmlubmVySFRNTCA9IGh0bWw7CiAgfQogIGZ1bmN0aW9uIGVzYyhzKSB7IHJldHVybiBTdHJpbmcocykucmVwbGFjZSgvWyY8Pl0vZywgZnVuY3Rpb24gKGMpIHsKICAgIHJldHVybiB7ICImIjogIiZhbXA7IiwgIjwiOiAiJmx0OyIsICI+IjogIiZndDsiIH1bY107IH0pOyB9CgogIGZ1bmN0aW9uIGZldGNoTGl2ZSgpIHsKICAgIGlmICghT1JJR0lOIHx8IE9SSUdJTi5pbmRleE9mKCJodHRwIikgIT09IDApIHJldHVybjsKICAgIHZhciB1cmwgPSBPUklHSU4gKyAiL2Rhc2hib2FyZD9rZXk9IiArIEtFWTsKICAgIHZhciBkb25lID0gZmFsc2U7CiAgICB2YXIgdG8gPSBzZXRUaW1lb3V0KGZ1bmN0aW9uICgpIHsgaWYgKCFkb25lKSB7IGRvbmUgPSB0cnVlOyByZW5kZXIoZmFsc2UpOyB9IH0sIDYwMDApOwogICAgZmV0Y2godXJsLCB7IGNhY2hlOiAibm8tc3RvcmUiIH0pLnRoZW4oZnVuY3Rpb24gKHIpIHsgcmV0dXJuIHIuanNvbigpOyB9KS50aGVuKGZ1bmN0aW9uIChqKSB7CiAgICAgIGlmIChkb25lKSByZXR1cm47IGRvbmUgPSB0cnVlOyBjbGVhclRpbWVvdXQodG8pOwogICAgICBpZiAoaiAmJiAhai5lcnJvcikgewogICAgICAgIGouX2ZldGNoZWRfYXQgPSBuZXcgRGF0ZSgpLnRvSVNPU3RyaW5nKCk7CiAgICAgICAgZGF0YSA9IGo7CiAgICAgICAgdHJ5IHsgbG9jYWxTdG9yYWdlLnNldEl0ZW0oTFMsIEpTT04uc3RyaW5naWZ5KGopKTsgfSBjYXRjaCAoZSkge30KICAgICAgICByZW5kZXIodHJ1ZSk7CiAgICAgIH0gZWxzZSB7IHJlbmRlcihmYWxzZSk7IH0KICAgIH0pLmNhdGNoKGZ1bmN0aW9uICgpIHsgaWYgKCFkb25lKSB7IGRvbmUgPSB0cnVlOyBjbGVhclRpbWVvdXQodG8pOyByZW5kZXIoZmFsc2UpOyB9IH0pOwogIH0KCiAgZnVuY3Rpb24gdHJpZ2dlclJlZnJlc2goKSB7CiAgICBpZiAoIU9SSUdJTikgcmV0dXJuOwogICAgJCgiYnRuUmVmcmVzaCIpLmRpc2FibGVkID0gdHJ1ZTsKICAgIGZldGNoKE9SSUdJTiArICIvcmVmcmVzaD9rZXk9IiArIEtFWSwgeyBjYWNoZTogIm5vLXN0b3JlIiB9KS50aGVuKGZ1bmN0aW9uIChyKSB7IHJldHVybiByLmpzb24oKTsgfSkKICAgICAgLnRoZW4oZnVuY3Rpb24gKCkgeyBmZXRjaExpdmUoKTsgfSkuY2F0Y2goZnVuY3Rpb24gKCkgeyAkKCJidG5SZWZyZXNoIikuZGlzYWJsZWQgPSBmYWxzZTsgfSk7CiAgfQoKICAvLyBpbml0CiAgZGF0YSA9IGxvYWRJbml0aWFsKCk7CiAgaWYgKGRhdGEgJiYgIWRhdGEuX2ZldGNoZWRfYXQpIGRhdGEuX2ZldGNoZWRfYXQgPSBkYXRhLnN1Yl90cyB8fCBudWxsOwogIHJlbmRlcihmYWxzZSk7CiAgJCgidGFiVyIpLm9uY2xpY2sgPSBmdW5jdGlvbiAoKSB7IHNsb3QgPSAid2lmaSI7ICQoInRhYlciKS5jbGFzc0xpc3QuYWRkKCJvbiIpOyAkKCJ0YWJDIikuY2xhc3NMaXN0LnJlbW92ZSgib24iKTsgcmVuZGVyTm9kZXMoKTsgfTsKICAkKCJ0YWJDIikub25jbGljayA9IGZ1bmN0aW9uICgpIHsgc2xvdCA9ICJjZWxsIjsgJCgidGFiQyIpLmNsYXNzTGlzdC5hZGQoIm9uIik7ICQoInRhYlciKS5jbGFzc0xpc3QucmVtb3ZlKCJvbiIpOyByZW5kZXJOb2RlcygpOyB9OwogICQoImJ0blJlbG9hZCIpLm9uY2xpY2sgPSBmZXRjaExpdmU7CiAgJCgiYnRuUmVmcmVzaCIpLm9uY2xpY2sgPSB0cmlnZ2VyUmVmcmVzaDsKICBmZXRjaExpdmUoKTsKfSkoKTsKPC9zY3JpcHQ+CjwvYm9keT4KPC9odG1sPgo=';
+function rj(k, d) { try { var s = $persistentStore.read(k); return s ? JSON.parse(s) : d; } catch (e) { return d; } }
+function wj(k, o) { try { $persistentStore.write(JSON.stringify(o), k); } catch (e) {} }
 
-function b64decUtf8(b64) {
-  var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  var str = String(b64).replace(/[^A-Za-z0-9+/]/g, "");
-  var bytes = [];
-  for (var i = 0; i < str.length; i += 4) {
-    var e1 = chars.indexOf(str[i]), e2 = chars.indexOf(str[i+1]);
-    var e3 = chars.indexOf(str[i+2]), e4 = chars.indexOf(str[i+3]);
-    var c1 = (e1 << 2) | (e2 >> 4);
-    var c2 = ((e2 & 15) << 4) | (e3 >> 2);
-    var c3 = ((e3 & 3) << 6) | e4;
-    bytes.push(c1);
-    if (str[i+2] !== undefined && e3 !== -1) bytes.push(c2);
-    if (str[i+3] !== undefined && e4 !== -1) bytes.push(c3);
-  }
-  var out = "", i2 = 0;
-  while (i2 < bytes.length) {
-    var b = bytes[i2++];
-    if (b < 0x80) out += String.fromCharCode(b);
-    else if (b < 0xE0) out += String.fromCharCode(((b & 0x1F) << 6) | (bytes[i2++] & 0x3F));
-    else if (b < 0xF0) {
-      out += String.fromCharCode(((b & 0x0F) << 12) | ((bytes[i2++] & 0x3F) << 6) | (bytes[i2++] & 0x3F));
-    } else {
-      var cp = ((b & 0x07) << 18) | ((bytes[i2++] & 0x3F) << 12) | ((bytes[i2++] & 0x3F) << 6) | (bytes[i2++] & 0x3F);
-      cp -= 0x10000;
-      out += String.fromCharCode(0xD800 + (cp >> 10), 0xDC00 + (cp & 0x3FF));
-    }
-  }
-  return out;
+function watchLoad() {
+  var w = rj(K_WATCH, null);
+  if (!Array.isArray(w)) { w = [{ d: 'whoosh.bike', on: true, ts: Date.now() }]; wj(K_WATCH, w); }
+  return w;
+}
+function watchSave(w) { wj(K_WATCH, w); }
+
+function resp(status, type, body) {
+  $done({ response: { status: status, headers: { 'Content-Type': type, 'Cache-Control': 'no-store' }, body: body } });
+}
+function json(o) { resp(200, 'application/json; charset=utf-8', JSON.stringify(o)); }
+function jerr(msg) { resp(200, 'application/json; charset=utf-8', JSON.stringify({ ok: false, err: msg })); }
+
+function wPost(path, body, cb) {
+  $httpClient.post({ url: ORIGIN + path, timeout: 5000, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    function (e, r, b) { cb(!e && r && r.status >= 200 && r.status < 300, b || ''); });
+}
+function wGet(path, cb) {
+  $httpClient.get({ url: ORIGIN + path, timeout: 5000 }, function (e, r, b) { cb(!e && r && r.status >= 200 && r.status < 300, b || ''); });
 }
 
-function repAll(s, find, val) { return s.split(find).join(val); }
-
-var html = b64decUtf8(HTML_B64);
-html = repAll(html, "__RH_CACHE__", cache);
-html = repAll(html, "__RH_KEY__", KEY);
-html = repAll(html, "__RH_ORIGIN__", ORIGIN);
-
-$done({
-  response: {
-    status: 200,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-    body: html
+// --- разбор URL ---
+var URLS = String($request && $request.url || '');
+var mm = URLS.match(/^https?:\/\/[^\/]+(\/[^?]*)?(?:\?(.*))?$/);
+var PATH = (mm && mm[1]) || '/';
+var QS = (mm && mm[2]) || '';
+function q(name) {
+  var parts = QS.split('&');
+  for (var i = 0; i < parts.length; i++) {
+    var kv = parts[i].split('=');
+    if (kv[0] === name) return decodeURIComponent((kv[1] || '').replace(/\+/g, ' '));
   }
+  return '';
+}
+
+// =============================================================
+// HTML (вшит; плейсхолдеры __KEY__/__ORIGIN__ заменяются при выдаче).
+// В JS страницы НЕТ обратных кавычек и "${" — текст безопасен в шаблоне.
+// =============================================================
+var HTML = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RouteHub">
+<link rel="apple-touch-icon" href="https://raw.githubusercontent.com/spxload/routehub/main/assets/routehub-icon-180.png">
+<title>RouteHub</title>
+<style>
+:root{--bg:#F4F6F5;--card:#FFFFFF;--ink:#10211C;--mut:#5E6E68;--line:#E2E8E5;--acc:#0E7A5F;--acc2:#5DCAA5;--ok:#1F9D6B;--warn:#C7900B;--bad:#C0392B;--grey:#9AA7A1;--tabbg:rgba(255,255,255,.92)}
+@media(prefers-color-scheme:dark){:root{--bg:#0B1512;--card:#13201B;--ink:#E7F0EC;--mut:#8FA39B;--line:#1E2E27;--acc:#5DCAA5;--acc2:#7FE0C0;--ok:#3DBE8B;--warn:#D9A93C;--bad:#E06A5A;--grey:#5E6E68;--tabbg:rgba(15,24,20,.92)}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,system-ui,'SF Pro Text',sans-serif}
+body{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 16px 8px}
+h1{font-size:22px;margin:0;display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--grey)}
+.dot.live{background:var(--ok)}.dot.cache{background:var(--warn)}.dot.ls{background:var(--grey)}
+.banner{margin-top:8px;border-radius:12px;padding:8px 12px;font-size:14px;display:none}
+.banner.show{display:block}
+.banner.normal{background:rgba(31,157,107,.12);color:var(--ok)}
+.banner.whitelist{background:rgba(199,144,11,.14);color:var(--warn)}
+.banner.block{background:rgba(192,57,43,.14);color:var(--bad)}
+.live{display:flex;gap:6px;margin-top:8px;align-items:center;font-size:13px;color:var(--mut)}
+.seg{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--mut);padding:5px 10px;font-size:13px}
+.seg button.on{background:var(--acc);color:#fff}
+main{padding:4px 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:10px 0}
+.card h3{margin:0 0 6px;font-size:13px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.kv{display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:15px}
+.kv b{font-weight:600}
+.mut{color:var(--mut)}.small{font-size:13px}
+.row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.grow{flex:1;min-width:0}
+.nm{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sub{font-size:12px;color:var(--mut)}
+.chip{font-size:11px;padding:2px 8px;border-radius:99px;white-space:nowrap}
+.chip.ok{background:rgba(31,157,107,.14);color:var(--ok)}
+.chip.bad{background:rgba(192,57,43,.14);color:var(--bad)}
+.chip.na{background:rgba(154,167,161,.18);color:var(--mut)}
+button.b{border:1px solid var(--line);background:var(--card);color:var(--acc);border-radius:10px;padding:7px 12px;font-size:14px}
+button.b:active,.tab:active{transform:scale(.98)}
+button.b.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+input.inp{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:8px 10px;font-size:15px;min-width:0}
+.addl{display:flex;gap:8px}
+.sw{position:relative;width:46px;height:28px;flex:none}
+.sw input{display:none}
+.sw i{position:absolute;inset:0;border-radius:99px;background:var(--line);transition:.15s}
+.sw i:after{content:'';position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw input:checked+i{background:var(--ok)}
+.sw input:checked+i:after{left:21px}
+.ring{flex:none}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--tabbg);backdrop-filter:blur(14px);border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+.tab{flex:1;border:0;background:transparent;color:var(--mut);font-size:10px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0}
+.tab.on{color:var(--acc)}
+.tab svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.skel{height:14px;border-radius:7px;background:linear-gradient(90deg,var(--line),var(--card),var(--line));background-size:200% 100%;animation:sk 1.1s infinite}
+@keyframes sk{0%{background-position:0 0}100%{background-position:-200% 0}}
+.hint{font-size:12px;color:var(--mut);margin-top:6px}
+.ev{padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
+.ev:last-child{border-bottom:0}
+.ev .t{color:var(--mut);font-size:12px}
+.gap{color:var(--warn)}
+a.lk{color:var(--acc);text-decoration:none}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot" id="dot"></span> RouteHub <span class="mut small" id="hkey"></span></h1>
+  <div class="banner" id="banner"></div>
+  <div class="live">
+    Live:
+    <span class="seg" id="liveSeg">
+      <button data-s="10">10с</button><button data-s="15" class="on">15с</button><button data-s="30">30с</button><button data-s="0">пауза</button>
+    </span>
+    <span id="upd" class="mut"></span>
+  </div>
+</header>
+<main id="main"><div class="card"><div class="skel"></div><div class="skel" style="margin-top:8px;width:70%"></div></div></main>
+<nav>
+  <button class="tab on" data-t="ov"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8.4"/><path d="M12 3.6v2.2M12 18.2v2.2M3.6 12h2.2M18.2 12h2.2"/></svg>Обзор</button>
+  <button class="tab" data-t="nd"><svg viewBox="0 0 24 24"><circle cx="5.5" cy="6" r="2"/><circle cx="18.5" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7 7.4 10.7 16M17 7.4 13.3 16M7.5 6h9"/></svg>Узлы</button>
+  <button class="tab" data-t="dm"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4"/><path d="M3.6 12h16.8M12 3.6c2.6 2.3 3.9 5.1 3.9 8.4s-1.3 6.1-3.9 8.4c-2.6-2.3-3.9-5.1-3.9-8.4s1.3-6.1 3.9-8.4z"/></svg>Домены</button>
+  <button class="tab" data-t="hs"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4"/><path d="M12 7.2V12l3.2 2"/></svg>История</button>
+  <button class="tab" data-t="sy"><svg viewBox="0 0 24 24"><rect x="4.5" y="4.5" width="15" height="15" rx="4"/><circle cx="12" cy="12" r="3"/><path d="M12 4.5V7M12 17v2.5M4.5 12H7M17 12h2.5"/></svg>Система</button>
+</nav>
+<script>
+var KEY='__KEY__',ORIGIN='__ORIGIN__';
+var S={w:null,l:null,src:'none',tab:'ov',seg:'wifi',sec:15,h:null,busy:false};
+function $id(i){return document.getElementById(i)}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function fts(t){if(!t)return '—';var d=new Date(t);if(isNaN(d))return String(t);function p(n){return (n<10?'0':'')+n}return p(d.getDate())+'.'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes())}
+function ago(t){if(!t)return '—';var s=Math.round((Date.now()-new Date(t).getTime())/1000);if(s<0)s=0;if(s<90)return s+' с назад';var m=Math.round(s/60);if(m<90)return m+' мин назад';return Math.round(m/60)+' ч назад'}
+function modeRu(m){return m==='normal'?'Норма':(m==='whitelist'?'Whitelist РКН':(m==='block'?'Блокировка':(m||'?')))}
+function getRkn(){return (S.l&&S.l.rkn&&S.l.rkn.mode)?S.l.rkn:((S.w&&S.w.rkn)||{})}
+function jget(u,cb){var x=new XMLHttpRequest();x.open('GET',u,true);x.timeout=8000;x.onreadystatechange=function(){if(x.readyState===4){if(x.status>=200&&x.status<300){try{cb(null,JSON.parse(x.responseText))}catch(e){cb(e)}}else cb(new Error('http '+x.status))}};x.ontimeout=function(){cb(new Error('timeout'))};x.onerror=function(){cb(new Error('net'))};x.send()}
+function poll(){
+  jget('/local?t='+Date.now(),function(e,l){if(!e&&l)S.l=l;step()});
+  function step(){
+    jget(ORIGIN+'/dashboard?key='+KEY+'&t='+Date.now(),function(e,w){
+      if(!e&&w){S.w=w;S.src='live';try{localStorage.setItem('rh_w',JSON.stringify({ts:Date.now(),w:w}))}catch(x){}}
+      else{
+        if(S.l&&S.l.cache){S.w=S.l.cache;S.src='cache'}
+        else{try{var z=JSON.parse(localStorage.getItem('rh_w')||'');if(z&&z.w){S.w=z.w;S.src='ls'}}catch(x2){}}
+      }
+      $id('upd').textContent='обновлено '+fts(Date.now());
+      render();
+    });
+  }
+}
+function render(){
+  var d=$id('dot');d.className='dot '+(S.src==='live'?'live':(S.src==='cache'?'cache':(S.src==='ls'?'ls':'')));
+  $id('hkey').textContent=KEY;
+  var r=getRkn(),b=$id('banner');
+  if(r&&r.mode){b.className='banner show '+r.mode;b.textContent='Режим: '+modeRu(r.mode)+' · '+ago(r.ts)}else{b.className='banner'}
+  var f={ov:rOv,nd:rNd,dm:rDm,hs:rHs,sy:rSy}[S.tab];if(f)$id('main').innerHTML=f();
+}
+function card(t,inner){return '<div class="card">'+(t?'<h3>'+t+'</h3>':'')+inner+'</div>'}
+function kv(k,v){return '<div class="kv"><span class="mut">'+k+'</span><b>'+v+'</b></div>'}
+function rOv(){
+  var w=S.w||{},l=S.l||{},net=l.net||{},tr=w.traffic||{},r=getRkn();
+  var h='';
+  h+=card('Состояние',
+    kv('Режим сети',modeRu(r.mode)+' <span class="mut small">'+ago(r.ts)+'</span>')+
+    kv('Сеть устройства',esc(net.net||'—')+(net.ssid?' · '+esc(net.ssid):'')+(net.operator?' · '+esc(net.operator):''))+
+    kv('Источник данных',S.src==='live'?'Worker (live)':(S.src==='cache'?'кэш rh_dash':(S.src==='ls'?'localStorage':'нет'))));
+  h+=card('Подписка',
+    kv('Узлов',(w.sub_nodes!=null?w.sub_nodes:'—')+' <span class="mut small">обновл. '+(w.sub_age_min!=null?w.sub_age_min+' мин назад':'—')+'</span>')+
+    (tr.left_gb!=null?kv('Трафик',(Math.round(tr.used_gb*10)/10)+' / '+(Math.round(tr.total_gb*10)/10)+' ГБ · ост. '+(Math.round(tr.left_gb*10)/10)):'')+
+    (tr.expire?kv('Действует до',fts(tr.expire*1000)):''));
+  var ms=(w.metrics&&w.metrics[S.seg])||[];var top=ms.slice(0,3),t3='';
+  for(var i=0;i<top.length;i++){t3+='<div class="row">'+ring(top[i].score)+'<div class="grow"><div class="nm">'+esc(top[i].name)+'</div><div class="sub">'+top[i].down+' Мбит · '+top[i].rtt+' мс</div></div></div>'}
+  h+=card('Топ узлов ('+(S.seg==='wifi'?'Wi-Fi':'сотовая')+')',t3||'<div class="mut small">нет данных</div>');
+  var wl=(l.watch||[]),on=0;for(var j=0;j<wl.length;j++)if(wl[j].on)on++;
+  h+=card('Личный список',kv('Под наблюдением',wl.length)+kv('С обходом',on));
+  h+=card('Конфиг',kv('Версия',esc(w.conf_ver||'—'))+kv('Worker',esc(w.worker||'—')));
+  return h;
+}
+function ring(sc){
+  var col='var(--grey)',v=0;
+  if(typeof sc==='number'){v=Math.max(0,Math.min(100,sc));col=sc>=70?'var(--ok)':(sc>=40?'var(--warn)':'var(--bad)')}
+  var C=2*Math.PI*13,d=(C*v/100).toFixed(1);
+  return '<svg class="ring" width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="13" fill="none" stroke="var(--line)" stroke-width="3.4"/><circle cx="18" cy="18" r="13" fill="none" stroke="'+col+'" stroke-width="3.4" stroke-linecap="round" stroke-dasharray="'+d+' '+C.toFixed(1)+'" transform="rotate(-90 18 18)"/><text x="18" y="22" text-anchor="middle" font-size="11" fill="var(--ink)">'+(typeof sc==='number'?sc:'·')+'</text></svg>';
+}
+function rNd(){
+  var w=S.w||{},ms=(w.metrics&&w.metrics[S.seg])||[];
+  var h='<div class="card"><div class="seg" id="ndSeg"><button data-g="wifi" class="'+(S.seg==='wifi'?'on':'')+'">Wi-Fi</button><button data-g="cell" class="'+(S.seg==='cell'?'on':'')+'">Сотовая</button></div></div>';
+  var rows='';
+  for(var i=0;i<ms.length;i++){var n=ms[i];
+    rows+='<div class="row">'+ring(n.score)+'<div class="grow"><div class="nm">'+esc(n.name)+(n.voice?' ☎':'')+'</div><div class="sub">'+n.down+' Мбит · rtt '+n.rtt+' · jit '+n.jit+' · потери '+n.bl+'‰ · ок '+n.pct+'%</div></div></div>'}
+  h+=card('Узлы ('+ms.length+')',rows||'<div class="mut small">нет данных спидтеста</div>');
+  return h;
+}
+function chipFor(e){
+  if(!e||!e.last)return '<span class="chip na">не проверялся</span>';
+  var L=e.last,m=L.mode?(' · '+modeRu(L.mode)):'';
+  if(L.ok)return '<span class="chip ok">открылся'+m+' · '+ago(L.ts)+'</span>';
+  return '<span class="chip bad">не открылся'+m+' · '+ago(L.ts)+'</span>';
+}
+function rDm(){
+  var l=S.l||{},wl=l.watch||[],r=getRkn();
+  var h=card('Добавить домен','<div class="addl"><input class="inp" id="nd" placeholder="example.ru" autocapitalize="none" autocorrect="off"><button class="b pri" onclick="addD()">Добавить</button></div><div class="hint">Новый домен сразу получает обход (попадает в личный список RH-RU).</div>');
+  var rows='';
+  for(var i=0;i<wl.length;i++){var e=wl[i],d=esc(e.d);
+    rows+='<div class="row"><div class="grow"><div class="nm">'+d+'</div><div class="sub">'+chipFor(e)+'</div></div>'+
+      '<button class="b" onclick="chk(\''+d+'\')">Проверить</button>'+
+      '<label class="sw"><input type="checkbox" '+(e.on?'checked':'')+' onchange="tg(\''+d+'\')"><i></i></label>'+
+      '<button class="b" onclick="delD(\''+d+'\')">✕</button></div>'}
+  h+=card('Список наблюдения',(rows||'<div class="mut small">пусто</div>')+
+    '<div class="btns"><button class="b" onclick="chkAll()">Проверить все</button><button class="b" onclick="syncL()">Синхронизировать</button><button class="b" onclick="applyLoon()">Применить в Loon</button></div>'+
+    '<div class="hint">Тумблер = «через обход». Проверка идёт по правилам конфига: в норме домен с обходом-ВКЛ идёт DIRECT (ответ = «ожил?»); под whitelist — через обход. Режим на момент проверки указан в результате.'+(r.mode==='whitelist'?' <b>Сейчас whitelist: вывод «ожил» недостоверен.</b>':'')+'</div>');
+  h+='<div id="dmlog" class="mut small"></div>';
+  return h;
+}
+function rHs(){
+  var l=S.l||{},w=S.w||{};
+  var hist=(l.rkn&&l.rkn.hist)||w.rkn_hist||[],hh='';
+  for(var i=0;i<hist.length;i++){hh+='<div class="ev">'+modeRu(hist[i].mode)+'<div class="t">'+fts(hist[i].ts)+'</div></div>'}
+  var rl=l.runlog||[],rr='';
+  for(var j=rl.length-1;j>=0;j--){var ev=rl[j],tx='';
+    if(ev.s==='net')tx='Сеть: '+esc(ev.n||'?')+(ev.w?' · WHITELIST':'')+(ev.o?' · '+esc(ev.o):'');
+    else tx=esc(ev.s||'событие')+(ev.note?': '+esc(ev.note):'');
+    if(ev.gap)tx+=' <span class="gap">· разрыв '+ev.gap+' мин</span>';
+    rr+='<div class="ev">'+tx+'<div class="t">'+fts(ev.t||ev.ts)+'</div></div>'}
+  return card('Смены режима РКН',hh||'<div class="mut small">смен не зафиксировано</div>')+
+         card('Журнал событий (локальный)',rr||'<div class="mut small">журнал пуст — скрипты ещё не писали</div>');
+}
+function rSy(){
+  var w=S.w||{},l=S.l||{};
+  var sc=[
+    ['RH-Speed','cron 20 мин','спидтест: метрики узлов (down/rtt/jit/потери), пинг-свип'],
+    ['RH-Net','смена сети','флип групп -W/-C, детект сети, журнал'],
+    ['RH-RKN','cron 10 мин','режим сети (норма/whitelist/блок), история смен'],
+    ['RH-DashCache','cron 15 мин','кэш /dashboard в rh_dash (фолбэк под whitelist)'],
+    ['RH-Dash','по запросу','этот дашборд и команды списка'],
+    ['RH-Viewer','вручную','таблица узлов в лог Loon']];
+  var rows='';for(var i=0;i<sc.length;i++){rows+='<div class="row"><div class="grow"><div class="nm">'+sc[i][0]+' <span class="mut small">'+sc[i][1]+'</span></div><div class="sub">'+sc[i][2]+'</div></div></div>'}
+  return card('Инфраструктура',
+      kv('Worker',esc(w.worker||'—'))+
+      kv('Конфиг',esc(w.conf_ver||'—'))+
+      kv('Подписка',(w.sub_age_min!=null?w.sub_age_min+' мин назад':'—'))+
+      kv('Узлы (порядок)',w.last_nodes_ts?ago(w.last_nodes_ts):'—')+
+      kv('Кэш дашборда',l.cache_ts?ago(l.cache_ts):'—')+
+      kv('Дашборд',esc((l.ver||'')+'')))+
+    card('Скрипты',rows)+
+    card('Loon','<div class="btns"><a class="lk b" href="loon://LogLists">Логи Loon</a><a class="lk b" href="loon://requestLists">Запросы Loon</a></div>');
+}
+function dmlog(t){var e=$id('dmlog');if(e)e.textContent=t}
+function act(u,cb){if(S.busy)return;S.busy=true;jget(u,function(e,r){S.busy=false;cb(e,r)})}
+function addD(){var v=($id('nd').value||'').trim().toLowerCase();if(!v)return;
+  act('/add?d='+encodeURIComponent(v),function(e,r){
+    if(e||!r||!r.ok){dmlog('Ошибка добавления'+(r&&r.err?': '+r.err:''));return}
+    dmlog(r.synced?'Добавлен и отправлен на Worker.':'Добавлен локально; Worker недоступен — нажми «Синхронизировать».');
+    poll()})}
+function tg(d){act('/toggle?d='+encodeURIComponent(d),function(e,r){dmlog(e||!r||!r.ok?'Ошибка переключения':((r.on?'Обход ВКЛ':'Обход ВЫКЛ')+(r.synced?', Worker обновлён.':', Worker недоступен — «Синхронизировать».')));poll()})}
+function delD(d){act('/del?d='+encodeURIComponent(d),function(e,r){dmlog(e||!r||!r.ok?'Ошибка удаления':'Удалён.');poll()})}
+function chk(d){dmlog('Проверяю '+d+'…');act('/check?d='+encodeURIComponent(d),function(e,r){
+  if(e||!r){dmlog('Проверка не выполнилась');return}
+  dmlog(d+': '+(r.ok?'открылся':'не открылся')+' ('+(r.status||'—')+', '+r.ms+' мс, режим '+modeRu(r.mode)+')');poll()})}
+function chkAll(){var l=S.l||{},wl=l.watch||[],i=0;
+  function next(){if(i>=wl.length){dmlog('Проверка всех завершена.');poll();return}
+    var d=wl[i].d;i++;dmlog('Проверяю '+d+' ('+i+'/'+wl.length+')…');
+    jget('/check?d='+encodeURIComponent(d),function(){setTimeout(next,250)})}
+  next()}
+function syncL(){dmlog('Синхронизирую…');act('/sync',function(e,r){
+  if(e||!r||!r.ok){dmlog('Синхронизация не удалась');return}
+  dmlog('Синхронизировано: +'+r.added+' / −'+r.removed+' (в KV: '+r.kv+')');poll()})}
+function applyLoon(){location.href='https://nsloon.com/openloon/update?sub=all'}
+document.addEventListener('click',function(ev){
+  var t=ev.target.closest('.tab');if(t){var bs=document.querySelectorAll('.tab');for(var i=0;i<bs.length;i++)bs[i].classList.remove('on');t.classList.add('on');S.tab=t.getAttribute('data-t');render();return}
+  var g=ev.target.closest('#ndSeg button,#liveSeg button');if(!g)return;
+  if(g.parentNode.id==='ndSeg'){S.seg=g.getAttribute('data-g');render()}
+  else{var bb=g.parentNode.querySelectorAll('button');for(var k=0;k<bb.length;k++)bb[k].classList.remove('on');g.classList.add('on');S.sec=parseInt(g.getAttribute('data-s'),10);restart()}
 });
+function restart(){if(S.h){clearInterval(S.h);S.h=null}if(S.sec>0)S.h=setInterval(function(){if(!document.hidden)poll()},S.sec*1000)}
+document.addEventListener('visibilitychange',function(){if(!document.hidden)poll()});
+if(location.hash==='#dm')S.tab='dm';if(location.hash==='#hs')S.tab='hs';
+poll();restart();
+</script>
+</body>
+</html>`;
+
+// =============================================================
+// Маршруты диспетчера
+// =============================================================
+function routeHtml() {
+  var body = HTML.split('__KEY__').join(KEY).split('__ORIGIN__').join(ORIGIN);
+  resp(200, 'text/html; charset=utf-8', body);
+}
+
+function routeLocal() {
+  var rkn = rj(K_RKN, {}) || {};
+  var cache = rj(K_DASH, null);
+  var rl = rj(K_RUNLOG, []);
+  if (!Array.isArray(rl)) rl = [];
+  json({
+    ok: true, ver: VERSION, ts: Date.now(), key: KEY, origin: ORIGIN,
+    watch: watchLoad(),
+    rkn: { mode: rkn.mode, ts: rkn.ts, hist: rkn.hist || [] },
+    net: rj(K_NET, null),
+    runlog: rl.slice(-60),
+    cache: cache && cache.data ? cache.data : cache,
+    cache_ts: cache && cache.ts ? cache.ts : null
+  });
+}
+
+function routeAdd() {
+  var d = q('d').toLowerCase();
+  if (!DOMAIN_RE.test(d) || d.length > 80) { jerr('невалидный домен'); return; }
+  var w = watchLoad();
+  for (var i = 0; i < w.length; i++) if (w[i].d === d) { jerr('уже в списке'); return; }
+  w.push({ d: d, on: true, ts: Date.now() });
+  watchSave(w);
+  wPost('/addrule', { key: KEY, domain: d }, function (ok) { json({ ok: true, synced: ok }); });
+}
+
+function routeDel() {
+  var d = q('d').toLowerCase();
+  var w = watchLoad(), wasOn = false, nw = [];
+  for (var i = 0; i < w.length; i++) { if (w[i].d === d) { wasOn = !!w[i].on; } else nw.push(w[i]); }
+  if (nw.length === w.length) { jerr('нет в списке'); return; }
+  watchSave(nw);
+  if (wasOn) wPost('/delrule', { key: KEY, domain: d }, function (ok) { json({ ok: true, synced: ok }); });
+  else json({ ok: true, synced: true });
+}
+
+function routeToggle() {
+  var d = q('d').toLowerCase();
+  var w = watchLoad(), e = null;
+  for (var i = 0; i < w.length; i++) if (w[i].d === d) e = w[i];
+  if (!e) { jerr('нет в списке'); return; }
+  e.on = !e.on;
+  watchSave(w);
+  wPost(e.on ? '/addrule' : '/delrule', { key: KEY, domain: d }, function (ok) { json({ ok: true, on: e.on, synced: ok }); });
+}
+
+function routeSync() {
+  wGet('/mylist?key=' + KEY, function (ok, body) {
+    if (!ok) { jerr('Worker недоступен'); return; }
+    var remote = {};
+    var lines = String(body).split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      var m = lines[i].match(/^DOMAIN-SUFFIX,([a-z0-9.-]+),/i) || lines[i].match(/^DOMAIN-SUFFIX,([a-z0-9.-]+)\s*$/i);
+      if (m) remote[m[1].toLowerCase()] = true;
+    }
+    var w = watchLoad(), localOn = {}, i2;
+    for (i2 = 0; i2 < w.length; i2++) if (w[i2].on) localOn[w[i2].d] = true;
+    var toAdd = [], toDel = [];
+    for (var d1 in localOn) if (!remote[d1]) toAdd.push(d1);
+    for (var d2 in remote) if (!localOn[d2]) toDel.push(d2);
+    var added = 0, removed = 0;
+    function doAdd(k) {
+      if (k >= toAdd.length) { doDel(0); return; }
+      wPost('/addrule', { key: KEY, domain: toAdd[k] }, function (ok2) { if (ok2) added++; doAdd(k + 1); });
+    }
+    function doDel(k) {
+      if (k >= toDel.length) {
+        var kvN = 0; for (var x in remote) kvN++;
+        json({ ok: true, added: added, removed: removed, kv: kvN - removed + added });
+        return;
+      }
+      wPost('/delrule', { key: KEY, domain: toDel[k] }, function (ok3) { if (ok3) removed++; doDel(k + 1); });
+    }
+    doAdd(0);
+  });
+}
+
+function routeCheck() {
+  var d = q('d').toLowerCase();
+  if (!DOMAIN_RE.test(d)) { jerr('невалидный домен'); return; }
+  var rkn = rj(K_RKN, {}) || {};
+  var t0 = Date.now();
+  function fin(okFlag, status) {
+    var ms = Date.now() - t0;
+    var w = watchLoad();
+    for (var i = 0; i < w.length; i++) if (w[i].d === d) {
+      w[i].last = { ok: okFlag, status: status || 0, ms: ms, ts: Date.now(), mode: rkn.mode || '?' };
+      watchSave(w);
+      break;
+    }
+    json({ ok: okFlag, status: status || 0, ms: ms, mode: rkn.mode || '?' });
+  }
+  $httpClient.get({ url: 'https://' + d + '/', timeout: 4000 }, function (e1, r1) {
+    if (!e1 && r1 && r1.status) { fin(r1.status < 500, r1.status); return; }
+    $httpClient.get({ url: 'http://' + d + '/', timeout: 3000 }, function (e2, r2) {
+      if (!e2 && r2 && r2.status) { fin(r2.status < 500, r2.status); return; }
+      fin(false, 0);
+    });
+  });
+}
+
+// --- диспетчеризация ---
+try {
+  if (PATH === '/' || PATH === '/index.html') routeHtml();
+  else if (PATH === '/local') routeLocal();
+  else if (PATH === '/add') routeAdd();
+  else if (PATH === '/del') routeDel();
+  else if (PATH === '/toggle') routeToggle();
+  else if (PATH === '/sync') routeSync();
+  else if (PATH === '/check') routeCheck();
+  else resp(404, 'application/json; charset=utf-8', JSON.stringify({ ok: false, err: 'нет маршрута', path: PATH }));
+} catch (eX) {
+  resp(200, 'application/json; charset=utf-8', JSON.stringify({ ok: false, err: 'краш: ' + ((eX && eX.message) || eX) }));
+}
