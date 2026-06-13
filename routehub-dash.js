@@ -1,5 +1,5 @@
 // =============================================================
-// routehub-dash.js v0.4.6 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.4.7 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
@@ -7,21 +7,24 @@
 //   (локальные + Worker /dashboard) и вшивает как __BOOT__. Страница НЕ делает XHR.
 //   Мутации (add/del/toggle/check/sync) ОТДАЮТ свежий HTML.
 //
-// v0.4.6 (полевые фиксы k1):
-//   * КНОПКИ ЧЕРЕЗ ДЕЛЕГИРОВАНИЕ, не onclick. Инлайновый onclick на
-//     странице внутри Loon не срабатывал (кнопка не кликабельна).
-//     Теперь data-act="loon" ловит общий слушатель (как у вкладок — он работает).
-//   * СИНХРОНИЗАЦИЯ — явный отчёт: локально N, на сервере M, +X −Y.
-//     Если старые домены УЖЕ на сервере — добавлять нечего (это норма,
-//     отчёт это покажет); видимость в Loon — вопрос update-interval/кэша.
-//   * loonUpdate() вызывается из слушателя; схема loon://update?sub=all
-//     НЕ подтверждена — проверяется на устройстве.
+// v0.4.7 (полевой фикс кнопки Loon):
+//   * Кнопка «Обновить Loon» переведена с <button>+JS-переход на ССЫЛКУ
+//     <a href="loon://update?sub=all">. Причина: window.location.href со схемой
+//     loon:// в Loon-странице НЕ срабатывал (кнопка «не нажималась»), тогда как
+//     <a href> с внешней ссылкой (nsloon) ОТКРЫВАЛСЯ. Проверяем, подхватит ли
+//     Safari кастомную СХЕМУ через href. НЕ подтверждено — тест на устройстве.
+//     Если опять не сработает — убрать совсем (список применяется сам за минуту,
+//     update-interval=60). Делегированная ветка data-act='loon' убрана.
+//
+// v0.4.6: синхронизация даёт явный отчёт (локально N, на сервере M, +X −Y).
+//   ПОДТВЕРЖДЕНО: добавление/удаление/синхронизация работают; старые домены
+//   уже на сервере (whoosh.bike), синхронизировать нечего — это норма.
 //
 // T6: node работает для имён УЗЛОВ (спидтест достоверен), не для групп.
 // Засев rh_watch: ТОЛЬКО whoosh.bike (обход ВКЛ).
 // =============================================================
 
-var VERSION = 'dash v0.4.6';
+var VERSION = 'dash v0.4.7';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -405,7 +408,7 @@ function rDm(){
         '<a class="b dz" href="http://rh.box/del?d='+de+'">Удалить</a>'+
       '</div></div>'}
   h+=card('Список наблюдения ('+wl.length+')',(rows||'<div class="mut small">пусто</div>')+
-    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a><button class="b" data-act="loon">Обновить Loon</button></div>'+
+    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a><a class="b" href="loon://update?sub=all">Обновить Loon</a></div>'+
     '<div class="hint"><b>«Синхронизировать»</b> дотягивает на сервер старые домены из списка (передобавлять не нужно). <b>«Обновить Loon»</b> просит Loon сразу подтянуть правила (иначе применится само за ~1 мин). <b>Как пользоваться:</b> «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН). «Проверить» открывает домен по текущему маршруту. Чтобы понять, нужен ли обход: выключи обход и проверь ПОД whitelist — откроется без обхода → можно убрать, нет → обход нужен.'+
     (r.mode==='whitelist'?' <b style="color:var(--warn)">Сейчас whitelist.</b>':(r.mode==='normal'?' <b>Сейчас норма — для проверки обхода дождись whitelist.</b>':''))+'</div>');
   return h;
@@ -456,7 +459,7 @@ function rSy(){
       kv('Порядок узлов',W.last_nodes_ts?ago(W.last_nodes_ts):'—')+
       kv('Кэш дашборда',L.cache_ts?ago(L.cache_ts):'—'))+
     card('Фоновые скрипты',rows)+
-    card('Loon','<div class="btns"><button class="b" data-act="loon">Обновить ресурсы Loon</button></div><div class="hint" style="margin-top:8px">Логи и список запросов — внутри приложения Loon (вкладка с журналом).</div>');
+    card('Loon','<div class="btns"><a class="b" href="loon://update?sub=all">Обновить ресурсы Loon</a></div><div class="hint" style="margin-top:8px">Логи и список запросов — внутри приложения Loon (вкладка с журналом).</div>');
 }
 function render(){
   var d=$id('dot');d.className='dot '+(SRC==='live'?'live':(SRC==='cache'?'cache':''));
@@ -473,11 +476,9 @@ function render(){
 function setTab(t){var bs=document.querySelectorAll('.tab');for(var i=0;i<bs.length;i++)bs[i].classList.remove('on');
   for(var j=0;j<bs.length;j++)if(bs[j].getAttribute('data-t')===t)bs[j].classList.add('on');
   S.tab=t;try{localStorage.setItem('rh_tab',t)}catch(e){};render()}
-function loonUpdate(){try{localStorage.setItem('rh_tab',S.tab)}catch(e){};window.location.href='loon://update?sub=all'}
 document.addEventListener('click',function(ev){
   var t=ev.target.closest('.tab');if(t){setTab(t.getAttribute('data-t'));return}
   var g=ev.target.closest('.segb');if(g){S.seg=g.getAttribute('data-g');try{localStorage.setItem('rh_seg',S.seg)}catch(e){};render();return}
-  var act=ev.target.closest('[data-act]');if(act){var a=act.getAttribute('data-act');if(a==='loon')loonUpdate();return}
 });
 function saveScroll(){try{localStorage.setItem('rh_scroll',String(window.scrollY||window.pageYOffset||0))}catch(e){}}
 window.addEventListener('scroll',function(){saveScroll()});
