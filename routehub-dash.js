@@ -1,32 +1,40 @@
 // =============================================================
-// routehub-dash.js v0.2.1 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.3.0 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
-// МАРШРУТЫ (все GET):
-//   /            -> HTML-дашборд (вшит ниже, 5 вкладок).
-//   /local       -> JSON локального состояния: rh_watch, rh_rkn, rh_net_state,
-//                   rh_runlog (последние 60), кэш rh_dash (фолбэк страницы).
-//   /add?d=      -> добавить домен в список наблюдения (обход ВКЛ) + Worker /addrule.
-//   /del?d=      -> удалить домен; если обход был ВКЛ — Worker /delrule.
-//   /toggle?d=   -> переключить тумблер обхода; ВКЛ->addrule, ВЫКЛ->delrule.
-//   /sync        -> сверка: Worker /mylist vs локальные ВКЛ; досылка/удаление расхождений.
-//   /check?d=    -> проверка ОДНОГО домена fetch-ом ПО ПРАВИЛАМ конфига (T1:
-//                   node игнорируется, поэтому канал проверки определяют правила:
-//                   обход-ВКЛ домен в норме идёт RH-RU->DIRECT (= «ожил?»),
-//                   под whitelist -> обход (= «обход спасает?»); результат
-//                   подписывается режимом на момент проверки).
+// ПОЧЕМУ ПЕРЕПИСАНО (полевой тест k1 2026-06-13):
+//   v0.2.x грузился бесконечно (скелетон, точка серая, кнопки мертвы).
+//   Причина: страница на http://rh.box делала XHR на /local и /dashboard.
+//     - /dashboard -> https://...workers.dev = MIXED CONTENT (https со
+//       страницы http) -> Safari БЛОКИРУЕТ запрос наглухо.
+//     - XHR-подзапросы страницы на /local Loon-перехват http-request НЕ
+//       ловит надёжно (ловит навигацию верхнего уровня, не fetch/XHR).
+//   РЕШЕНИЕ — BOOTSTRAP: диспетчер при отдаче HTML САМ собирает все данные
+//     (локальные из $persistentStore + Worker /dashboard через $httpClient
+//     В ТУННЕЛЕ — не mixed-content) и вшивает в страницу как __BOOT__.
+//     Страница рисует МГНОВЕННО из BOOT, без единого XHR.
+//   МУТАЦИИ (add/del/toggle/check) — через НАВИГАЦИЮ верхнего уровня
+//     (location.href = http://rh.box/add?d=...), а не XHR: навигация
+//     перехватывается надёжно. Диспетчер выполняет действие и редиректит
+//     назад на http://rh.box/#dm (303). Кнопки снова рабочие.
+//   Обновление «вживую»: тап по сегменту Live перезагружает страницу
+//     (location.reload) — bootstrap соберёт свежие данные. Авто-таймер
+//     тоже делает reload (не XHR).
 //
-// v0.2.1: фикс — страница читает w.nodes (не w.metrics; Worker /dashboard
-//   отдаёт nodes:{wifi,cell}); apple-touch-icon -> Worker /apple-touch-icon.png.
+// МАРШРУТЫ:
+//   GET /            -> HTML со вшитым __BOOT__ (всё состояние внутри).
+//   GET /add?d=      -> добавить домен (обход ВКЛ) + Worker /addrule -> 303 /#dm
+//   GET /del?d=      -> удалить домен (+ /delrule если был ВКЛ)      -> 303 /#dm
+//   GET /toggle?d=   -> переключить обход (+ add/delrule)            -> 303 /#dm
+//   GET /check?d=    -> проверить домен fetch-ом по правилам конфига -> 303 /#dm
+//   GET /sync        -> сверка Worker /mylist vs локальные ВКЛ       -> 303 /#dm
 //
-// ИСТОЧНИК ПРАВДЫ списка — store rh_watch; KV mylist:<kN> — зеркало (только ВКЛ).
-// Мутации списка — ТОЛЬКО через этот диспетчер. Чтение /dashboard — страница
-// делает напрямую с Worker (CORS открыт с worker v1.7.0).
-// Засев rh_watch (решение Дианы 2026-06-12): ТОЛЬКО whoosh.bike (обход ВКЛ).
+// T1/T6: проверка доменов — обычный fetch (по правилам конфига), node НЕ
+//   используется. Засев rh_watch: ТОЛЬКО whoosh.bike (обход ВКЛ).
 // =============================================================
 
-var VERSION = 'dash v0.2.1';
+var VERSION = 'dash v0.3.0';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -50,18 +58,21 @@ function watchLoad() {
 }
 function watchSave(w) { wj(K_WATCH, w); }
 
-function resp(status, type, body) {
-  $done({ response: { status: status, headers: { 'Content-Type': type, 'Cache-Control': 'no-store' }, body: body } });
-}
-function json(o) { resp(200, 'application/json; charset=utf-8', JSON.stringify(o)); }
-function jerr(msg) { resp(200, 'application/json; charset=utf-8', JSON.stringify({ ok: false, err: msg })); }
-
 function wPost(path, body, cb) {
   $httpClient.post({ url: ORIGIN + path, timeout: 5000, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
     function (e, r, b) { cb(!e && r && r.status >= 200 && r.status < 300, b || ''); });
 }
 function wGet(path, cb) {
-  $httpClient.get({ url: ORIGIN + path, timeout: 5000 }, function (e, r, b) { cb(!e && r && r.status >= 200 && r.status < 300, b || ''); });
+  $httpClient.get({ url: ORIGIN + path, timeout: 6000 }, function (e, r, b) { cb(!e && r && r.status >= 200 && r.status < 300, b || ''); });
+}
+
+// HTML-ответ
+function htmlResp(body) {
+  $done({ response: { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, body: body } });
+}
+// редирект назад на дашборд (после мутации)
+function redirect(hash) {
+  $done({ response: { status: 303, headers: { 'Location': 'http://rh.box/' + (hash || ''), 'Cache-Control': 'no-store' }, body: '' } });
 }
 
 // --- разбор URL ---
@@ -79,8 +90,112 @@ function q(name) {
 }
 
 // =============================================================
-// HTML (вшит; плейсхолдеры __KEY__/__ORIGIN__ заменяются при выдаче).
-// В JS страницы НЕТ обратных кавычек и "${" — текст безопасен в шаблоне.
+// Сборка BOOT — всё состояние, вшиваемое в страницу.
+// local: watch, rkn, net, runlog, cache(rh_dash). remote: Worker /dashboard.
+// =============================================================
+function buildLocal() {
+  var rkn = rj(K_RKN, {}) || {};
+  var cache = rj(K_DASH, null);
+  var rl = rj(K_RUNLOG, []);
+  if (!Array.isArray(rl)) rl = [];
+  return {
+    ver: VERSION, ts: Date.now(), key: KEY, origin: ORIGIN,
+    watch: watchLoad(),
+    rkn: { mode: rkn.mode, ts: rkn.ts, hist: rkn.hist || [] },
+    net: rj(K_NET, null),
+    runlog: rl.slice(-60),
+    cache: cache && cache.data ? cache.data : cache,
+    cache_ts: cache && cache.ts ? cache.ts : null
+  };
+}
+
+function serveDashboard() {
+  var local = buildLocal();
+  // Worker /dashboard — серверным запросом В ТУННЕЛЕ (не mixed-content)
+  wGet('/dashboard?key=' + KEY, function (ok, body) {
+    var remote = null, src = 'none';
+    if (ok) { try { remote = JSON.parse(body); src = 'live'; } catch (e) { remote = null; } }
+    if (!remote && local.cache) { remote = local.cache; src = 'cache'; }
+    var boot = { local: local, remote: remote, src: src };
+    var json = JSON.stringify(boot).split('<').join('\\u003c'); // безопасно в <script>
+    var body2 = HTML.split('__BOOT__').join(json).split('__KEY__').join(KEY);
+    htmlResp(body2);
+  });
+}
+
+// =============================================================
+// Мутации (через навигацию -> 303 назад)
+// =============================================================
+function doAdd() {
+  var d = q('d').toLowerCase();
+  if (!DOMAIN_RE.test(d) || d.length > 80) { redirect('#dm'); return; }
+  var w = watchLoad(), exists = false;
+  for (var i = 0; i < w.length; i++) if (w[i].d === d) exists = true;
+  if (!exists) { w.push({ d: d, on: true, ts: Date.now() }); watchSave(w); }
+  wPost('/addrule', { key: KEY, domain: d }, function () { redirect('#dm'); });
+}
+function doDel() {
+  var d = q('d').toLowerCase();
+  var w = watchLoad(), wasOn = false, nw = [];
+  for (var i = 0; i < w.length; i++) { if (w[i].d === d) wasOn = !!w[i].on; else nw.push(w[i]); }
+  watchSave(nw);
+  if (wasOn) wPost('/delrule', { key: KEY, domain: d }, function () { redirect('#dm'); });
+  else redirect('#dm');
+}
+function doToggle() {
+  var d = q('d').toLowerCase();
+  var w = watchLoad(), e = null;
+  for (var i = 0; i < w.length; i++) if (w[i].d === d) e = w[i];
+  if (!e) { redirect('#dm'); return; }
+  e.on = !e.on; watchSave(w);
+  wPost(e.on ? '/addrule' : '/delrule', { key: KEY, domain: d }, function () { redirect('#dm'); });
+}
+function doCheck() {
+  var d = q('d').toLowerCase();
+  if (!DOMAIN_RE.test(d)) { redirect('#dm'); return; }
+  var rkn = rj(K_RKN, {}) || {};
+  var t0 = Date.now();
+  function fin(okFlag, status) {
+    var ms = Date.now() - t0, w = watchLoad();
+    for (var i = 0; i < w.length; i++) if (w[i].d === d) { w[i].last = { ok: okFlag, status: status || 0, ms: ms, ts: Date.now(), mode: rkn.mode || '?' }; watchSave(w); break; }
+    redirect('#dm');
+  }
+  $httpClient.get({ url: 'https://' + d + '/', timeout: 4000 }, function (e1, r1) {
+    if (!e1 && r1 && r1.status) { fin(r1.status < 500, r1.status); return; }
+    $httpClient.get({ url: 'http://' + d + '/', timeout: 3000 }, function (e2, r2) {
+      if (!e2 && r2 && r2.status) { fin(r2.status < 500, r2.status); return; }
+      fin(false, 0);
+    });
+  });
+}
+function doSync() {
+  wGet('/mylist?key=' + KEY, function (ok, body) {
+    if (!ok) { redirect('#dm'); return; }
+    var remote = {}, lines = String(body).split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      var m = lines[i].match(/^DOMAIN-SUFFIX,([a-z0-9.-]+)/i);
+      if (m) remote[m[1].toLowerCase()] = true;
+    }
+    var w = watchLoad(), localOn = {};
+    for (var i2 = 0; i2 < w.length; i2++) if (w[i2].on) localOn[w[i2].d] = true;
+    var toAdd = [], toDel = [];
+    for (var d1 in localOn) if (!remote[d1]) toAdd.push(d1);
+    for (var d2 in remote) if (!localOn[d2]) toDel.push(d2);
+    function doA(k) {
+      if (k >= toAdd.length) { doD(0); return; }
+      wPost('/addrule', { key: KEY, domain: toAdd[k] }, function () { doA(k + 1); });
+    }
+    function doD(k) {
+      if (k >= toDel.length) { redirect('#dm'); return; }
+      wPost('/delrule', { key: KEY, domain: toDel[k] }, function () { doD(k + 1); });
+    }
+    doA(0);
+  });
+}
+
+// =============================================================
+// HTML (вшивается __BOOT__ = всё состояние, __KEY__ = ключ).
+// Без обратных кавычек и "${" внутри script страницы.
 // =============================================================
 var HTML = `<!DOCTYPE html>
 <html lang="ru">
@@ -126,25 +241,20 @@ main{padding:4px 16px}
 .chip.ok{background:rgba(31,157,107,.14);color:var(--ok)}
 .chip.bad{background:rgba(192,57,43,.14);color:var(--bad)}
 .chip.na{background:rgba(154,167,161,.18);color:var(--mut)}
-button.b{border:1px solid var(--line);background:var(--card);color:var(--acc);border-radius:10px;padding:7px 12px;font-size:14px}
-button.b:active,.tab:active{transform:scale(.98)}
-button.b.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+a.b,button.b{display:inline-block;border:1px solid var(--line);background:var(--card);color:var(--acc);border-radius:10px;padding:7px 12px;font-size:14px;text-decoration:none}
+a.b:active,button.b:active,.tab:active{transform:scale(.98)}
+a.b.pri{background:var(--acc);border-color:var(--acc);color:#fff}
 .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 input.inp{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:8px 10px;font-size:15px;min-width:0}
 .addl{display:flex;gap:8px}
-.sw{position:relative;width:46px;height:28px;flex:none}
-.sw input{display:none}
-.sw i{position:absolute;inset:0;border-radius:99px;background:var(--line);transition:.15s}
-.sw i:after{content:'';position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
-.sw input:checked+i{background:var(--ok)}
-.sw input:checked+i:after{left:21px}
+.sw{display:inline-block;font-size:12px;padding:4px 9px;border-radius:99px;border:1px solid var(--line);text-decoration:none}
+.sw.on{background:rgba(31,157,107,.16);color:var(--ok);border-color:transparent}
+.sw.off{background:rgba(154,167,161,.16);color:var(--mut)}
 .ring{flex:none}
 nav{position:fixed;left:0;right:0;bottom:0;background:var(--tabbg);backdrop-filter:blur(14px);border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
 .tab{flex:1;border:0;background:transparent;color:var(--mut);font-size:10px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0}
 .tab.on{color:var(--acc)}
 .tab svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
-.skel{height:14px;border-radius:7px;background:linear-gradient(90deg,var(--line),var(--card),var(--line));background-size:200% 100%;animation:sk 1.1s infinite}
-@keyframes sk{0%{background-position:0 0}100%{background-position:-200% 0}}
 .hint{font-size:12px;color:var(--mut);margin-top:6px}
 .ev{padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
 .ev:last-child{border-bottom:0}
@@ -158,14 +268,14 @@ a.lk{color:var(--acc);text-decoration:none}
   <h1><span class="dot" id="dot"></span> RouteHub <span class="mut small" id="hkey"></span></h1>
   <div class="banner" id="banner"></div>
   <div class="live">
-    Live:
+    Обновить:
     <span class="seg" id="liveSeg">
-      <button data-s="10">10с</button><button data-s="15" class="on">15с</button><button data-s="30">30с</button><button data-s="0">пауза</button>
+      <button data-s="0" class="on">сейчас</button><button data-s="15">15с</button><button data-s="30">30с</button>
     </span>
     <span id="upd" class="mut"></span>
   </div>
 </header>
-<main id="main"><div class="card"><div class="skel"></div><div class="skel" style="margin-top:8px;width:70%"></div></div></main>
+<main id="main"></main>
 <nav>
   <button class="tab on" data-t="ov"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8.4"/><path d="M12 3.6v2.2M12 18.2v2.2M3.6 12h2.2M18.2 12h2.2"/></svg>Обзор</button>
   <button class="tab" data-t="nd"><svg viewBox="0 0 24 24"><circle cx="5.5" cy="6" r="2"/><circle cx="18.5" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7 7.4 10.7 16M17 7.4 13.3 16M7.5 6h9"/></svg>Узлы</button>
@@ -174,65 +284,45 @@ a.lk{color:var(--acc);text-decoration:none}
   <button class="tab" data-t="sy"><svg viewBox="0 0 24 24"><rect x="4.5" y="4.5" width="15" height="15" rx="4"/><circle cx="12" cy="12" r="3"/><path d="M12 4.5V7M12 17v2.5M4.5 12H7M17 12h2.5"/></svg>Система</button>
 </nav>
 <script>
-var KEY='__KEY__',ORIGIN='__ORIGIN__';
-var S={w:null,l:null,src:'none',tab:'ov',seg:'wifi',sec:15,h:null,busy:false};
+var BOOT=__BOOT__;
+var KEY='__KEY__';
+var L=BOOT.local||{},W=BOOT.remote||{},SRC=BOOT.src||'none';
+var S={tab:'ov',seg:'wifi',h:null};
 function $id(i){return document.getElementById(i)}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function fts(t){if(!t)return '—';var d=new Date(t);if(isNaN(d))return String(t);function p(n){return (n<10?'0':'')+n}return p(d.getDate())+'.'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes())}
 function ago(t){if(!t)return '—';var s=Math.round((Date.now()-new Date(t).getTime())/1000);if(s<0)s=0;if(s<90)return s+' с назад';var m=Math.round(s/60);if(m<90)return m+' мин назад';return Math.round(m/60)+' ч назад'}
 function modeRu(m){return m==='normal'?'Норма':(m==='whitelist'?'Whitelist РКН':(m==='block'?'Блокировка':(m||'?')))}
-function getRkn(){return (S.l&&S.l.rkn&&S.l.rkn.mode)?S.l.rkn:((S.w&&S.w.rkn)||{})}
-function jget(u,cb){var x=new XMLHttpRequest();x.open('GET',u,true);x.timeout=8000;x.onreadystatechange=function(){if(x.readyState===4){if(x.status>=200&&x.status<300){try{cb(null,JSON.parse(x.responseText))}catch(e){cb(e)}}else cb(new Error('http '+x.status))}};x.ontimeout=function(){cb(new Error('timeout'))};x.onerror=function(){cb(new Error('net'))};x.send()}
-function poll(){
-  jget('/local?t='+Date.now(),function(e,l){if(!e&&l)S.l=l;step()});
-  function step(){
-    jget(ORIGIN+'/dashboard?key='+KEY+'&t='+Date.now(),function(e,w){
-      if(!e&&w){S.w=w;S.src='live';try{localStorage.setItem('rh_w',JSON.stringify({ts:Date.now(),w:w}))}catch(x){}}
-      else{
-        if(S.l&&S.l.cache){S.w=S.l.cache;S.src='cache'}
-        else{try{var z=JSON.parse(localStorage.getItem('rh_w')||'');if(z&&z.w){S.w=z.w;S.src='ls'}}catch(x2){}}
-      }
-      $id('upd').textContent='обновлено '+fts(Date.now());
-      render();
-    });
-  }
-}
-function render(){
-  var d=$id('dot');d.className='dot '+(S.src==='live'?'live':(S.src==='cache'?'cache':(S.src==='ls'?'ls':'')));
-  $id('hkey').textContent=KEY;
-  var r=getRkn(),b=$id('banner');
-  if(r&&r.mode){b.className='banner show '+r.mode;b.textContent='Режим: '+modeRu(r.mode)+' · '+ago(r.ts)}else{b.className='banner'}
-  var f={ov:rOv,nd:rNd,dm:rDm,hs:rHs,sy:rSy}[S.tab];if(f)$id('main').innerHTML=f();
-}
+function getRkn(){return (L.rkn&&L.rkn.mode)?L.rkn:((W&&W.rkn)||{})}
 function card(t,inner){return '<div class="card">'+(t?'<h3>'+t+'</h3>':'')+inner+'</div>'}
 function kv(k,v){return '<div class="kv"><span class="mut">'+k+'</span><b>'+v+'</b></div>'}
-function rOv(){
-  var w=S.w||{},l=S.l||{},net=l.net||{},tr=w.traffic||{},r=getRkn();
-  var h='';
-  h+=card('Состояние',
-    kv('Режим сети',modeRu(r.mode)+' <span class="mut small">'+ago(r.ts)+'</span>')+
-    kv('Сеть устройства',esc(net.net||'—')+(net.ssid?' · '+esc(net.ssid):'')+(net.operator?' · '+esc(net.operator):''))+
-    kv('Источник данных',S.src==='live'?'Worker (live)':(S.src==='cache'?'кэш rh_dash':(S.src==='ls'?'localStorage':'нет'))));
-  h+=card('Подписка',
-    kv('Узлов',(w.sub_nodes!=null?w.sub_nodes:'—')+' <span class="mut small">обновл. '+(w.sub_age_min!=null?w.sub_age_min+' мин назад':'—')+'</span>')+
-    (tr.left_gb!=null?kv('Трафик',(Math.round(tr.used_gb*10)/10)+' / '+(Math.round(tr.total_gb*10)/10)+' ГБ · ост. '+(Math.round(tr.left_gb*10)/10)):'')+
-    (tr.expire?kv('Действует до',fts(tr.expire*1000)):''));
-  var ms=(w.nodes&&w.nodes[S.seg])||[];var top=ms.slice(0,3),t3='';
-  for(var i=0;i<top.length;i++){t3+='<div class="row">'+ring(top[i].score)+'<div class="grow"><div class="nm">'+esc(top[i].name)+'</div><div class="sub">'+top[i].down+' Мбит · '+top[i].rtt+' мс</div></div></div>'}
-  h+=card('Топ узлов ('+(S.seg==='wifi'?'Wi-Fi':'сотовая')+')',t3||'<div class="mut small">нет данных</div>');
-  var wl=(l.watch||[]),on=0;for(var j=0;j<wl.length;j++)if(wl[j].on)on++;
-  h+=card('Личный список',kv('Под наблюдением',wl.length)+kv('С обходом',on));
-  h+=card('Конфиг',kv('Версия',esc(w.conf_ver||'—'))+kv('Worker',esc(w.worker||'—')));
-  return h;
-}
 function ring(sc){
   var col='var(--grey)',v=0;
   if(typeof sc==='number'){v=Math.max(0,Math.min(100,sc));col=sc>=70?'var(--ok)':(sc>=40?'var(--warn)':'var(--bad)')}
   var C=2*Math.PI*13,d=(C*v/100).toFixed(1);
   return '<svg class="ring" width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="13" fill="none" stroke="var(--line)" stroke-width="3.4"/><circle cx="18" cy="18" r="13" fill="none" stroke="'+col+'" stroke-width="3.4" stroke-linecap="round" stroke-dasharray="'+d+' '+C.toFixed(1)+'" transform="rotate(-90 18 18)"/><text x="18" y="22" text-anchor="middle" font-size="11" fill="var(--ink)">'+(typeof sc==='number'?sc:'·')+'</text></svg>';
 }
+function rOv(){
+  var net=L.net||{},tr=W.traffic||{},r=getRkn();
+  var h='';
+  h+=card('Состояние',
+    kv('Режим сети',modeRu(r.mode)+' <span class="mut small">'+ago(r.ts)+'</span>')+
+    kv('Сеть устройства',esc(net.net||'—')+(net.ssid?' · '+esc(net.ssid):'')+(net.operator?' · '+esc(net.operator):''))+
+    kv('Источник',SRC==='live'?'Worker (live)':(SRC==='cache'?'кэш rh_dash':'нет связи')));
+  h+=card('Подписка',
+    kv('Узлов',(W.sub_nodes!=null?W.sub_nodes:'—')+' <span class="mut small">обновл. '+(W.sub_age_min!=null?W.sub_age_min+' мин назад':'—')+'</span>')+
+    (tr.left_gb!=null?kv('Трафик',(Math.round(tr.used_gb*10)/10)+' / '+(Math.round(tr.total_gb*10)/10)+' ГБ · ост. '+(Math.round(tr.left_gb*10)/10)):'')+
+    (tr.expire?kv('Действует до',fts(tr.expire*1000)):''));
+  var ms=(W.nodes&&W.nodes[S.seg])||[];var top=ms.slice(0,3),t3='';
+  for(var i=0;i<top.length;i++){t3+='<div class="row">'+ring(top[i].score)+'<div class="grow"><div class="nm">'+esc(top[i].name)+'</div><div class="sub">'+top[i].down+' Мбит · '+top[i].rtt+' мс</div></div></div>'}
+  h+=card('Топ узлов ('+(S.seg==='wifi'?'Wi-Fi':'сотовая')+')',t3||'<div class="mut small">нет данных спидтеста</div>');
+  var wl=(L.watch||[]),on=0;for(var j=0;j<wl.length;j++)if(wl[j].on)on++;
+  h+=card('Личный список',kv('Под наблюдением',wl.length)+kv('С обходом',on));
+  h+=card('Версии',kv('Конфиг',esc(W.conf_ver||'—'))+kv('Worker',esc(W.worker||'—'))+kv('Дашборд',esc(L.ver||'—')));
+  return h;
+}
 function rNd(){
-  var w=S.w||{},ms=(w.nodes&&w.nodes[S.seg])||[];
+  var ms=(W.nodes&&W.nodes[S.seg])||[];
   var h='<div class="card"><div class="seg" id="ndSeg"><button data-g="wifi" class="'+(S.seg==='wifi'?'on':'')+'">Wi-Fi</button><button data-g="cell" class="'+(S.seg==='cell'?'on':'')+'">Сотовая</button></div></div>';
   var rows='';
   for(var i=0;i<ms.length;i++){var n=ms[i];
@@ -242,32 +332,35 @@ function rNd(){
 }
 function chipFor(e){
   if(!e||!e.last)return '<span class="chip na">не проверялся</span>';
-  var L=e.last,m=L.mode?(' · '+modeRu(L.mode)):'';
-  if(L.ok)return '<span class="chip ok">открылся'+m+' · '+ago(L.ts)+'</span>';
-  return '<span class="chip bad">не открылся'+m+' · '+ago(L.ts)+'</span>';
+  var Lx=e.last,m=Lx.mode?(' · '+modeRu(Lx.mode)):'';
+  if(Lx.ok)return '<span class="chip ok">открылся'+m+' · '+ago(Lx.ts)+'</span>';
+  return '<span class="chip bad">не открылся'+m+' · '+ago(Lx.ts)+'</span>';
 }
 function rDm(){
-  var l=S.l||{},wl=l.watch||[],r=getRkn();
-  var h=card('Добавить домен','<div class="addl"><input class="inp" id="nd" placeholder="example.ru" autocapitalize="none" autocorrect="off"><button class="b pri" onclick="addD()">Добавить</button></div><div class="hint">Новый домен сразу получает обход (попадает в личный список RH-RU).</div>');
+  var wl=L.watch||[],r=getRkn();
+  var h=card('Добавить домен',
+    '<form class="addl" action="http://rh.box/add" method="get"><input class="inp" name="d" placeholder="example.ru" autocapitalize="none" autocorrect="off"><button class="b pri" type="submit">Добавить</button></form>'+
+    '<div class="hint">Новый домен сразу получает обход (попадает в личный список RH-RU).</div>');
   var rows='';
-  for(var i=0;i<wl.length;i++){var e=wl[i],d=esc(e.d);
+  for(var i=0;i<wl.length;i++){var e=wl[i],d=esc(e.d),de=encodeURIComponent(e.d);
     rows+='<div class="row"><div class="grow"><div class="nm">'+d+'</div><div class="sub">'+chipFor(e)+'</div></div>'+
-      '<button class="b" onclick="chk(\''+d+'\')">Проверить</button>'+
-      '<label class="sw"><input type="checkbox" '+(e.on?'checked':'')+' onchange="tg(\''+d+'\')"><i></i></label>'+
-      '<button class="b" onclick="delD(\''+d+'\')">✕</button></div>'}
+      '<a class="b" href="http://rh.box/check?d='+de+'">Проверить</a>'+
+      '<a class="sw '+(e.on?'on':'off')+'" href="http://rh.box/toggle?d='+de+'">'+(e.on?'обход':'выкл')+'</a>'+
+      '<a class="b" href="http://rh.box/del?d='+de+'">✕</a></div>'}
   h+=card('Список наблюдения',(rows||'<div class="mut small">пусто</div>')+
-    '<div class="btns"><button class="b" onclick="chkAll()">Проверить все</button><button class="b" onclick="syncL()">Синхронизировать</button><button class="b" onclick="applyLoon()">Применить в Loon</button></div>'+
-    '<div class="hint">Тумблер = «через обход». Проверка идёт по правилам конфига: в норме домен с обходом-ВКЛ идёт DIRECT (ответ = «ожил?»); под whitelist — через обход. Режим на момент проверки указан в результате.'+(r.mode==='whitelist'?' <b>Сейчас whitelist: вывод «ожил» недостоверен.</b>':'')+'</div>');
-  h+='<div id="dmlog" class="mut small"></div>';
+    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать</a><a class="b" href="https://nsloon.com/openloon/update?sub=all">Применить в Loon</a></div>'+
+    '<div class="hint">«обход»/«выкл» — тап переключает маршрут. «Проверить» — fetch по правилам конфига; режим на момент проверки в результате.'+(r.mode==='whitelist'?' <b>Сейчас whitelist: «ожил» недостоверен.</b>':'')+'</div>');
   return h;
 }
 function rHs(){
-  var l=S.l||{},w=S.w||{};
-  var hist=(l.rkn&&l.rkn.hist)||w.rkn_hist||[],hh='';
+  var hist=(L.rkn&&L.rkn.hist)||W.rkn_hist||[],hh='';
   for(var i=0;i<hist.length;i++){hh+='<div class="ev">'+modeRu(hist[i].mode)+'<div class="t">'+fts(hist[i].ts)+'</div></div>'}
-  var rl=l.runlog||[],rr='';
+  var rl=L.runlog||[],rr='';
   for(var j=rl.length-1;j>=0;j--){var ev=rl[j],tx='';
     if(ev.s==='net')tx='Сеть: '+esc(ev.n||'?')+(ev.w?' · WHITELIST':'')+(ev.o?' · '+esc(ev.o):'');
+    else if(ev.s==='rkn')tx='Режим: '+modeRu(ev.m);
+    else if(ev.s==='dash')tx='Кэш дашборда: '+(ev.ok?'ок':'сбой'+(ev.note?' ('+esc(ev.note)+')':''));
+    else if(ev.s==='cron')tx='Спидтест'+(ev.n?' ('+esc(ev.n)+')':'')+(ev.m!=null?': +'+ev.m+' узлов':'')+(ev.x?' — '+esc(ev.x):'');
     else tx=esc(ev.s||'событие')+(ev.note?': '+esc(ev.note):'');
     if(ev.gap)tx+=' <span class="gap">· разрыв '+ev.gap+' мин</span>';
     rr+='<div class="ev">'+tx+'<div class="t">'+fts(ev.t||ev.ts)+'</div></div>'}
@@ -275,7 +368,6 @@ function rHs(){
          card('Журнал событий (локальный)',rr||'<div class="mut small">журнал пуст — скрипты ещё не писали</div>');
 }
 function rSy(){
-  var w=S.w||{},l=S.l||{};
   var sc=[
     ['RH-Speed','cron 20 мин','спидтест: метрики узлов (down/rtt/jit/потери), пинг-свип'],
     ['RH-Net','смена сети','флип групп -W/-C, детект сети, журнал'],
@@ -285,169 +377,50 @@ function rSy(){
     ['RH-Viewer','вручную','таблица узлов в лог Loon']];
   var rows='';for(var i=0;i<sc.length;i++){rows+='<div class="row"><div class="grow"><div class="nm">'+sc[i][0]+' <span class="mut small">'+sc[i][1]+'</span></div><div class="sub">'+sc[i][2]+'</div></div></div>'}
   return card('Инфраструктура',
-      kv('Worker',esc(w.worker||'—'))+
-      kv('Конфиг',esc(w.conf_ver||'—'))+
-      kv('Подписка',(w.sub_age_min!=null?w.sub_age_min+' мин назад':'—'))+
-      kv('Узлы (порядок)',w.last_nodes_ts?ago(w.last_nodes_ts):'—')+
-      kv('Кэш дашборда',l.cache_ts?ago(l.cache_ts):'—')+
-      kv('Дашборд',esc((l.ver||'')+'')))+
+      kv('Worker',esc(W.worker||'—'))+
+      kv('Конфиг',esc(W.conf_ver||'—'))+
+      kv('Подписка',(W.sub_age_min!=null?W.sub_age_min+' мин назад':'—'))+
+      kv('Узлы (порядок)',W.last_nodes_ts?ago(W.last_nodes_ts):'—')+
+      kv('Кэш дашборда',L.cache_ts?ago(L.cache_ts):'—'))+
     card('Скрипты',rows)+
     card('Loon','<div class="btns"><a class="lk b" href="loon://LogLists">Логи Loon</a><a class="lk b" href="loon://requestLists">Запросы Loon</a></div>');
 }
-function dmlog(t){var e=$id('dmlog');if(e)e.textContent=t}
-function act(u,cb){if(S.busy)return;S.busy=true;jget(u,function(e,r){S.busy=false;cb(e,r)})}
-function addD(){var v=($id('nd').value||'').trim().toLowerCase();if(!v)return;
-  act('/add?d='+encodeURIComponent(v),function(e,r){
-    if(e||!r||!r.ok){dmlog('Ошибка добавления'+(r&&r.err?': '+r.err:''));return}
-    dmlog(r.synced?'Добавлен и отправлен на Worker.':'Добавлен локально; Worker недоступен — нажми «Синхронизировать».');
-    poll()})}
-function tg(d){act('/toggle?d='+encodeURIComponent(d),function(e,r){dmlog(e||!r||!r.ok?'Ошибка переключения':((r.on?'Обход ВКЛ':'Обход ВЫКЛ')+(r.synced?', Worker обновлён.':', Worker недоступен — «Синхронизировать».')));poll()})}
-function delD(d){act('/del?d='+encodeURIComponent(d),function(e,r){dmlog(e||!r||!r.ok?'Ошибка удаления':'Удалён.');poll()})}
-function chk(d){dmlog('Проверяю '+d+'…');act('/check?d='+encodeURIComponent(d),function(e,r){
-  if(e||!r){dmlog('Проверка не выполнилась');return}
-  dmlog(d+': '+(r.ok?'открылся':'не открылся')+' ('+(r.status||'—')+', '+r.ms+' мс, режим '+modeRu(r.mode)+')');poll()})}
-function chkAll(){var l=S.l||{},wl=l.watch||[],i=0;
-  function next(){if(i>=wl.length){dmlog('Проверка всех завершена.');poll();return}
-    var d=wl[i].d;i++;dmlog('Проверяю '+d+' ('+i+'/'+wl.length+')…');
-    jget('/check?d='+encodeURIComponent(d),function(){setTimeout(next,250)})}
-  next()}
-function syncL(){dmlog('Синхронизирую…');act('/sync',function(e,r){
-  if(e||!r||!r.ok){dmlog('Синхронизация не удалась');return}
-  dmlog('Синхронизировано: +'+r.added+' / −'+r.removed+' (в KV: '+r.kv+')');poll()})}
-function applyLoon(){location.href='https://nsloon.com/openloon/update?sub=all'}
+function render(){
+  var d=$id('dot');d.className='dot '+(SRC==='live'?'live':(SRC==='cache'?'cache':''));
+  $id('hkey').textContent=KEY;
+  $id('upd').textContent='снято '+fts(L.ts);
+  var r=getRkn(),b=$id('banner');
+  if(r&&r.mode){b.className='banner show '+r.mode;b.textContent='Режим: '+modeRu(r.mode)+' · '+ago(r.ts)}else{b.className='banner'}
+  var f={ov:rOv,nd:rNd,dm:rDm,hs:rHs,sy:rSy}[S.tab];if(f)$id('main').innerHTML=f();
+}
 document.addEventListener('click',function(ev){
   var t=ev.target.closest('.tab');if(t){var bs=document.querySelectorAll('.tab');for(var i=0;i<bs.length;i++)bs[i].classList.remove('on');t.classList.add('on');S.tab=t.getAttribute('data-t');render();return}
-  var g=ev.target.closest('#ndSeg button,#liveSeg button');if(!g)return;
-  if(g.parentNode.id==='ndSeg'){S.seg=g.getAttribute('data-g');render()}
-  else{var bb=g.parentNode.querySelectorAll('button');for(var k=0;k<bb.length;k++)bb[k].classList.remove('on');g.classList.add('on');S.sec=parseInt(g.getAttribute('data-s'),10);restart()}
+  var g=ev.target.closest('#ndSeg button');if(g){S.seg=g.getAttribute('data-g');render();return}
+  var sv=ev.target.closest('#liveSeg button');if(sv){
+    var s=parseInt(sv.getAttribute('data-s'),10);
+    if(s===0){location.reload();return}
+    var bb=sv.parentNode.querySelectorAll('button');for(var k=0;k<bb.length;k++)bb[k].classList.remove('on');sv.classList.add('on');
+    if(S.h)clearInterval(S.h);S.h=setInterval(function(){if(!document.hidden)location.reload()},s*1000);
+  }
 });
-function restart(){if(S.h){clearInterval(S.h);S.h=null}if(S.sec>0)S.h=setInterval(function(){if(!document.hidden)poll()},S.sec*1000)}
-document.addEventListener('visibilitychange',function(){if(!document.hidden)poll()});
-if(location.hash==='#dm')S.tab='dm';if(location.hash==='#hs')S.tab='hs';
-poll();restart();
+document.addEventListener('visibilitychange',function(){if(!document.hidden&&S.h){/* таймер сам перезагрузит */}});
+if(location.hash==='#dm')S.tab='dm';if(location.hash==='#hs')S.tab='hs';if(location.hash==='#nd')S.tab='nd';if(location.hash==='#sy')S.tab='sy';
+render();
 </script>
 </body>
 </html>`;
 
 // =============================================================
-// Маршруты диспетчера
+// Диспетчеризация
 // =============================================================
-function routeHtml() {
-  var body = HTML.split('__KEY__').join(KEY).split('__ORIGIN__').join(ORIGIN);
-  resp(200, 'text/html; charset=utf-8', body);
-}
-
-function routeLocal() {
-  var rkn = rj(K_RKN, {}) || {};
-  var cache = rj(K_DASH, null);
-  var rl = rj(K_RUNLOG, []);
-  if (!Array.isArray(rl)) rl = [];
-  json({
-    ok: true, ver: VERSION, ts: Date.now(), key: KEY, origin: ORIGIN,
-    watch: watchLoad(),
-    rkn: { mode: rkn.mode, ts: rkn.ts, hist: rkn.hist || [] },
-    net: rj(K_NET, null),
-    runlog: rl.slice(-60),
-    cache: cache && cache.data ? cache.data : cache,
-    cache_ts: cache && cache.ts ? cache.ts : null
-  });
-}
-
-function routeAdd() {
-  var d = q('d').toLowerCase();
-  if (!DOMAIN_RE.test(d) || d.length > 80) { jerr('невалидный домен'); return; }
-  var w = watchLoad();
-  for (var i = 0; i < w.length; i++) if (w[i].d === d) { jerr('уже в списке'); return; }
-  w.push({ d: d, on: true, ts: Date.now() });
-  watchSave(w);
-  wPost('/addrule', { key: KEY, domain: d }, function (ok) { json({ ok: true, synced: ok }); });
-}
-
-function routeDel() {
-  var d = q('d').toLowerCase();
-  var w = watchLoad(), wasOn = false, nw = [];
-  for (var i = 0; i < w.length; i++) { if (w[i].d === d) { wasOn = !!w[i].on; } else nw.push(w[i]); }
-  if (nw.length === w.length) { jerr('нет в списке'); return; }
-  watchSave(nw);
-  if (wasOn) wPost('/delrule', { key: KEY, domain: d }, function (ok) { json({ ok: true, synced: ok }); });
-  else json({ ok: true, synced: true });
-}
-
-function routeToggle() {
-  var d = q('d').toLowerCase();
-  var w = watchLoad(), e = null;
-  for (var i = 0; i < w.length; i++) if (w[i].d === d) e = w[i];
-  if (!e) { jerr('нет в списке'); return; }
-  e.on = !e.on;
-  watchSave(w);
-  wPost(e.on ? '/addrule' : '/delrule', { key: KEY, domain: d }, function (ok) { json({ ok: true, on: e.on, synced: ok }); });
-}
-
-function routeSync() {
-  wGet('/mylist?key=' + KEY, function (ok, body) {
-    if (!ok) { jerr('Worker недоступен'); return; }
-    var remote = {};
-    var lines = String(body).split('\n');
-    for (var i = 0; i < lines.length; i++) {
-      var m = lines[i].match(/^DOMAIN-SUFFIX,([a-z0-9.-]+),/i) || lines[i].match(/^DOMAIN-SUFFIX,([a-z0-9.-]+)\s*$/i);
-      if (m) remote[m[1].toLowerCase()] = true;
-    }
-    var w = watchLoad(), localOn = {}, i2;
-    for (i2 = 0; i2 < w.length; i2++) if (w[i2].on) localOn[w[i2].d] = true;
-    var toAdd = [], toDel = [];
-    for (var d1 in localOn) if (!remote[d1]) toAdd.push(d1);
-    for (var d2 in remote) if (!localOn[d2]) toDel.push(d2);
-    var added = 0, removed = 0;
-    function doAdd(k) {
-      if (k >= toAdd.length) { doDel(0); return; }
-      wPost('/addrule', { key: KEY, domain: toAdd[k] }, function (ok2) { if (ok2) added++; doAdd(k + 1); });
-    }
-    function doDel(k) {
-      if (k >= toDel.length) {
-        var kvN = 0; for (var x in remote) kvN++;
-        json({ ok: true, added: added, removed: removed, kv: kvN - removed + added });
-        return;
-      }
-      wPost('/delrule', { key: KEY, domain: toDel[k] }, function (ok3) { if (ok3) removed++; doDel(k + 1); });
-    }
-    doAdd(0);
-  });
-}
-
-function routeCheck() {
-  var d = q('d').toLowerCase();
-  if (!DOMAIN_RE.test(d)) { jerr('невалидный домен'); return; }
-  var rkn = rj(K_RKN, {}) || {};
-  var t0 = Date.now();
-  function fin(okFlag, status) {
-    var ms = Date.now() - t0;
-    var w = watchLoad();
-    for (var i = 0; i < w.length; i++) if (w[i].d === d) {
-      w[i].last = { ok: okFlag, status: status || 0, ms: ms, ts: Date.now(), mode: rkn.mode || '?' };
-      watchSave(w);
-      break;
-    }
-    json({ ok: okFlag, status: status || 0, ms: ms, mode: rkn.mode || '?' });
-  }
-  $httpClient.get({ url: 'https://' + d + '/', timeout: 4000 }, function (e1, r1) {
-    if (!e1 && r1 && r1.status) { fin(r1.status < 500, r1.status); return; }
-    $httpClient.get({ url: 'http://' + d + '/', timeout: 3000 }, function (e2, r2) {
-      if (!e2 && r2 && r2.status) { fin(r2.status < 500, r2.status); return; }
-      fin(false, 0);
-    });
-  });
-}
-
-// --- диспетчеризация ---
 try {
-  if (PATH === '/' || PATH === '/index.html') routeHtml();
-  else if (PATH === '/local') routeLocal();
-  else if (PATH === '/add') routeAdd();
-  else if (PATH === '/del') routeDel();
-  else if (PATH === '/toggle') routeToggle();
-  else if (PATH === '/sync') routeSync();
-  else if (PATH === '/check') routeCheck();
-  else resp(404, 'application/json; charset=utf-8', JSON.stringify({ ok: false, err: 'нет маршрута', path: PATH }));
+  if (PATH === '/' || PATH === '/index.html') serveDashboard();
+  else if (PATH === '/add') doAdd();
+  else if (PATH === '/del') doDel();
+  else if (PATH === '/toggle') doToggle();
+  else if (PATH === '/check') doCheck();
+  else if (PATH === '/sync') doSync();
+  else redirect('');
 } catch (eX) {
-  resp(200, 'application/json; charset=utf-8', JSON.stringify({ ok: false, err: 'краш: ' + ((eX && eX.message) || eX) }));
+  htmlResp('<!DOCTYPE html><meta charset="utf-8"><body style="font:16px -apple-system;padding:20px">RouteHub: ошибка диспетчера — ' + ((eX && eX.message) || eX) + '</body>');
 }
