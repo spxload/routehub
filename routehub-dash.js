@@ -1,5 +1,5 @@
 // =============================================================
-// routehub-dash.js v0.4.7 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.4.8 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
@@ -7,24 +7,19 @@
 //   (локальные + Worker /dashboard) и вшивает как __BOOT__. Страница НЕ делает XHR.
 //   Мутации (add/del/toggle/check/sync) ОТДАЮТ свежий HTML.
 //
-// v0.4.7 (полевой фикс кнопки Loon):
-//   * Кнопка «Обновить Loon» переведена с <button>+JS-переход на ССЫЛКУ
-//     <a href="loon://update?sub=all">. Причина: window.location.href со схемой
-//     loon:// в Loon-странице НЕ срабатывал (кнопка «не нажималась»), тогда как
-//     <a href> с внешней ссылкой (nsloon) ОТКРЫВАЛСЯ. Проверяем, подхватит ли
-//     Safari кастомную СХЕМУ через href. НЕ подтверждено — тест на устройстве.
-//     Если опять не сработает — убрать совсем (список применяется сам за минуту,
-//     update-interval=60). Делегированная ветка data-act='loon' убрана.
-//
-// v0.4.6: синхронизация даёт явный отчёт (локально N, на сервере M, +X −Y).
-//   ПОДТВЕРЖДЕНО: добавление/удаление/синхронизация работают; старые домены
-//   уже на сервере (whoosh.bike), синхронизировать нечего — это норма.
+// v0.4.8:
+//   * Кнопка «Обновить Loon» — ссылка на https://www.nsloon.com/openloon/update?sub=all
+//     (как просила Диана: этот URL у неё ОТКРЫВАЛСЯ через <a href>;
+//     схема loon:// не сработала ни button+JS, ни <a href>).
+//   * УБРАН засев whoosh.bike: дефолт rh_watch теперь ПУСТОЙ.
+//     ОДНОРАЗОВАЯ ЧИСТКА: если whoosh.bike ещё в сторе — удаляется локально
+//     и шлётся /delrule на Worker (флаг rh_seed_cleaned — один раз).
 //
 // T6: node работает для имён УЗЛОВ (спидтест достоверен), не для групп.
-// Засев rh_watch: ТОЛЬКО whoosh.bike (обход ВКЛ).
+// Засев rh_watch: ПУСТОЙ (whoosh.bike убран).
 // =============================================================
 
-var VERSION = 'dash v0.4.7';
+var VERSION = 'dash v0.4.8';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -36,6 +31,7 @@ var K_RKN = 'rh_rkn';
 var K_NET = 'rh_net_state';
 var K_RUNLOG = 'rh_runlog';
 var K_DASH = 'rh_dash';
+var K_SEED_CLEAN = 'rh_seed_cleaned';
 var DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
 function rj(k, d) { try { var s = $persistentStore.read(k); return s ? JSON.parse(s) : d; } catch (e) { return d; } }
@@ -43,7 +39,7 @@ function wj(k, o) { try { $persistentStore.write(JSON.stringify(o), k); } catch 
 
 function watchLoad() {
   var w = rj(K_WATCH, null);
-  if (!Array.isArray(w)) { w = [{ d: 'whoosh.bike', on: true, ts: Date.now() }]; wj(K_WATCH, w); }
+  if (!Array.isArray(w)) { w = []; wj(K_WATCH, w); }
   return w;
 }
 function watchSave(w) { wj(K_WATCH, w); }
@@ -75,6 +71,27 @@ function q(name) {
     if (kv[0] === name) return decodeURIComponent((kv[1] || '').replace(/\+/g, ' '));
   }
   return '';
+}
+
+// ОДНОРАЗОВАЯ ЧИСТКА засеянного whoosh.bike (и прочих сидов).
+// Раньше дашборд засевал whoosh.bike — он остался в сторе и KV.
+// Убираем локально + /delrule на Worker. Один раз (флаг).
+function cleanSeedOnce(cb) {
+  if ($persistentStore.read(K_SEED_CLEAN) === '1') { cb(); return; }
+  var w = watchLoad(), nw = [], removed = [];
+  for (var i = 0; i < w.length; i++) {
+    if (w[i].d === 'whoosh.bike') removed.push(w[i].d);
+    else nw.push(w[i]);
+  }
+  if (!removed.length) { $persistentStore.write('1', K_SEED_CLEAN); cb(); return; }
+  watchSave(nw);
+  // убрать и из Worker KV
+  var k = 0;
+  function step() {
+    if (k >= removed.length) { $persistentStore.write('1', K_SEED_CLEAN); cb(); return; }
+    wPost('/delrule', { key: KEY, domain: removed[k] }, function () { k++; step(); });
+  }
+  step();
 }
 
 function buildLocal(flash) {
@@ -407,8 +424,8 @@ function rDm(){
         '<a class="sw '+(e.on?'on':'off')+'" href="http://rh.box/toggle?d='+de+'">'+(e.on?'обход вкл':'обход выкл')+'</a>'+
         '<a class="b dz" href="http://rh.box/del?d='+de+'">Удалить</a>'+
       '</div></div>'}
-  h+=card('Список наблюдения ('+wl.length+')',(rows||'<div class="mut small">пусто</div>')+
-    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a><a class="b" href="loon://update?sub=all">Обновить Loon</a></div>'+
+  h+=card('Список наблюдения ('+wl.length+')',(rows||'<div class="mut small">пусто — добавь домен выше</div>')+
+    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a><a class="b" href="https://www.nsloon.com/openloon/update?sub=all">Обновить Loon</a></div>'+
     '<div class="hint"><b>«Синхронизировать»</b> дотягивает на сервер старые домены из списка (передобавлять не нужно). <b>«Обновить Loon»</b> просит Loon сразу подтянуть правила (иначе применится само за ~1 мин). <b>Как пользоваться:</b> «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН). «Проверить» открывает домен по текущему маршруту. Чтобы понять, нужен ли обход: выключи обход и проверь ПОД whitelist — откроется без обхода → можно убрать, нет → обход нужен.'+
     (r.mode==='whitelist'?' <b style="color:var(--warn)">Сейчас whitelist.</b>':(r.mode==='normal'?' <b>Сейчас норма — для проверки обхода дождись whitelist.</b>':''))+'</div>');
   return h;
@@ -459,7 +476,7 @@ function rSy(){
       kv('Порядок узлов',W.last_nodes_ts?ago(W.last_nodes_ts):'—')+
       kv('Кэш дашборда',L.cache_ts?ago(L.cache_ts):'—'))+
     card('Фоновые скрипты',rows)+
-    card('Loon','<div class="btns"><a class="b" href="loon://update?sub=all">Обновить ресурсы Loon</a></div><div class="hint" style="margin-top:8px">Логи и список запросов — внутри приложения Loon (вкладка с журналом).</div>');
+    card('Loon','<div class="btns"><a class="b" href="https://www.nsloon.com/openloon/update?sub=all">Обновить ресурсы Loon</a></div><div class="hint" style="margin-top:8px">Логи и список запросов — внутри приложения Loon (вкладка с журналом).</div>');
 }
 function render(){
   var d=$id('dot');d.className='dot '+(SRC==='live'?'live':(SRC==='cache'?'cache':''));
@@ -504,13 +521,13 @@ render();armAuto();
 </html>`;
 
 try {
-  if (PATH === '/' || PATH === '/index.html') serveDashboard();
+  if (PATH === '/' || PATH === '/index.html') cleanSeedOnce(function () { serveDashboard(); });
   else if (PATH === '/add') doAdd();
   else if (PATH === '/del') doDel();
   else if (PATH === '/toggle') doToggle();
   else if (PATH === '/check') doCheck();
   else if (PATH === '/sync') doSync();
-  else serveDashboard();
+  else cleanSeedOnce(function () { serveDashboard(); });
 } catch (eX) {
   htmlResp('<!DOCTYPE html><meta charset="utf-8"><body style="font:16px -apple-system;padding:20px">RouteHub: ошибка диспетчера — ' + ((eX && eX.message) || eX) + '</body>');
 }
