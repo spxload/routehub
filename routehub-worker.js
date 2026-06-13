@@ -1,5 +1,7 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.7.3 (2026-06-13) — иконка приложения обновлена
+//   (хаб + 6 прямых лучей к узлам, бирюзовый акцент; читаемее на сетке iOS).
 // VERSION: worker v1.7.2 (2026-06-12) — иконка приложения как SVG (надёжная
 //   передача; PNG-константа давала битый base64). /icon.svg, /icon.png,
 //   /apple-touch-icon.png -> один SVG (хаб и маршруты).
@@ -90,7 +92,7 @@ const PROX = {
   '\uD83C\uDDF8\uD83C\uDDEA': 9,  '\uD83C\uDDF3\uD83C\uDDF4': 10, '\uD83C\uDDEB\uD83C\uDDEE': 11,
   '\uD83C\uDDEA\uD83C\uDDEA': 12, '\uD83C\uDDF1\uD83C\uDDFB': 13, '\uD83C\uDDF1\uD83C\uDDF9': 14,
   '\uD83C\uDDEC\uD83C\uDDE7': 15, '\uD83C\uDDEE\uD83C\uDDEA': 16, '\uD83C\uDDEA\uD83C\uDDF8': 17,
-  '\uD83C\uDDEE\uD83C\uDDF9': 18, '\uD83C\uDDF7\uD83C\uDDF4': 19, '\uD83C\uDDE7\uD83C\uDDFE': 20,
+  '\uD83C\uDDEE\uD83C\uDDF9': 18, '\uD83C\uDDF7\uD83C\uDDF4': 19, '\uD83C\uDDE7\uD83C\uDDYE': 20,
   '\uD83C\uDDF9\uD83C\uDDF7': 22, '\uD83C\uDDF7\uD83C\uDDFA': 23, '\uD83C\uDDF0\uD83C\uDDFF': 24,
   '\uD83C\uDDE6\uD83C\uDDF2': 25, '\uD83C\uDDE6\uD83C\uDDEA': 26, '\uD83C\uDDEE\uD83C\uDDF3': 27,
   '\uD83C\uDDF8\uD83C\uDDEC': 28, '\uD83C\uDDF9\uD83C\uDDED': 29, '\uD83C\uDDEF\uD83C\uDDF5': 30,
@@ -168,7 +170,7 @@ function confVersion(conf) {
 }
 
 const CORS = { 'Access-Control-Allow-Origin': '*' };
-const RH_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#063D33"/><stop offset="0.55" stop-color="#04342C"/><stop offset="1" stop-color="#022019"/></linearGradient><radialGradient id="glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#5DCAA5" stop-opacity="0.35"/><stop offset="1" stop-color="#5DCAA5" stop-opacity="0"/></radialGradient><linearGradient id="route" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7FE0C0"/><stop offset="1" stop-color="#4FB892"/></linearGradient></defs><rect width="1024" height="1024" rx="224" fill="url(#bg)"/><circle cx="512" cy="512" r="430" fill="url(#glow)"/><g fill="none" stroke="url(#route)" stroke-width="46" stroke-linecap="round"><path d="M236 760 C 380 560, 392 512, 512 512"/><path d="M788 264 C 644 464, 632 512, 512 512"/><path d="M236 286 C 408 372, 452 452, 512 512"/><path d="M788 738 C 636 636, 588 560, 512 512"/></g><g fill="#7FE0C0"><circle cx="236" cy="760" r="34"/><circle cx="788" cy="264" r="34"/><circle cx="236" cy="286" r="34"/><circle cx="788" cy="738" r="34"/></g><circle cx="512" cy="512" r="96" fill="#04342C"/><circle cx="512" cy="512" r="92" fill="none" stroke="#9FE1CB" stroke-width="14"/><circle cx="512" cy="512" r="46" fill="#9FE1CB"/></svg>`;
+const RH_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#05352C"/><stop offset="1" stop-color="#04221C"/></linearGradient><radialGradient id="hub" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#9FE1CB"/><stop offset="0.55" stop-color="#5DCAA5"/><stop offset="1" stop-color="#3FB389"/></radialGradient></defs><rect width="1024" height="1024" rx="228" fill="url(#bg)"/><g fill="none" stroke="#5DCAA5" stroke-width="34" stroke-linecap="round" opacity="0.9"><path d="M512 512 L246 246"/><path d="M512 512 L778 246"/><path d="M512 512 L214 540"/><path d="M512 512 L810 540"/><path d="M512 512 L330 802"/><path d="M512 512 L694 802"/></g><g fill="#7FE0C0"><circle cx="246" cy="246" r="46"/><circle cx="778" cy="246" r="46"/><circle cx="214" cy="540" r="46"/><circle cx="810" cy="540" r="46"/><circle cx="330" cy="802" r="46"/><circle cx="694" cy="802" r="46"/></g><circle cx="512" cy="512" r="118" fill="url(#hub)"/><circle cx="512" cy="512" r="118" fill="none" stroke="#04221C" stroke-width="10" opacity="0.35"/></svg>`;
 function iconResp() {
   return new Response(RH_ICON_SVG, { headers: { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' } });
 }
@@ -579,7 +581,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.7.2',
+    worker: 'v1.7.3',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
