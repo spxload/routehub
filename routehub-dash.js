@@ -1,28 +1,27 @@
 // =============================================================
-// routehub-dash.js v0.4.5 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.4.6 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
 // АРХИТЕКТУРА: BOOTSTRAP — диспетчер при отдаче HTML собирает данные
-//   (локальные из $persistentStore + Worker /dashboard через $httpClient в
-//   туннеле) и вшивает в страницу как __BOOT__. Страница НЕ делает XHR.
-//   Мутации (add/del/toggle/check/sync) ОТДАЮТ свежий HTML (не 303).
+//   (локальные + Worker /dashboard) и вшивает как __BOOT__. Страница НЕ делает XHR.
+//   Мутации (add/del/toggle/check/sync) ОТДАЮТ свежий HTML.
 //
-// v0.4.5:
-//   * Кнопка «Обновить Loon» = loon://update?sub=all (кастомная СХЕМА, не https —
-//     без белого экрана nsloon.com). Схема НЕ подтверждена документацией; если
-//     не сработает — список всё равно применится сам за минуту (update-interval=60).
-//   * Подсказка про «Синхронизировать»: дотягивает в сервер старые домены из
-//     дашборда, добавленные когда отправка ещё не работала (передобавлять не надо).
-//
-// v0.4.4: ДИАГНОСТИКА отправки — wPost пробрасывает статус+тело; РЕШЕНО:
-//   POST /addrule доходит, KV пишется (добавление/удаление работают).
+// v0.4.6 (полевые фиксы k1):
+//   * КНОПКИ ЧЕРЕЗ ДЕЛЕГИРОВАНИЕ, не onclick. Инлайновый onclick на
+//     странице внутри Loon не срабатывал (кнопка не кликабельна).
+//     Теперь data-act="loon" ловит общий слушатель (как у вкладок — он работает).
+//   * СИНХРОНИЗАЦИЯ — явный отчёт: локально N, на сервере M, +X −Y.
+//     Если старые домены УЖЕ на сервере — добавлять нечего (это норма,
+//     отчёт это покажет); видимость в Loon — вопрос update-interval/кэша.
+//   * loonUpdate() вызывается из слушателя; схема loon://update?sub=all
+//     НЕ подтверждена — проверяется на устройстве.
 //
 // T6: node работает для имён УЗЛОВ (спидтест достоверен), не для групп.
 // Засев rh_watch: ТОЛЬКО whoosh.bike (обход ВКЛ).
 // =============================================================
 
-var VERSION = 'dash v0.4.5';
+var VERSION = 'dash v0.4.6';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -157,23 +156,29 @@ function doCheck() {
 function doSync() {
   wGet('/mylist?key=' + KEY, function (ok, body) {
     if (!ok) { serveDashboard('dm', 'Сервер недоступен — синхронизация не выполнена'); return; }
-    var remote = {}, lines = String(body).split('\n');
+    var remote = {}, rcount = 0, lines = String(body).split('\n');
     for (var i = 0; i < lines.length; i++) {
       var m = lines[i].match(/^DOMAIN-SUFFIX,([a-z0-9.-]+)/i);
-      if (m) remote[m[1].toLowerCase()] = true;
+      if (m) { remote[m[1].toLowerCase()] = true; rcount++; }
     }
-    var w = watchLoad(), localOn = {};
-    for (var i2 = 0; i2 < w.length; i2++) if (w[i2].on) localOn[w[i2].d] = true;
+    var w = watchLoad(), localOn = {}, lcount = 0;
+    for (var i2 = 0; i2 < w.length; i2++) if (w[i2].on) { localOn[w[i2].d] = true; lcount++; }
     var toAdd = [], toDel = [];
     for (var d1 in localOn) if (!remote[d1]) toAdd.push(d1);
     for (var d2 in remote) if (!localOn[d2]) toDel.push(d2);
     var added = 0, removed = 0, errs = '';
+    function report() {
+      var msg = 'Синхронизация: локально ' + lcount + ', на сервере было ' + rcount + '. Добавлено ' + added + ', убрано ' + removed;
+      if (toAdd.length === 0 && toDel.length === 0) msg += ' — уже синхронно';
+      if (errs) msg += '. Ошибки:' + errs;
+      serveDashboard('dm', msg);
+    }
     function doA(k) {
       if (k >= toAdd.length) { doD(0); return; }
       wPost('/addrule', { key: KEY, domain: toAdd[k] }, function (o, resp, status) { if (o) added++; else errs += ' [' + toAdd[k] + ':' + status + ']'; doA(k + 1); });
     }
     function doD(k) {
-      if (k >= toDel.length) { serveDashboard('dm', 'Синхронизировано: добавлено ' + added + ', убрано ' + removed + (errs ? ('. Ошибки:' + errs) : '')); return; }
+      if (k >= toDel.length) { report(); return; }
       wPost('/delrule', { key: KEY, domain: toDel[k] }, function (o) { if (o) removed++; doD(k + 1); });
     }
     doA(0);
@@ -400,8 +405,8 @@ function rDm(){
         '<a class="b dz" href="http://rh.box/del?d='+de+'">Удалить</a>'+
       '</div></div>'}
   h+=card('Список наблюдения ('+wl.length+')',(rows||'<div class="mut small">пусто</div>')+
-    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a><button class="b" onclick="loonUpdate()">Обновить Loon</button></div>'+
-    '<div class="hint"><b>«Синхронизировать»</b> дотягивает на сервер старые домены из списка (если добавлялись, когда отправка ещё не работала — передобавлять не нужно). <b>«Обновить Loon»</b> просит Loon сразу подтянуть правила (иначе применится само за ~1 мин). <b>Как пользоваться:</b> «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН). «Проверить» открывает домен по текущему маршруту. Чтобы понять, нужен ли обход: выключи обход и проверь ПОД whitelist — откроется без обхода → можно убрать, нет → обход нужен.'+
+    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a><button class="b" data-act="loon">Обновить Loon</button></div>'+
+    '<div class="hint"><b>«Синхронизировать»</b> дотягивает на сервер старые домены из списка (передобавлять не нужно). <b>«Обновить Loon»</b> просит Loon сразу подтянуть правила (иначе применится само за ~1 мин). <b>Как пользоваться:</b> «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН). «Проверить» открывает домен по текущему маршруту. Чтобы понять, нужен ли обход: выключи обход и проверь ПОД whitelist — откроется без обхода → можно убрать, нет → обход нужен.'+
     (r.mode==='whitelist'?' <b style="color:var(--warn)">Сейчас whitelist.</b>':(r.mode==='normal'?' <b>Сейчас норма — для проверки обхода дождись whitelist.</b>':''))+'</div>');
   return h;
 }
@@ -451,7 +456,7 @@ function rSy(){
       kv('Порядок узлов',W.last_nodes_ts?ago(W.last_nodes_ts):'—')+
       kv('Кэш дашборда',L.cache_ts?ago(L.cache_ts):'—'))+
     card('Фоновые скрипты',rows)+
-    card('Loon','<div class="btns"><button class="b" onclick="loonUpdate()">Обновить ресурсы Loon</button></div><div class="hint" style="margin-top:8px">Логи и список запросов — внутри приложения Loon (вкладка с журналом).</div>');
+    card('Loon','<div class="btns"><button class="b" data-act="loon">Обновить ресурсы Loon</button></div><div class="hint" style="margin-top:8px">Логи и список запросов — внутри приложения Loon (вкладка с журналом).</div>');
 }
 function render(){
   var d=$id('dot');d.className='dot '+(SRC==='live'?'live':(SRC==='cache'?'cache':''));
@@ -472,6 +477,7 @@ function loonUpdate(){try{localStorage.setItem('rh_tab',S.tab)}catch(e){};window
 document.addEventListener('click',function(ev){
   var t=ev.target.closest('.tab');if(t){setTab(t.getAttribute('data-t'));return}
   var g=ev.target.closest('.segb');if(g){S.seg=g.getAttribute('data-g');try{localStorage.setItem('rh_seg',S.seg)}catch(e){};render();return}
+  var act=ev.target.closest('[data-act]');if(act){var a=act.getAttribute('data-act');if(a==='loon')loonUpdate();return}
 });
 function saveScroll(){try{localStorage.setItem('rh_scroll',String(window.scrollY||window.pageYOffset||0))}catch(e){}}
 window.addEventListener('scroll',function(){saveScroll()});
