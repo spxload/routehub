@@ -1,30 +1,30 @@
 // =============================================================
-// routehub-dash.js v0.4.2 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.4.3 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
-// АРХИТЕКТУРА: BOOTSTRAP — диспетчер при отдаче HTML САМ собирает данные
+// АРХИТЕКТУРА: BOOTSTRAP — диспетчер при отдаче HTML собирает данные
 //   (локальные из $persistentStore + Worker /dashboard через $httpClient в
 //   туннеле) и вшивает в страницу как __BOOT__. Страница НЕ делает XHR.
+//   Мутации (add/del/toggle/check/sync) ОТДАЮТ свежий HTML (не 303).
 //
-// v0.4.2 (ФИКС полевых замечаний k1):
-//   * МУТАЦИИ ВОЗВРАЩАЮТ СВЕЖИЙ HTML, не 303-редирект. Причина: 303 Location
-//     внутри http-request Safari в этом контексте НЕ исполнял -> домен в store
-//     заносился, но страница не обновлялась, выглядело как «не заносится».
-//     Теперь doAdd/doDel/doToggle/doCheck/doSync после изменения зовут
-//     serveDashboard() и отдают готовую страницу со свежим списком. Надёжно.
-//   * Обзор: убран дубль «узлов с данными» (была и плитка, и счётчик) —
-//     плитка заменена на «Режим сети». Счётчики оставлены.
-//   * Кнопки «Применить в Loon» / «Открыть Loon»: переход через onclick
-//     window.location.href (надёжнее <a href> с внешней схемой из туннеля).
-//   * История переделана: статистика (режим/смены/аптайм) + понятная лента.
+// v0.4.3 (полевые правки k1):
+//   * УБРАНЫ нерабочие кнопки: «Применить в Loon» (nsloon.com/openloon/update —
+//     открывал белый экран, эндпоинт не подтверждён) и «Открыть Loon»
+//     (loon:// не открывался). Не подтверждённые схемы не используем.
+//     Вместо «Применить»: подпись «список применяется в Loon автоматически за ~1 мин»
+//     (Remote Rule update-interval=60). Вместо «Открыть Loon»: текст про приложение.
+//   * ТЕКУЩАЯ СЕТЬ на Обзоре: строка Wi-Fi/Сотовая + SSID/оператор (из rh_net_state,
+//     пишет netwatch при смене сети). При включённом авто-тумблере страница
+//     обновляется каждые 15 с -> после переключения сети сама подтянет новую.
+//   * Сегмент данных (Wi-Fi/сотовая) при первом показе ВЫБИРАЕТСЯ по текущей
+//     сети (rh_net_state.net): на сотовой сразу показываются сотовые узлы.
 //
-// МАРШРУТЫ: / (HTML+BOOT), /add /del /toggle /check /sync (-> свежий HTML).
 // T6: node работает для имён УЗЛОВ (спидтест достоверен), не для групп.
 // Засев rh_watch: ТОЛЬКО whoosh.bike (обход ВКЛ).
 // =============================================================
 
-var VERSION = 'dash v0.4.2';
+var VERSION = 'dash v0.4.3';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -89,7 +89,6 @@ function buildLocal(flash) {
   };
 }
 
-// tab — какую вкладку открыть после отдачи; flash — короткое сообщение сверху
 function serveDashboard(tab, flash) {
   var local = buildLocal(flash);
   wGet('/dashboard?key=' + KEY, function (ok, body) {
@@ -301,9 +300,9 @@ function $id(i){return document.getElementById(i)}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function fts(t){if(!t)return '—';var d=new Date(t);if(isNaN(d))return String(t);function p(n){return (n<10?'0':'')+n}return p(d.getDate())+'.'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes())}
 function ago(t){if(!t)return '—';var s=Math.round((Date.now()-new Date(t).getTime())/1000);if(s<0)s=0;if(s<90)return s+' с назад';var m=Math.round(s/60);if(m<90)return m+' мин назад';var hh=Math.round(m/60);if(hh<48)return hh+' ч назад';return Math.round(hh/24)+' дн назад'}
-function dur(ms){if(ms==null||ms<0)return '—';var m=Math.round(ms/60000);if(m<60)return m+' мин';var h=Math.floor(m/60),mm=m%60;if(h<24)return h+' ч '+mm+' мин';var d=Math.floor(h/24);return d+' дн '+(h%24)+' ч'}
 function modeRu(m){return m==='normal'?'Норма':(m==='whitelist'?'Whitelist РКН':(m==='block'?'Блокировка':(m||'?')))}
 function modeCls(m){return m==='normal'?'ok':(m==='whitelist'?'warn':(m==='block'?'bad':'na'))}
+function netRu(n){return n==='wifi'?'Wi-Fi':(n==='cell'||n==='cell-whitelist'?'Сотовая':(n==='offline'?'Нет сети':(n||'—')))}
 function getRkn(){return (L.rkn&&L.rkn.mode)?L.rkn:((W&&W.rkn)||{})}
 function topName(seg){var ms=(W.nodes&&W.nodes[seg])||[];return ms.length?ms[0].name:null}
 function card(t,inner){return '<div class="card">'+(t?'<h3>'+t+'</h3>':'')+inner+'</div>'}
@@ -329,10 +328,10 @@ function rOv(){
   var ms=(W.nodes&&W.nodes[S.seg])||[],alive=ms.length,maxd=ms.length?ms[0].down:0,voice=0;
   for(var v=0;v<ms.length;v++)if(ms[v].voice)voice++;
   var h='';
-  // плитки — РАЗНОЕ (без дубля счётчиков ниже)
+  // плитки — РАЗНОЕ
   h+='<div class="tiles">'+
      tile('Режим сети',modeRu(r.mode),r.ts?ago(r.ts):'—')+
-     tile('Лучший узел',esc(topName(S.seg)||'—'),'по баллу '+(S.seg==='wifi'?'Wi-Fi':'сотовой'))+'</div>';
+     tile('Подключение',netRu(net.net),(net.ssid?esc(net.ssid):(net.operator?esc(net.operator):(net.ts?ago(net.ts):'—'))))+'</div>';
   // трафик
   var tcard='';
   if(tr.left_gb!=null){
@@ -343,14 +342,14 @@ function rOv(){
       '<div class="sub">Использовано '+(Math.round(tr.used_gb*10)/10)+' ГБ · '+pct+'%'+(tr.expire?' · до '+fts(tr.expire*1000):'')+'</div>';
   } else tcard='<div class="mut small">нет данных о трафике</div>';
   h+=card('Трафик подписки',tcard);
-  // счётчики (единственное место с «узлов с данными»)
+  // счётчики
   h+='<div class="stats">'+
      stat(alive,'узлов с данными','var(--ok)')+
      stat(maxd||'—','Мбит макс')+
      stat(voice,'для звонков','var(--acc)')+'</div>';
   // скорость
   h+=card('Скорость лучших узлов ('+(S.seg==='wifi'?'Wi-Fi':'сотовая')+')',speedBars(S.seg));
-  // список доменов кратко
+  // список доменов
   var wl=(L.watch||[]),on=0;for(var j=0;j<wl.length;j++)if(wl[j].on)on++;
   h+=card('Личный список доменов',kv('Под наблюдением',wl.length)+kv('С обходом',on)+'<div class="hint" style="margin-top:4px">Управление — на вкладке «Домены».</div>');
   return h;
@@ -399,8 +398,8 @@ function rDm(){
         '<a class="b dz" href="http://rh.box/del?d='+de+'">Удалить</a>'+
       '</div></div>'}
   h+=card('Список наблюдения ('+wl.length+')',(rows||'<div class="mut small">пусто</div>')+
-    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать</a><button class="b" onclick="applyLoon()">Применить в Loon</button></div>'+
-    '<div class="hint"><b>Как пользоваться.</b> «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН). «Проверить» открывает домен по текущему маршруту. Чтобы понять, нужен ли обход: выключи обход и проверь ПОД whitelist — откроется без обхода → можно убрать, нет → обход нужен.'+
+    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a></div>'+
+    '<div class="hint">Изменения списка применяются в Loon автоматически примерно за минуту (правило обновляется раз в 60 с). <b>Как пользоваться:</b> «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН). «Проверить» открывает домен по текущему маршруту. Чтобы понять, нужен ли обход: выключи обход и проверь ПОД whitelist — откроется без обхода → можно убрать, нет → обход нужен.'+
     (r.mode==='whitelist'?' <b style="color:var(--warn)">Сейчас whitelist.</b>':(r.mode==='normal'?' <b>Сейчас норма — для проверки обхода дождись whitelist.</b>':''))+'</div>');
   return h;
 }
@@ -408,7 +407,6 @@ function rHs(){
   var hist=(L.rkn&&L.rkn.hist)||W.rkn_hist||[];
   var rl=L.runlog||[];
   var r=getRkn();
-  // статистика
   var changes=hist.length;
   var sinceTxt=r.ts?ago(r.ts):'—';
   var h='';
@@ -417,19 +415,17 @@ function rHs(){
      stat(changes,'смен режима')+
      stat(rl.length,'событий')+'</div>';
   h+='<div class="card"><h3>В этом режиме</h3>'+kv('Режим',modeRu(r.mode))+kv('Держится',sinceTxt)+'</div>';
-  // лента смен режима
   var hh='';
   for(var i=0;i<hist.length;i++){var md=hist[i].mode,prev=hist[i+1]?hist[i+1].mode:null;
     var txt=prev?(modeRu(prev)+' → '+modeRu(md)):('Стало: '+modeRu(md));
     hh+='<div class="ev"><span class="ed '+modeCls(md)+'"></span><div class="grow">'+txt+'<div class="et">'+fts(hist[i].ts)+'</div></div></div>'}
   h+=card('Смены режима РКН',hh||'<div class="mut small">смен пока не было — это хорошо, сеть стабильна</div>');
-  // лента событий
   var rr='';
   for(var j=rl.length-1;j>=0;j--){var ev=rl[j],tx='',cls='info';
-    if(ev.s==='net'){tx='Сменилась сеть: '+esc(ev.n||'?')+(ev.o?', оператор '+esc(ev.o):'');cls=ev.w?'warn':'info';if(ev.w)tx+=' (whitelist)';}
+    if(ev.s==='net'){tx='Сменилась сеть: '+netRu(ev.n)+(ev.o?', оператор '+esc(ev.o):'');cls=ev.w?'warn':'info';if(ev.w)tx+=' (whitelist)';}
     else if(ev.s==='rkn'){tx='Режим определён как '+modeRu(ev.m);cls=modeCls(ev.m);}
     else if(ev.s==='dash'){tx=ev.ok?'Кэш дашборда обновлён':'Не удалось обновить кэш'+(ev.note?' ('+esc(ev.note)+')':'');cls=ev.ok?'ok':'bad';}
-    else if(ev.s==='cron'){tx='Спидтест отработал'+(ev.n?', сеть '+esc(ev.n):'');cls='ok';}
+    else if(ev.s==='cron'){tx='Спидтест отработал'+(ev.n?', сеть '+netRu(ev.n):'');cls='ok';}
     else {tx=esc(ev.s||'событие')+(ev.note?': '+esc(ev.note):'');}
     if(ev.gap)tx+=' <span class="gap">· перед этим перерыв '+ev.gap+' мин</span>';
     rr+='<div class="ev"><span class="ed '+cls+'"></span><div class="grow">'+tx+'<div class="et">'+fts(ev.t||ev.ts)+'</div></div></div>'}
@@ -441,7 +437,7 @@ function rSy(){
   var sc=[
     ['Спидтест','каждые 20 мин','меряет скорость, пинг и потери узлов'],
     ['Смена сети','при Wi-Fi↔сотовая','переключает узлы под текущую сеть, определяет режим'],
-    ['Детектор РКН','периодически','определяет режим: норма / whitelist / блок'],
+    ['Детектор РКН','каждые 3 мин','определяет режим: норма / whitelist / блок'],
     ['Кэш дашборда','каждые 15 мин','сохраняет данные для показа под whitelist'],
     ['Этот дашборд','по открытию','показывает состояние и список доменов']];
   var rows='';for(var i=0;i<sc.length;i++){rows+='<div class="row"><div class="grow"><div class="nm">'+sc[i][0]+'</div><div class="sub">'+sc[i][2]+'</div></div><span class="mut small">'+sc[i][1]+'</span></div>'}
@@ -453,7 +449,7 @@ function rSy(){
       kv('Порядок узлов',W.last_nodes_ts?ago(W.last_nodes_ts):'—')+
       kv('Кэш дашборда',L.cache_ts?ago(L.cache_ts):'—'))+
     card('Фоновые скрипты',rows)+
-    card('Loon','<div class="btns"><button class="b" onclick="openLoon()">Открыть Loon</button></div><div class="hint" style="margin-top:8px">Логи и список запросов — внутри приложения Loon.</div>');
+    card('Loon','<div class="hint" style="margin-top:0">Логи и список запросов — внутри приложения Loon (вкладка с журналом).</div>');
 }
 function render(){
   var d=$id('dot');d.className='dot '+(SRC==='live'?'live':(SRC==='cache'?'cache':''));
@@ -470,8 +466,6 @@ function render(){
 function setTab(t){var bs=document.querySelectorAll('.tab');for(var i=0;i<bs.length;i++)bs[i].classList.remove('on');
   for(var j=0;j<bs.length;j++)if(bs[j].getAttribute('data-t')===t)bs[j].classList.add('on');
   S.tab=t;try{localStorage.setItem('rh_tab',t)}catch(e){};render()}
-function applyLoon(){try{localStorage.setItem('rh_tab','dm')}catch(e){};window.location.href='https://nsloon.com/openloon/update?sub=all'}
-function openLoon(){window.location.href='loon://'}
 document.addEventListener('click',function(ev){
   var t=ev.target.closest('.tab');if(t){setTab(t.getAttribute('data-t'));return}
   var g=ev.target.closest('.segb');if(g){S.seg=g.getAttribute('data-g');try{localStorage.setItem('rh_seg',S.seg)}catch(e){};render();return}
@@ -487,8 +481,10 @@ function armAuto(){if(S.h){clearInterval(S.h);S.h=null}if(S.auto)S.h=setInterval
 (function(){
   var t=null;try{t=localStorage.getItem('rh_tab')}catch(e){}
   if(BOOT.tab)t=BOOT.tab;
+  // сегмент: сохранённый > по текущей сети (rh_net_state) > wifi
   var sg=null;try{sg=localStorage.getItem('rh_seg')}catch(e){}
   if(sg==='wifi'||sg==='cell')S.seg=sg;
+  else{var nn=(L.net&&L.net.net)||'';S.seg=(nn==='cell'||nn==='cell-whitelist')?'cell':'wifi';}
   if(location.hash==='#dm')t='dm';else if(location.hash==='#hs')t='hs';else if(location.hash==='#nd')t='nd';else if(location.hash==='#sy')t='sy';
   if(t)S.tab=t;
   var bs=document.querySelectorAll('.tab');for(var i=0;i<bs.length;i++){bs[i].classList.remove('on');if(bs[i].getAttribute('data-t')===S.tab)bs[i].classList.add('on')}
