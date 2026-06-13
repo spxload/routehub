@@ -1,5 +1,5 @@
 // =============================================================
-// routehub-dash.js v0.4.0 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.4.1 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
@@ -10,22 +10,18 @@
 //   НАВИГАЦИЮ верхнего уровня (ссылки/форма http://rh.box/...), диспетчер
 //   делает действие и 303-редиректит назад.
 //
-// v0.4.0 (дизайн + честный чекер):
-//   * Стиль A+B: Обзор — плитки (активный узел/трафик), счётчики (узлов живо/
-//     макс Мбит/для звонков), столбики скорости, «что активно по функциям».
-//   * Активный выбор групп — $config.getConfig() в BOOT.cfg (если доступно).
-//   * АВТО-тумблер (период 15 с) вместо сегмента; по умолчанию ВЫКЛ.
-//   * БЕСШОВНЫЙ reload: активная вкладка + позиция прокрутки сохраняются
-//     (localStorage) и восстанавливаются после перезагрузки — без скачка.
-//   * Домены ПЕРЕВЁРСТАНЫ: домен+статус на всю ширину, кнопки рядом ниже
-//     (не налезают). Чекер — ЧЕСТНЫЙ ВЕРДИКТ по (режим РКН)×(обход вкл/выкл):
-//       whitelist+обход ВКЛ открылся   -> «работает ЧЕРЕЗ обход» (НЕ «ожил»)
-//       whitelist+обход ВЫКЛ открылся  -> «работает и БЕЗ обхода — можно убрать»
-//       whitelist+обход ВЫКЛ не открылся-> «без обхода мёртв — обход нужен»
-//       норма (любой)                  -> «норма: проверка обхода недостоверна»
-//     doCheck сохраняет ok + on (был ли обход) + mode — вердикт считает страница.
-//   * Кнопки Loon: оставлена рабочая loon:// (открыть Loon). Мёртвые
-//     loon://LogLists / requestLists УБРАНЫ (не открывались на k1).
+// v0.4.1 (ФИКС регрессии v0.4.0 — «не открывается»):
+//   * УБРАН readActive() / $config.getConfig(callback). В Loon 3.3.9 у
+//     getConfig нет колбэк-сигнатуры, которую я предположил -> колбэк не
+//     вызывался -> serveDashboard не доходил до $done -> страница не
+//     открывалась. Плитки «активный узел» теперь показывают лучший узел по
+//     баллу (topName) — это и был заложенный фолбэк. ACT убран из BOOT.
+//   Урок: не вызывать API Loon с догадочной сигнатурой в критическом пути.
+//
+// v0.4.0 (дизайн + честный чекер): стиль A+B (плитки/счётчики/графики),
+//   авто-тумблер (15 с, по умолч. ВЫКЛ), бесшовный reload (вкладка+скролл),
+//   переверстка доменов, ЧЕСТНЫЙ вердикт чекера по (режим)×(обход),
+//   кнопка Loon (loon://).
 //
 // МАРШРУТЫ: / (HTML+BOOT), /add /del /toggle /check /sync (-> 303 назад).
 // T6: node работает для имён УЗЛОВ (спидтест достоверен), не для групп.
@@ -33,7 +29,7 @@
 // Засев rh_watch: ТОЛЬКО whoosh.bike (обход ВКЛ).
 // =============================================================
 
-var VERSION = 'dash v0.4.0';
+var VERSION = 'dash v0.4.1';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -85,28 +81,6 @@ function q(name) {
   return '';
 }
 
-// активный выбор групп (если Loon отдаёт). Возвращает {имяГруппы: имяУзла}
-function readActive(cb) {
-  try {
-    if (typeof $config === 'undefined' || !$config.getConfig) { cb({}); return; }
-    $config.getConfig(function (conf) {
-      var out = {};
-      try {
-        var c = conf; if (typeof c === 'string') c = JSON.parse(c);
-        var groups = (c && (c.groups || c.policy_groups || c.policies)) || null;
-        if (groups && typeof groups === 'object') {
-          for (var k in groups) {
-            var g = groups[k];
-            var sel = g && (g.select || g.now || g.current || g.selected);
-            if (sel) out[k] = sel;
-          }
-        }
-      } catch (e) {}
-      cb(out);
-    });
-  } catch (e) { cb({}); }
-}
-
 function buildLocal() {
   var rkn = rj(K_RKN, {}) || {};
   var cache = rj(K_DASH, null);
@@ -125,16 +99,14 @@ function buildLocal() {
 
 function serveDashboard() {
   var local = buildLocal();
-  readActive(function (active) {
-    wGet('/dashboard?key=' + KEY, function (ok, body) {
-      var remote = null, src = 'none';
-      if (ok) { try { remote = JSON.parse(body); src = 'live'; } catch (e) { remote = null; } }
-      if (!remote && local.cache) { remote = local.cache; src = 'cache'; }
-      var boot = { local: local, remote: remote, src: src, active: active || {} };
-      var json = JSON.stringify(boot).split('<').join('\\u003c');
-      var body2 = HTML.split('__BOOT__').join(json).split('__KEY__').join(KEY);
-      htmlResp(body2);
-    });
+  wGet('/dashboard?key=' + KEY, function (ok, body) {
+    var remote = null, src = 'none';
+    if (ok) { try { remote = JSON.parse(body); src = 'live'; } catch (e) { remote = null; } }
+    if (!remote && local.cache) { remote = local.cache; src = 'cache'; }
+    var boot = { local: local, remote: remote, src: src };
+    var json = JSON.stringify(boot).split('<').join('\\u003c');
+    var body2 = HTML.split('__BOOT__').join(json).split('__KEY__').join(KEY);
+    htmlResp(body2);
   });
 }
 
@@ -324,7 +296,7 @@ a.lk{color:var(--acc);text-decoration:none}
 <script>
 var BOOT=__BOOT__;
 var KEY='__KEY__';
-var L=BOOT.local||{},W=BOOT.remote||{},SRC=BOOT.src||'none',ACT=BOOT.active||{};
+var L=BOOT.local||{},W=BOOT.remote||{},SRC=BOOT.src||'none';
 var S={tab:'ov',seg:'wifi',h:null,auto:false};
 function $id(i){return document.getElementById(i)}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
@@ -332,7 +304,6 @@ function fts(t){if(!t)return '—';var d=new Date(t);if(isNaN(d))return String(t
 function ago(t){if(!t)return '—';var s=Math.round((Date.now()-new Date(t).getTime())/1000);if(s<0)s=0;if(s<90)return s+' с назад';var m=Math.round(s/60);if(m<90)return m+' мин назад';return Math.round(m/60)+' ч назад'}
 function modeRu(m){return m==='normal'?'Норма':(m==='whitelist'?'Whitelist РКН':(m==='block'?'Блокировка':(m||'?')))}
 function getRkn(){return (L.rkn&&L.rkn.mode)?L.rkn:((W&&W.rkn)||{})}
-function actNode(group){var v=ACT[group];return v?String(v):null}
 function topName(seg){var ms=(W.nodes&&W.nodes[seg])||[];return ms.length?ms[0].name:null}
 function card(t,inner){return '<div class="card">'+(t?'<h3>'+t+'</h3>':'')+inner+'</div>'}
 function kv(k,v){return '<div class="kv"><span class="mut">'+k+'</span><b>'+v+'</b></div>'}
@@ -353,17 +324,14 @@ function speedBars(seg){
   return '<div class="bars">'+b+'</div><div class="sub" style="margin-top:6px">'+(top[0]?top[0].down+' Мбит макс':'')+' · '+top.length+' лучших</div>';
 }
 function rOv(){
-  var net=L.net||{},tr=W.traffic||{},r=getRkn();
+  var net=L.net||{},tr=W.traffic||{};
   var ms=(W.nodes&&W.nodes[S.seg])||[],alive=ms.length,maxd=ms.length?ms[0].down:0,voice=0;
   for(var v=0;v<ms.length;v++)if(ms[v].voice)voice++;
-  var aiN=actNode('RH-AI')||topName(S.seg)||'—';
-  var autoN=actNode('RH-АВТО')||actNode('RH-Главный')||'—';
+  var aiN=topName(S.seg)||'—';
   var h='';
-  // баннер режима — отдельной плашкой в шапке; тут плитки
   h+='<div class="tiles">'+
-     tile('Узел для ИИ',esc(aiN),'ChatGPT, Claude, Gemini')+
-     tile('Обычный трафик',esc(autoN),'сайты, видео, соцсети')+'</div>';
-  // трафик
+     tile('Лучший узел сейчас',esc(aiN),'по баллу спидтеста')+
+     tile('Узлов с данными',alive+(maxd?' · '+maxd+' Мбит':''),'из подписки')+'</div>';
   var tcard='';
   if(tr.left_gb!=null){
     var pct=tr.total_gb>0?Math.round(tr.used_gb/tr.total_gb*100):0;
@@ -373,14 +341,11 @@ function rOv(){
       '<div class="sub">Использовано '+(Math.round(tr.used_gb*10)/10)+' ГБ · '+pct+'%'+(tr.expire?' · до '+fts(tr.expire*1000):'')+'</div>';
   } else tcard='<div class="mut small">нет данных о трафике</div>';
   h+=card('Трафик подписки',tcard);
-  // счётчики
   h+='<div class="stats">'+
      stat(alive,'узлов с данными','var(--ok)')+
      stat(maxd||'—','Мбит макс')+
      stat(voice,'для звонков','var(--acc)')+'</div>';
-  // скорость
   h+=card('Скорость лучших узлов ('+(S.seg==='wifi'?'Wi-Fi':'сотовая')+')',speedBars(S.seg));
-  // список наблюдения кратко
   var wl=(L.watch||[]),on=0;for(var j=0;j<wl.length;j++)if(wl[j].on)on++;
   h+=card('Личный список доменов',kv('Под наблюдением',wl.length)+kv('С обходом',on));
   return h;
@@ -396,7 +361,6 @@ function rNd(){
   h+=card('Узлы ('+ms.length+')',rows||'<div class="mut small">нет данных спидтеста — наполнится после ночного теста</div>');
   return h;
 }
-// честный вердикт чекера по (режим РКН)x(обход вкл/выкл на момент проверки)
 function verdict(e){
   if(!e||!e.last)return '';
   var Lx=e.last,m=Lx.mode,on=Lx.on,ok=Lx.ok;
@@ -491,17 +455,14 @@ document.addEventListener('click',function(ev){
   var t=ev.target.closest('.tab');if(t){setTab(t.getAttribute('data-t'));return}
   var g=ev.target.closest('.segb');if(g){S.seg=g.getAttribute('data-g');try{localStorage.setItem('rh_seg',S.seg)}catch(e){};render();return}
 });
-// бесшовный reload: сохраняем вкладку/сегмент/скролл, переходим по ссылкам (мутации) штатно
 function saveScroll(){try{localStorage.setItem('rh_scroll',String(window.scrollY||window.pageYOffset||0))}catch(e){}}
 window.addEventListener('scroll',function(){saveScroll()});
 function doReload(){saveScroll();location.href='http://rh.box/'}
-// авто-тумблер
 var autoEl=$id('autoTg');
 try{S.auto=localStorage.getItem('rh_auto')==='1'}catch(e){}
 if(autoEl){autoEl.checked=S.auto;
   autoEl.addEventListener('change',function(){S.auto=autoEl.checked;try{localStorage.setItem('rh_auto',S.auto?'1':'0')}catch(e){};armAuto()})}
 function armAuto(){if(S.h){clearInterval(S.h);S.h=null}if(S.auto)S.h=setInterval(function(){if(!document.hidden)doReload()},15000)}
-// восстановление вкладки/сегмента из прошлого показа или из хэша
 (function(){
   var t=null;try{t=localStorage.getItem('rh_tab')}catch(e){}
   var sg=null;try{sg=localStorage.getItem('rh_seg')}catch(e){}
