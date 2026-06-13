@@ -1,5 +1,5 @@
 // =============================================================
-// routehub-dash.js v0.4.3 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.4.4 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
@@ -8,23 +8,18 @@
 //   туннеле) и вшивает в страницу как __BOOT__. Страница НЕ делает XHR.
 //   Мутации (add/del/toggle/check/sync) ОТДАЮТ свежий HTML (не 303).
 //
-// v0.4.3 (полевые правки k1):
-//   * УБРАНЫ нерабочие кнопки: «Применить в Loon» (nsloon.com/openloon/update —
-//     открывал белый экран, эндпоинт не подтверждён) и «Открыть Loon»
-//     (loon:// не открывался). Не подтверждённые схемы не используем.
-//     Вместо «Применить»: подпись «список применяется в Loon автоматически за ~1 мин»
-//     (Remote Rule update-interval=60). Вместо «Открыть Loon»: текст про приложение.
-//   * ТЕКУЩАЯ СЕТЬ на Обзоре: строка Wi-Fi/Сотовая + SSID/оператор (из rh_net_state,
-//     пишет netwatch при смене сети). При включённом авто-тумблере страница
-//     обновляется каждые 15 с -> после переключения сети сама подтянет новую.
-//   * Сегмент данных (Wi-Fi/сотовая) при первом показе ВЫБИРАЕТСЯ по текущей
-//     сети (rh_net_state.net): на сотовой сразу показываются сотовые узлы.
+// v0.4.4 (ДИАГНОСТИКА отправки в Worker):
+//   ПРОБЛЕМА (k1): домен попадает в локальный rh_watch (виден в дашборде),
+//   но в KV Worker не попадает — значит wPost('/addrule') не доходит или
+//   Worker отвечает ошибкой. wPost теперь пробрасывает статус и тело
+//   ответа, doAdd показывает их в flash — увидим точную причину
+//   (bad json / bad domain / unknown key / статус 0 = не дошёл).
 //
 // T6: node работает для имён УЗЛОВ (спидтест достоверен), не для групп.
 // Засев rh_watch: ТОЛЬКО whoosh.bike (обход ВКЛ).
 // =============================================================
 
-var VERSION = 'dash v0.4.3';
+var VERSION = 'dash v0.4.4';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -48,9 +43,13 @@ function watchLoad() {
 }
 function watchSave(w) { wj(K_WATCH, w); }
 
+// колбэк: (ok, body, status, errMsg)
 function wPost(path, body, cb) {
-  $httpClient.post({ url: ORIGIN + path, timeout: 5000, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-    function (e, r, b) { cb(!e && r && r.status >= 200 && r.status < 300, b || ''); });
+  $httpClient.post({ url: ORIGIN + path, timeout: 8000, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    function (e, r, b) {
+      var st = (r && r.status) || 0;
+      cb(!e && st >= 200 && st < 300, b || '', st, e ? String(e.message || e) : '');
+    });
 }
 function wGet(path, cb) {
   $httpClient.get({ url: ORIGIN + path, timeout: 6000 }, function (e, r, b) { cb(!e && r && r.status >= 200 && r.status < 300, b || ''); });
@@ -109,7 +108,12 @@ function doAdd() {
   for (var i = 0; i < w.length; i++) if (w[i].d === d) exists = true;
   if (exists) { serveDashboard('dm', d + ' уже в списке'); return; }
   w.push({ d: d, on: true, ts: Date.now() }); watchSave(w);
-  wPost('/addrule', { key: KEY, domain: d }, function (ok) { serveDashboard('dm', ok ? (d + ' добавлен и отправлен на сервер') : (d + ' добавлен локально; сервер недоступен — нажми «Синхронизировать»')); });
+  wPost('/addrule', { key: KEY, domain: d }, function (ok, resp, status, err) {
+    var msg;
+    if (ok) msg = d + ' добавлен и отправлен на сервер';
+    else msg = d + ' добавлен локально. Сервер: статус=' + status + (err ? (', ошибка=' + err) : '') + (resp ? (', ответ=' + String(resp).slice(0, 120)) : '');
+    serveDashboard('dm', msg);
+  });
 }
 function doDel() {
   var d = q('d').toLowerCase();
@@ -125,7 +129,7 @@ function doToggle() {
   for (var i = 0; i < w.length; i++) if (w[i].d === d) e = w[i];
   if (!e) { serveDashboard('dm'); return; }
   e.on = !e.on; watchSave(w);
-  wPost(e.on ? '/addrule' : '/delrule', { key: KEY, domain: d }, function (ok) { serveDashboard('dm', d + (e.on ? ' — обход включён' : ' — обход выключен') + (ok ? '' : ' (сервер недоступен)')); });
+  wPost(e.on ? '/addrule' : '/delrule', { key: KEY, domain: d }, function (ok, resp, status) { serveDashboard('dm', d + (e.on ? ' — обход включён' : ' — обход выключен') + (ok ? '' : ' (сервер статус=' + status + ')')); });
 }
 function doCheck() {
   var d = q('d').toLowerCase();
@@ -160,13 +164,13 @@ function doSync() {
     var toAdd = [], toDel = [];
     for (var d1 in localOn) if (!remote[d1]) toAdd.push(d1);
     for (var d2 in remote) if (!localOn[d2]) toDel.push(d2);
-    var added = 0, removed = 0;
+    var added = 0, removed = 0, errs = '';
     function doA(k) {
       if (k >= toAdd.length) { doD(0); return; }
-      wPost('/addrule', { key: KEY, domain: toAdd[k] }, function (o) { if (o) added++; doA(k + 1); });
+      wPost('/addrule', { key: KEY, domain: toAdd[k] }, function (o, resp, status) { if (o) added++; else errs += ' [' + toAdd[k] + ':' + status + ']'; doA(k + 1); });
     }
     function doD(k) {
-      if (k >= toDel.length) { serveDashboard('dm', 'Синхронизировано: добавлено ' + added + ', убрано ' + removed); return; }
+      if (k >= toDel.length) { serveDashboard('dm', 'Синхронизировано: добавлено ' + added + ', убрано ' + removed + (errs ? ('. Ошибки:' + errs) : '')); return; }
       wPost('/delrule', { key: KEY, domain: toDel[k] }, function (o) { if (o) removed++; doD(k + 1); });
     }
     doA(0);
@@ -196,7 +200,7 @@ header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + 
 h1{font-size:22px;margin:0;display:flex;align-items:center;gap:8px}
 .dot{width:10px;height:10px;border-radius:50%;background:var(--grey)}
 .dot.live{background:var(--ok)}.dot.cache{background:var(--warn)}
-.flash{margin-top:8px;border-radius:11px;padding:9px 12px;font-size:14px;background:rgba(31,157,107,.14);color:var(--ok)}
+.flash{margin-top:8px;border-radius:11px;padding:9px 12px;font-size:14px;background:rgba(31,157,107,.14);color:var(--ok);word-break:break-word}
 .banner{margin-top:8px;border-radius:12px;padding:9px 12px;font-size:14px;display:none}
 .banner.show{display:block}
 .banner.normal{background:rgba(31,157,107,.12);color:var(--ok)}
@@ -328,11 +332,9 @@ function rOv(){
   var ms=(W.nodes&&W.nodes[S.seg])||[],alive=ms.length,maxd=ms.length?ms[0].down:0,voice=0;
   for(var v=0;v<ms.length;v++)if(ms[v].voice)voice++;
   var h='';
-  // плитки — РАЗНОЕ
   h+='<div class="tiles">'+
      tile('Режим сети',modeRu(r.mode),r.ts?ago(r.ts):'—')+
      tile('Подключение',netRu(net.net),(net.ssid?esc(net.ssid):(net.operator?esc(net.operator):(net.ts?ago(net.ts):'—'))))+'</div>';
-  // трафик
   var tcard='';
   if(tr.left_gb!=null){
     var pct=tr.total_gb>0?Math.round(tr.used_gb/tr.total_gb*100):0;
@@ -342,14 +344,11 @@ function rOv(){
       '<div class="sub">Использовано '+(Math.round(tr.used_gb*10)/10)+' ГБ · '+pct+'%'+(tr.expire?' · до '+fts(tr.expire*1000):'')+'</div>';
   } else tcard='<div class="mut small">нет данных о трафике</div>';
   h+=card('Трафик подписки',tcard);
-  // счётчики
   h+='<div class="stats">'+
      stat(alive,'узлов с данными','var(--ok)')+
      stat(maxd||'—','Мбит макс')+
      stat(voice,'для звонков','var(--acc)')+'</div>';
-  // скорость
   h+=card('Скорость лучших узлов ('+(S.seg==='wifi'?'Wi-Fi':'сотовая')+')',speedBars(S.seg));
-  // список доменов
   var wl=(L.watch||[]),on=0;for(var j=0;j<wl.length;j++)if(wl[j].on)on++;
   h+=card('Личный список доменов',kv('Под наблюдением',wl.length)+kv('С обходом',on)+'<div class="hint" style="margin-top:4px">Управление — на вкладке «Домены».</div>');
   return h;
@@ -481,7 +480,6 @@ function armAuto(){if(S.h){clearInterval(S.h);S.h=null}if(S.auto)S.h=setInterval
 (function(){
   var t=null;try{t=localStorage.getItem('rh_tab')}catch(e){}
   if(BOOT.tab)t=BOOT.tab;
-  // сегмент: сохранённый > по текущей сети (rh_net_state) > wifi
   var sg=null;try{sg=localStorage.getItem('rh_seg')}catch(e){}
   if(sg==='wifi'||sg==='cell')S.seg=sg;
   else{var nn=(L.net&&L.net.net)||'';S.seg=(nn==='cell'||nn==='cell-whitelist')?'cell':'wifi';}
