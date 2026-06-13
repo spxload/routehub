@@ -1,40 +1,39 @@
 // =============================================================
-// routehub-dash.js v0.3.0 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.4.0 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
-// ПОЧЕМУ ПЕРЕПИСАНО (полевой тест k1 2026-06-13):
-//   v0.2.x грузился бесконечно (скелетон, точка серая, кнопки мертвы).
-//   Причина: страница на http://rh.box делала XHR на /local и /dashboard.
-//     - /dashboard -> https://...workers.dev = MIXED CONTENT (https со
-//       страницы http) -> Safari БЛОКИРУЕТ запрос наглухо.
-//     - XHR-подзапросы страницы на /local Loon-перехват http-request НЕ
-//       ловит надёжно (ловит навигацию верхнего уровня, не fetch/XHR).
-//   РЕШЕНИЕ — BOOTSTRAP: диспетчер при отдаче HTML САМ собирает все данные
-//     (локальные из $persistentStore + Worker /dashboard через $httpClient
-//     В ТУННЕЛЕ — не mixed-content) и вшивает в страницу как __BOOT__.
-//     Страница рисует МГНОВЕННО из BOOT, без единого XHR.
-//   МУТАЦИИ (add/del/toggle/check) — через НАВИГАЦИЮ верхнего уровня
-//     (location.href = http://rh.box/add?d=...), а не XHR: навигация
-//     перехватывается надёжно. Диспетчер выполняет действие и редиректит
-//     назад на http://rh.box/#dm (303). Кнопки снова рабочие.
-//   Обновление «вживую»: тап по сегменту Live перезагружает страницу
-//     (location.reload) — bootstrap соберёт свежие данные. Авто-таймер
-//     тоже делает reload (не XHR).
+// АРХИТЕКТУРА (с v0.3.0): BOOTSTRAP — диспетчер при отдаче HTML САМ собирает
+//   данные (локальные из $persistentStore + Worker /dashboard через $httpClient
+//   в туннеле) и вшивает в страницу как __BOOT__. Страница НЕ делает XHR
+//   (mixed-content https + перехват подзапросов не работают). Мутации — через
+//   НАВИГАЦИЮ верхнего уровня (ссылки/форма http://rh.box/...), диспетчер
+//   делает действие и 303-редиректит назад.
 //
-// МАРШРУТЫ:
-//   GET /            -> HTML со вшитым __BOOT__ (всё состояние внутри).
-//   GET /add?d=      -> добавить домен (обход ВКЛ) + Worker /addrule -> 303 /#dm
-//   GET /del?d=      -> удалить домен (+ /delrule если был ВКЛ)      -> 303 /#dm
-//   GET /toggle?d=   -> переключить обход (+ add/delrule)            -> 303 /#dm
-//   GET /check?d=    -> проверить домен fetch-ом по правилам конфига -> 303 /#dm
-//   GET /sync        -> сверка Worker /mylist vs локальные ВКЛ       -> 303 /#dm
+// v0.4.0 (дизайн + честный чекер):
+//   * Стиль A+B: Обзор — плитки (активный узел/трафик), счётчики (узлов живо/
+//     макс Мбит/для звонков), столбики скорости, «что активно по функциям».
+//   * Активный выбор групп — $config.getConfig() в BOOT.cfg (если доступно).
+//   * АВТО-тумблер (период 15 с) вместо сегмента; по умолчанию ВЫКЛ.
+//   * БЕСШОВНЫЙ reload: активная вкладка + позиция прокрутки сохраняются
+//     (localStorage) и восстанавливаются после перезагрузки — без скачка.
+//   * Домены ПЕРЕВЁРСТАНЫ: домен+статус на всю ширину, кнопки рядом ниже
+//     (не налезают). Чекер — ЧЕСТНЫЙ ВЕРДИКТ по (режим РКН)×(обход вкл/выкл):
+//       whitelist+обход ВКЛ открылся   -> «работает ЧЕРЕЗ обход» (НЕ «ожил»)
+//       whitelist+обход ВЫКЛ открылся  -> «работает и БЕЗ обхода — можно убрать»
+//       whitelist+обход ВЫКЛ не открылся-> «без обхода мёртв — обход нужен»
+//       норма (любой)                  -> «норма: проверка обхода недостоверна»
+//     doCheck сохраняет ok + on (был ли обход) + mode — вердикт считает страница.
+//   * Кнопки Loon: оставлена рабочая loon:// (открыть Loon). Мёртвые
+//     loon://LogLists / requestLists УБРАНЫ (не открывались на k1).
 //
-// T1/T6: проверка доменов — обычный fetch (по правилам конфига), node НЕ
-//   используется. Засев rh_watch: ТОЛЬКО whoosh.bike (обход ВКЛ).
+// МАРШРУТЫ: / (HTML+BOOT), /add /del /toggle /check /sync (-> 303 назад).
+// T6: node работает для имён УЗЛОВ (спидтест достоверен), не для групп.
+//   Чекер node НЕ использует — обычный fetch по правилам конфига.
+// Засев rh_watch: ТОЛЬКО whoosh.bike (обход ВКЛ).
 // =============================================================
 
-var VERSION = 'dash v0.3.0';
+var VERSION = 'dash v0.4.0';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -66,16 +65,13 @@ function wGet(path, cb) {
   $httpClient.get({ url: ORIGIN + path, timeout: 6000 }, function (e, r, b) { cb(!e && r && r.status >= 200 && r.status < 300, b || ''); });
 }
 
-// HTML-ответ
 function htmlResp(body) {
   $done({ response: { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, body: body } });
 }
-// редирект назад на дашборд (после мутации)
 function redirect(hash) {
   $done({ response: { status: 303, headers: { 'Location': 'http://rh.box/' + (hash || ''), 'Cache-Control': 'no-store' }, body: '' } });
 }
 
-// --- разбор URL ---
 var URLS = String($request && $request.url || '');
 var mm = URLS.match(/^https?:\/\/[^\/]+(\/[^?]*)?(?:\?(.*))?$/);
 var PATH = (mm && mm[1]) || '/';
@@ -89,10 +85,28 @@ function q(name) {
   return '';
 }
 
-// =============================================================
-// Сборка BOOT — всё состояние, вшиваемое в страницу.
-// local: watch, rkn, net, runlog, cache(rh_dash). remote: Worker /dashboard.
-// =============================================================
+// активный выбор групп (если Loon отдаёт). Возвращает {имяГруппы: имяУзла}
+function readActive(cb) {
+  try {
+    if (typeof $config === 'undefined' || !$config.getConfig) { cb({}); return; }
+    $config.getConfig(function (conf) {
+      var out = {};
+      try {
+        var c = conf; if (typeof c === 'string') c = JSON.parse(c);
+        var groups = (c && (c.groups || c.policy_groups || c.policies)) || null;
+        if (groups && typeof groups === 'object') {
+          for (var k in groups) {
+            var g = groups[k];
+            var sel = g && (g.select || g.now || g.current || g.selected);
+            if (sel) out[k] = sel;
+          }
+        }
+      } catch (e) {}
+      cb(out);
+    });
+  } catch (e) { cb({}); }
+}
+
 function buildLocal() {
   var rkn = rj(K_RKN, {}) || {};
   var cache = rj(K_DASH, null);
@@ -111,21 +125,19 @@ function buildLocal() {
 
 function serveDashboard() {
   var local = buildLocal();
-  // Worker /dashboard — серверным запросом В ТУННЕЛЕ (не mixed-content)
-  wGet('/dashboard?key=' + KEY, function (ok, body) {
-    var remote = null, src = 'none';
-    if (ok) { try { remote = JSON.parse(body); src = 'live'; } catch (e) { remote = null; } }
-    if (!remote && local.cache) { remote = local.cache; src = 'cache'; }
-    var boot = { local: local, remote: remote, src: src };
-    var json = JSON.stringify(boot).split('<').join('\\u003c'); // безопасно в <script>
-    var body2 = HTML.split('__BOOT__').join(json).split('__KEY__').join(KEY);
-    htmlResp(body2);
+  readActive(function (active) {
+    wGet('/dashboard?key=' + KEY, function (ok, body) {
+      var remote = null, src = 'none';
+      if (ok) { try { remote = JSON.parse(body); src = 'live'; } catch (e) { remote = null; } }
+      if (!remote && local.cache) { remote = local.cache; src = 'cache'; }
+      var boot = { local: local, remote: remote, src: src, active: active || {} };
+      var json = JSON.stringify(boot).split('<').join('\\u003c');
+      var body2 = HTML.split('__BOOT__').join(json).split('__KEY__').join(KEY);
+      htmlResp(body2);
+    });
   });
 }
 
-// =============================================================
-// Мутации (через навигацию -> 303 назад)
-// =============================================================
 function doAdd() {
   var d = q('d').toLowerCase();
   if (!DOMAIN_RE.test(d) || d.length > 80) { redirect('#dm'); return; }
@@ -154,10 +166,12 @@ function doCheck() {
   var d = q('d').toLowerCase();
   if (!DOMAIN_RE.test(d)) { redirect('#dm'); return; }
   var rkn = rj(K_RKN, {}) || {};
+  var w0 = watchLoad(), wasOn = false;
+  for (var z = 0; z < w0.length; z++) if (w0[z].d === d) wasOn = !!w0[z].on;
   var t0 = Date.now();
   function fin(okFlag, status) {
     var ms = Date.now() - t0, w = watchLoad();
-    for (var i = 0; i < w.length; i++) if (w[i].d === d) { w[i].last = { ok: okFlag, status: status || 0, ms: ms, ts: Date.now(), mode: rkn.mode || '?' }; watchSave(w); break; }
+    for (var i = 0; i < w.length; i++) if (w[i].d === d) { w[i].last = { ok: okFlag, status: status || 0, ms: ms, ts: Date.now(), mode: rkn.mode || '?', on: wasOn }; watchSave(w); break; }
     redirect('#dm');
   }
   $httpClient.get({ url: 'https://' + d + '/', timeout: 4000 }, function (e1, r1) {
@@ -194,8 +208,7 @@ function doSync() {
 }
 
 // =============================================================
-// HTML (вшивается __BOOT__ = всё состояние, __KEY__ = ключ).
-// Без обратных кавычек и "${" внутри script страницы.
+// HTML (вшивается __BOOT__ и __KEY__). Без обратных кавычек и "${" внутри.
 // =============================================================
 var HTML = `<!DOCTYPE html>
 <html lang="ru">
@@ -208,57 +221,84 @@ var HTML = `<!DOCTYPE html>
 <link rel="apple-touch-icon" href="https://routehub.proton4iker.workers.dev/apple-touch-icon.png">
 <title>RouteHub</title>
 <style>
-:root{--bg:#F4F6F5;--card:#FFFFFF;--ink:#10211C;--mut:#5E6E68;--line:#E2E8E5;--acc:#0E7A5F;--acc2:#5DCAA5;--ok:#1F9D6B;--warn:#C7900B;--bad:#C0392B;--grey:#9AA7A1;--tabbg:rgba(255,255,255,.92)}
-@media(prefers-color-scheme:dark){:root{--bg:#0B1512;--card:#13201B;--ink:#E7F0EC;--mut:#8FA39B;--line:#1E2E27;--acc:#5DCAA5;--acc2:#7FE0C0;--ok:#3DBE8B;--warn:#D9A93C;--bad:#E06A5A;--grey:#5E6E68;--tabbg:rgba(15,24,20,.92)}}
+:root{--bg:#F4F6F5;--card:#FFFFFF;--card2:#EEF2F0;--ink:#10211C;--mut:#5E6E68;--line:#E2E8E5;--acc:#0E7A5F;--acc2:#5DCAA5;--ok:#1F9D6B;--warn:#C7900B;--bad:#C0392B;--grey:#9AA7A1;--tabbg:rgba(255,255,255,.92)}
+@media(prefers-color-scheme:dark){:root{--bg:#0B1512;--card:#13201B;--card2:#0F1A16;--ink:#E7F0EC;--mut:#8FA39B;--line:#1E2E27;--acc:#5DCAA5;--acc2:#7FE0C0;--ok:#3DBE8B;--warn:#D9A93C;--bad:#E06A5A;--grey:#5E6E68;--tabbg:rgba(15,24,20,.92)}}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,system-ui,'SF Pro Text',sans-serif}
-body{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+body{padding-bottom:calc(78px + env(safe-area-inset-bottom))}
 header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 16px 8px}
 h1{font-size:22px;margin:0;display:flex;align-items:center;gap:8px}
 .dot{width:10px;height:10px;border-radius:50%;background:var(--grey)}
-.dot.live{background:var(--ok)}.dot.cache{background:var(--warn)}.dot.ls{background:var(--grey)}
-.banner{margin-top:8px;border-radius:12px;padding:8px 12px;font-size:14px;display:none}
+.dot.live{background:var(--ok)}.dot.cache{background:var(--warn)}
+.banner{margin-top:8px;border-radius:12px;padding:9px 12px;font-size:14px;display:none}
 .banner.show{display:block}
 .banner.normal{background:rgba(31,157,107,.12);color:var(--ok)}
-.banner.whitelist{background:rgba(199,144,11,.14);color:var(--warn)}
+.banner.whitelist{background:rgba(199,144,11,.16);color:var(--warn)}
 .banner.block{background:rgba(192,57,43,.14);color:var(--bad)}
-.live{display:flex;gap:6px;margin-top:8px;align-items:center;font-size:13px;color:var(--mut)}
-.seg{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:9px;overflow:hidden}
-.seg button{border:0;background:transparent;color:var(--mut);padding:5px 10px;font-size:13px}
-.seg button.on{background:var(--acc);color:#fff}
+.toolbar{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:13px;color:var(--mut)}
+.refresh{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);color:var(--acc);border-radius:9px;padding:5px 11px;text-decoration:none;font-size:13px}
+.refresh:active{transform:scale(.97)}
+.auto{display:inline-flex;align-items:center;gap:7px;margin-left:auto}
+.tg{position:relative;width:42px;height:25px;display:inline-block}
+.tg input{display:none}
+.tg i{position:absolute;inset:0;border-radius:99px;background:var(--line);transition:.15s}
+.tg i:after{content:'';position:absolute;top:3px;left:3px;width:19px;height:19px;border-radius:50%;background:#fff;transition:.15s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.tg input:checked+i{background:var(--ok)}
+.tg input:checked+i:after{left:20px}
 main{padding:4px 16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:10px 0}
-.card h3{margin:0 0 6px;font-size:13px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 14px;margin:10px 0}
+.card h3{margin:0 0 8px;font-size:12px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
 .kv{display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:15px}
 .kv b{font-weight:600}
 .mut{color:var(--mut)}.small{font-size:13px}
+.tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 13px}
+.tile .lbl{font-size:12px;color:var(--mut);margin-bottom:5px}
+.tile .big{font-size:18px;font-weight:600;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile .sub{font-size:12px;color:var(--mut);margin-top:3px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:11px 6px;text-align:center}
+.stat .n{font-size:21px;font-weight:600;line-height:1}
+.stat .c{font-size:11px;color:var(--mut);margin-top:4px}
+.bars{display:flex;align-items:flex-end;gap:5px;height:46px;margin-top:4px}
+.bars .bar{flex:1;border-radius:3px 3px 0 0;min-height:3px}
+.prog{height:7px;background:var(--card2);border-radius:4px;overflow:hidden;margin:7px 0 3px}
+.prog>div{height:100%;border-radius:4px}
 .row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}
 .grow{flex:1;min-width:0}
 .nm{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sub{font-size:12px;color:var(--mut)}
+.sub{font-size:12px;color:var(--mut);margin-top:1px}
 .chip{font-size:11px;padding:2px 8px;border-radius:99px;white-space:nowrap}
-.chip.ok{background:rgba(31,157,107,.14);color:var(--ok)}
-.chip.bad{background:rgba(192,57,43,.14);color:var(--bad)}
-.chip.na{background:rgba(154,167,161,.18);color:var(--mut)}
-a.b,button.b{display:inline-block;border:1px solid var(--line);background:var(--card);color:var(--acc);border-radius:10px;padding:7px 12px;font-size:14px;text-decoration:none}
+.chip.ok{background:rgba(31,157,107,.16);color:var(--ok)}
+.chip.bad{background:rgba(192,57,43,.16);color:var(--bad)}
+.chip.warn{background:rgba(199,144,11,.18);color:var(--warn)}
+.chip.na{background:rgba(154,167,161,.2);color:var(--mut)}
+a.b,button.b{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line);background:var(--card);color:var(--acc);border-radius:10px;padding:7px 13px;font-size:14px;text-decoration:none}
 a.b:active,button.b:active,.tab:active{transform:scale(.98)}
 a.b.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+a.b.dz{color:var(--bad);border-color:var(--line)}
 .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-input.inp{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:8px 10px;font-size:15px;min-width:0}
+input.inp{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:9px 11px;font-size:15px;min-width:0}
 .addl{display:flex;gap:8px}
-.sw{display:inline-block;font-size:12px;padding:4px 9px;border-radius:99px;border:1px solid var(--line);text-decoration:none}
+.dmitem{padding:11px 0;border-bottom:1px solid var(--line)}
+.dmitem:last-child{border-bottom:0}
+.dmtop{display:flex;align-items:center;gap:8px}
+.dmname{font-size:16px;font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dmact{display:flex;gap:7px;margin-top:8px}
+.dmact a{flex:1}
+.sw{display:inline-flex;align-items:center;justify-content:center;font-size:13px;padding:7px 12px;border-radius:10px;text-decoration:none;border:1px solid var(--line)}
 .sw.on{background:rgba(31,157,107,.16);color:var(--ok);border-color:transparent}
-.sw.off{background:rgba(154,167,161,.16);color:var(--mut)}
-.ring{flex:none}
+.sw.off{background:rgba(154,167,161,.18);color:var(--mut)}
+.verdict{font-size:12px;margin-top:6px;line-height:1.45}
 nav{position:fixed;left:0;right:0;bottom:0;background:var(--tabbg);backdrop-filter:blur(14px);border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
 .tab{flex:1;border:0;background:transparent;color:var(--mut);font-size:10px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0}
 .tab.on{color:var(--acc)}
 .tab svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
-.hint{font-size:12px;color:var(--mut);margin-top:6px}
-.ev{padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
+.hint{font-size:12px;color:var(--mut);margin-top:8px;line-height:1.45}
+.ev{padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
 .ev:last-child{border-bottom:0}
-.ev .t{color:var(--mut);font-size:12px}
+.ev .t{color:var(--mut);font-size:12px;margin-top:1px}
 .gap{color:var(--warn)}
 a.lk{color:var(--acc);text-decoration:none}
 </style>
@@ -267,12 +307,10 @@ a.lk{color:var(--acc);text-decoration:none}
 <header>
   <h1><span class="dot" id="dot"></span> RouteHub <span class="mut small" id="hkey"></span></h1>
   <div class="banner" id="banner"></div>
-  <div class="live">
-    Обновить:
-    <span class="seg" id="liveSeg">
-      <button data-s="0" class="on">сейчас</button><button data-s="15">15с</button><button data-s="30">30с</button>
-    </span>
-    <span id="upd" class="mut"></span>
+  <div class="toolbar">
+    <a class="refresh" href="http://rh.box/"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>Обновить</a>
+    <span id="upd"></span>
+    <label class="auto">Авто<span class="tg"><input type="checkbox" id="autoTg"><i></i></span></label>
   </div>
 </header>
 <main id="main"></main>
@@ -286,55 +324,98 @@ a.lk{color:var(--acc);text-decoration:none}
 <script>
 var BOOT=__BOOT__;
 var KEY='__KEY__';
-var L=BOOT.local||{},W=BOOT.remote||{},SRC=BOOT.src||'none';
-var S={tab:'ov',seg:'wifi',h:null};
+var L=BOOT.local||{},W=BOOT.remote||{},SRC=BOOT.src||'none',ACT=BOOT.active||{};
+var S={tab:'ov',seg:'wifi',h:null,auto:false};
 function $id(i){return document.getElementById(i)}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function fts(t){if(!t)return '—';var d=new Date(t);if(isNaN(d))return String(t);function p(n){return (n<10?'0':'')+n}return p(d.getDate())+'.'+p(d.getMonth()+1)+' '+p(d.getHours())+':'+p(d.getMinutes())}
 function ago(t){if(!t)return '—';var s=Math.round((Date.now()-new Date(t).getTime())/1000);if(s<0)s=0;if(s<90)return s+' с назад';var m=Math.round(s/60);if(m<90)return m+' мин назад';return Math.round(m/60)+' ч назад'}
 function modeRu(m){return m==='normal'?'Норма':(m==='whitelist'?'Whitelist РКН':(m==='block'?'Блокировка':(m||'?')))}
 function getRkn(){return (L.rkn&&L.rkn.mode)?L.rkn:((W&&W.rkn)||{})}
+function actNode(group){var v=ACT[group];return v?String(v):null}
+function topName(seg){var ms=(W.nodes&&W.nodes[seg])||[];return ms.length?ms[0].name:null}
 function card(t,inner){return '<div class="card">'+(t?'<h3>'+t+'</h3>':'')+inner+'</div>'}
 function kv(k,v){return '<div class="kv"><span class="mut">'+k+'</span><b>'+v+'</b></div>'}
+function tile(lbl,big,sub){return '<div class="tile"><div class="lbl">'+lbl+'</div><div class="big">'+big+'</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'</div>'}
+function stat(n,c,col){return '<div class="stat"><div class="n"'+(col?' style="color:'+col+'"':'')+'>'+n+'</div><div class="c">'+c+'</div></div>'}
 function ring(sc){
   var col='var(--grey)',v=0;
   if(typeof sc==='number'){v=Math.max(0,Math.min(100,sc));col=sc>=70?'var(--ok)':(sc>=40?'var(--warn)':'var(--bad)')}
   var C=2*Math.PI*13,d=(C*v/100).toFixed(1);
   return '<svg class="ring" width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="13" fill="none" stroke="var(--line)" stroke-width="3.4"/><circle cx="18" cy="18" r="13" fill="none" stroke="'+col+'" stroke-width="3.4" stroke-linecap="round" stroke-dasharray="'+d+' '+C.toFixed(1)+'" transform="rotate(-90 18 18)"/><text x="18" y="22" text-anchor="middle" font-size="11" fill="var(--ink)">'+(typeof sc==='number'?sc:'·')+'</text></svg>';
 }
+function speedBars(seg){
+  var ms=(W.nodes&&W.nodes[seg])||[];if(!ms.length)return '<div class="mut small">нет данных спидтеста</div>';
+  var top=ms.slice(0,7),max=top[0]&&top[0].down||1,b='';
+  for(var i=0;i<top.length;i++){var n=top[i],hp=Math.max(8,Math.round((n.down/max)*100));
+    var col=n.score>=70?'var(--ok)':(n.score>=40?'var(--warn)':'var(--bad)');
+    b+='<div class="bar" style="height:'+hp+'%;background:'+col+'" title="'+esc(n.name)+' '+n.down+' Мбит"></div>'}
+  return '<div class="bars">'+b+'</div><div class="sub" style="margin-top:6px">'+(top[0]?top[0].down+' Мбит макс':'')+' · '+top.length+' лучших</div>';
+}
 function rOv(){
   var net=L.net||{},tr=W.traffic||{},r=getRkn();
+  var ms=(W.nodes&&W.nodes[S.seg])||[],alive=ms.length,maxd=ms.length?ms[0].down:0,voice=0;
+  for(var v=0;v<ms.length;v++)if(ms[v].voice)voice++;
+  var aiN=actNode('RH-AI')||topName(S.seg)||'—';
+  var autoN=actNode('RH-АВТО')||actNode('RH-Главный')||'—';
   var h='';
-  h+=card('Состояние',
-    kv('Режим сети',modeRu(r.mode)+' <span class="mut small">'+ago(r.ts)+'</span>')+
-    kv('Сеть устройства',esc(net.net||'—')+(net.ssid?' · '+esc(net.ssid):'')+(net.operator?' · '+esc(net.operator):''))+
-    kv('Источник',SRC==='live'?'Worker (live)':(SRC==='cache'?'кэш rh_dash':'нет связи')));
-  h+=card('Подписка',
-    kv('Узлов',(W.sub_nodes!=null?W.sub_nodes:'—')+' <span class="mut small">обновл. '+(W.sub_age_min!=null?W.sub_age_min+' мин назад':'—')+'</span>')+
-    (tr.left_gb!=null?kv('Трафик',(Math.round(tr.used_gb*10)/10)+' / '+(Math.round(tr.total_gb*10)/10)+' ГБ · ост. '+(Math.round(tr.left_gb*10)/10)):'')+
-    (tr.expire?kv('Действует до',fts(tr.expire*1000)):''));
-  var ms=(W.nodes&&W.nodes[S.seg])||[];var top=ms.slice(0,3),t3='';
-  for(var i=0;i<top.length;i++){t3+='<div class="row">'+ring(top[i].score)+'<div class="grow"><div class="nm">'+esc(top[i].name)+'</div><div class="sub">'+top[i].down+' Мбит · '+top[i].rtt+' мс</div></div></div>'}
-  h+=card('Топ узлов ('+(S.seg==='wifi'?'Wi-Fi':'сотовая')+')',t3||'<div class="mut small">нет данных спидтеста</div>');
+  // баннер режима — отдельной плашкой в шапке; тут плитки
+  h+='<div class="tiles">'+
+     tile('Узел для ИИ',esc(aiN),'ChatGPT, Claude, Gemini')+
+     tile('Обычный трафик',esc(autoN),'сайты, видео, соцсети')+'</div>';
+  // трафик
+  var tcard='';
+  if(tr.left_gb!=null){
+    var pct=tr.total_gb>0?Math.round(tr.used_gb/tr.total_gb*100):0;
+    var pcol=pct<70?'var(--ok)':(pct<90?'var(--warn)':'var(--bad)');
+    tcard=kv('Осталось',(Math.round(tr.left_gb*10)/10)+' ГБ из '+(Math.round(tr.total_gb*10)/10))+
+      '<div class="prog"><div style="width:'+pct+'%;background:'+pcol+'"></div></div>'+
+      '<div class="sub">Использовано '+(Math.round(tr.used_gb*10)/10)+' ГБ · '+pct+'%'+(tr.expire?' · до '+fts(tr.expire*1000):'')+'</div>';
+  } else tcard='<div class="mut small">нет данных о трафике</div>';
+  h+=card('Трафик подписки',tcard);
+  // счётчики
+  h+='<div class="stats">'+
+     stat(alive,'узлов с данными','var(--ok)')+
+     stat(maxd||'—','Мбит макс')+
+     stat(voice,'для звонков','var(--acc)')+'</div>';
+  // скорость
+  h+=card('Скорость лучших узлов ('+(S.seg==='wifi'?'Wi-Fi':'сотовая')+')',speedBars(S.seg));
+  // список наблюдения кратко
   var wl=(L.watch||[]),on=0;for(var j=0;j<wl.length;j++)if(wl[j].on)on++;
-  h+=card('Личный список',kv('Под наблюдением',wl.length)+kv('С обходом',on));
-  h+=card('Версии',kv('Конфиг',esc(W.conf_ver||'—'))+kv('Worker',esc(W.worker||'—'))+kv('Дашборд',esc(L.ver||'—')));
+  h+=card('Личный список доменов',kv('Под наблюдением',wl.length)+kv('С обходом',on));
   return h;
 }
 function rNd(){
   var ms=(W.nodes&&W.nodes[S.seg])||[];
-  var h='<div class="card"><div class="seg" id="ndSeg"><button data-g="wifi" class="'+(S.seg==='wifi'?'on':'')+'">Wi-Fi</button><button data-g="cell" class="'+(S.seg==='cell'?'on':'')+'">Сотовая</button></div></div>';
+  var h='<div class="card"><div style="display:flex;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden">'+
+    '<button class="segb" data-g="wifi" style="flex:1;border:0;padding:8px;font-size:14px;background:'+(S.seg==='wifi'?'var(--acc)':'transparent')+';color:'+(S.seg==='wifi'?'#fff':'var(--mut)')+'">Wi-Fi</button>'+
+    '<button class="segb" data-g="cell" style="flex:1;border:0;padding:8px;font-size:14px;background:'+(S.seg==='cell'?'var(--acc)':'transparent')+';color:'+(S.seg==='cell'?'#fff':'var(--mut)')+'">Сотовая</button></div></div>';
   var rows='';
   for(var i=0;i<ms.length;i++){var n=ms[i];
-    rows+='<div class="row">'+ring(n.score)+'<div class="grow"><div class="nm">'+esc(n.name)+(n.voice?' ☎':'')+'</div><div class="sub">'+n.down+' Мбит · rtt '+n.rtt+' · jit '+n.jit+' · потери '+n.bl+'‰ · ок '+n.pct+'%</div></div></div>'}
-  h+=card('Узлы ('+ms.length+')',rows||'<div class="mut small">нет данных спидтеста</div>');
+    rows+='<div class="row">'+ring(n.score)+'<div class="grow"><div class="nm">'+esc(n.name)+(n.voice?' <span class="chip ok">звонки</span>':'')+'</div><div class="sub">'+n.down+' Мбит · пинг '+n.rtt+' мс · джиттер '+n.jit+' · потери '+n.bl+'‰</div></div></div>'}
+  h+=card('Узлы ('+ms.length+')',rows||'<div class="mut small">нет данных спидтеста — наполнится после ночного теста</div>');
   return h;
+}
+// честный вердикт чекера по (режим РКН)x(обход вкл/выкл на момент проверки)
+function verdict(e){
+  if(!e||!e.last)return '';
+  var Lx=e.last,m=Lx.mode,on=Lx.on,ok=Lx.ok;
+  var t='';
+  if(m==='whitelist'){
+    if(on&&ok)t='Работает ЧЕРЕЗ обход. Это не значит «ожил» — обход нужен, не убирай.';
+    else if(on&&!ok)t='Не открылся даже через обход — проблема не в маршруте (узел/домен).';
+    else if(!on&&ok)t='Открылся БЕЗ обхода — обход можно убрать (домен жив напрямую).';
+    else t='Без обхода не открывается — обход нужен, включи.';
+  } else if(m==='normal'){
+    t='Сейчас норма: проверка обхода недостоверна. Чтобы понять, нужен ли обход, проверяй под whitelist.';
+  } else t='Режим неизвестен — результат ориентировочный.';
+  return '<div class="verdict mut">'+t+'</div>';
 }
 function chipFor(e){
   if(!e||!e.last)return '<span class="chip na">не проверялся</span>';
-  var Lx=e.last,m=Lx.mode?(' · '+modeRu(Lx.mode)):'';
-  if(Lx.ok)return '<span class="chip ok">открылся'+m+' · '+ago(Lx.ts)+'</span>';
-  return '<span class="chip bad">не открылся'+m+' · '+ago(Lx.ts)+'</span>';
+  var Lx=e.last;
+  if(Lx.ok)return '<span class="chip ok">открылся '+(Lx.status||'')+'</span>';
+  return '<span class="chip bad">не открылся</span>';
 }
 function rDm(){
   var wl=L.watch||[],r=getRkn();
@@ -343,76 +424,97 @@ function rDm(){
     '<div class="hint">Новый домен сразу получает обход (попадает в личный список RH-RU).</div>');
   var rows='';
   for(var i=0;i<wl.length;i++){var e=wl[i],d=esc(e.d),de=encodeURIComponent(e.d);
-    rows+='<div class="row"><div class="grow"><div class="nm">'+d+'</div><div class="sub">'+chipFor(e)+'</div></div>'+
-      '<a class="b" href="http://rh.box/check?d='+de+'">Проверить</a>'+
-      '<a class="sw '+(e.on?'on':'off')+'" href="http://rh.box/toggle?d='+de+'">'+(e.on?'обход':'выкл')+'</a>'+
-      '<a class="b" href="http://rh.box/del?d='+de+'">✕</a></div>'}
-  h+=card('Список наблюдения',(rows||'<div class="mut small">пусто</div>')+
-    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать</a><a class="b" href="https://nsloon.com/openloon/update?sub=all">Применить в Loon</a></div>'+
-    '<div class="hint">«обход»/«выкл» — тап переключает маршрут. «Проверить» — fetch по правилам конфига; режим на момент проверки в результате.'+(r.mode==='whitelist'?' <b>Сейчас whitelist: «ожил» недостоверен.</b>':'')+'</div>');
+    rows+='<div class="dmitem"><div class="dmtop"><span class="dmname">'+d+'</span>'+chipFor(e)+'</div>'+
+      (e.last?'<div class="sub">проверен '+ago(e.last.ts)+' · '+modeRu(e.last.mode)+(e.last.on?' · был с обходом':' · был без обхода')+'</div>':'')+
+      verdict(e)+
+      '<div class="dmact">'+
+        '<a class="b" href="http://rh.box/check?d='+de+'">Проверить</a>'+
+        '<a class="sw '+(e.on?'on':'off')+'" href="http://rh.box/toggle?d='+de+'">'+(e.on?'обход вкл':'обход выкл')+'</a>'+
+        '<a class="b dz" href="http://rh.box/del?d='+de+'">Удалить</a>'+
+      '</div></div>'}
+  h+=card('Список наблюдения ('+wl.length+')',(rows||'<div class="mut small">пусто</div>')+
+    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a><a class="b" href="https://nsloon.com/openloon/update?sub=all">Применить в Loon</a></div>'+
+    '<div class="hint"><b>Как пользоваться.</b> «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН). «Проверить» открывает домен по текущему маршруту и пишет честный вывод с учётом режима. Чтобы узнать, нужен ли домену обход, — выключи обход и проверь ПОД whitelist: откроется без обхода → можно убрать, нет → обход нужен.'+
+    (r.mode==='whitelist'?' <b style="color:var(--warn)">Сейчас whitelist.</b>':(r.mode==='normal'?' <b>Сейчас норма — для проверки обхода дождись whitelist.</b>':''))+'</div>');
   return h;
 }
 function rHs(){
   var hist=(L.rkn&&L.rkn.hist)||W.rkn_hist||[],hh='';
-  for(var i=0;i<hist.length;i++){hh+='<div class="ev">'+modeRu(hist[i].mode)+'<div class="t">'+fts(hist[i].ts)+'</div></div>'}
+  for(var i=0;i<hist.length;i++){var md=hist[i].mode;var c=md==='normal'?'ok':(md==='whitelist'?'warn':'bad');
+    hh+='<div class="ev"><span class="chip '+c+'">'+modeRu(md)+'</span><div class="t">'+fts(hist[i].ts)+'</div></div>'}
   var rl=L.runlog||[],rr='';
   for(var j=rl.length-1;j>=0;j--){var ev=rl[j],tx='';
-    if(ev.s==='net')tx='Сеть: '+esc(ev.n||'?')+(ev.w?' · WHITELIST':'')+(ev.o?' · '+esc(ev.o):'');
-    else if(ev.s==='rkn')tx='Режим: '+modeRu(ev.m);
+    if(ev.s==='net')tx='Смена сети: '+esc(ev.n||'?')+(ev.w?' · whitelist':'')+(ev.o?' · '+esc(ev.o):'');
+    else if(ev.s==='rkn')tx='Режим изменён: '+modeRu(ev.m);
     else if(ev.s==='dash')tx='Кэш дашборда: '+(ev.ok?'ок':'сбой'+(ev.note?' ('+esc(ev.note)+')':''));
-    else if(ev.s==='cron')tx='Спидтест'+(ev.n?' ('+esc(ev.n)+')':'')+(ev.m!=null?': +'+ev.m+' узлов':'')+(ev.x?' — '+esc(ev.x):'');
+    else if(ev.s==='cron')tx='Спидтест отработал'+(ev.n?' ('+esc(ev.n)+')':'');
     else tx=esc(ev.s||'событие')+(ev.note?': '+esc(ev.note):'');
-    if(ev.gap)tx+=' <span class="gap">· разрыв '+ev.gap+' мин</span>';
+    if(ev.gap)tx+=' <span class="gap">· перед этим разрыв '+ev.gap+' мин</span>';
     rr+='<div class="ev">'+tx+'<div class="t">'+fts(ev.t||ev.ts)+'</div></div>'}
   return card('Смены режима РКН',hh||'<div class="mut small">смен не зафиксировано</div>')+
-         card('Журнал событий (локальный)',rr||'<div class="mut small">журнал пуст — скрипты ещё не писали</div>');
+         card('Журнал работы скриптов',rr||'<div class="mut small">журнал пуст — скрипты ещё не отрабатывали</div>')+
+         card('Что это',('<div class="hint" style="margin-top:0">«Смены режима» — когда сеть переходила между нормой и whitelist РКН. «Журнал» — когда отрабатывали фоновые скрипты (спидтест, смена сети, детектор режима). Разрыв = промежуток, когда VPN/Loon не работал.</div>'));
 }
 function rSy(){
   var sc=[
-    ['RH-Speed','cron 20 мин','спидтест: метрики узлов (down/rtt/jit/потери), пинг-свип'],
-    ['RH-Net','смена сети','флип групп -W/-C, детект сети, журнал'],
-    ['RH-RKN','cron 10 мин','режим сети (норма/whitelist/блок), история смен'],
-    ['RH-DashCache','cron 15 мин','кэш /dashboard в rh_dash (фолбэк под whitelist)'],
-    ['RH-Dash','по запросу','этот дашборд и команды списка'],
-    ['RH-Viewer','вручную','таблица узлов в лог Loon']];
-  var rows='';for(var i=0;i<sc.length;i++){rows+='<div class="row"><div class="grow"><div class="nm">'+sc[i][0]+' <span class="mut small">'+sc[i][1]+'</span></div><div class="sub">'+sc[i][2]+'</div></div></div>'}
-  return card('Инфраструктура',
-      kv('Worker',esc(W.worker||'—'))+
+    ['Спидтест','каждые 20 мин','меряет скорость, пинг и потери узлов'],
+    ['Смена сети','при Wi-Fi↔сотовая','переключает узлы под текущую сеть'],
+    ['Детектор РКН','каждые 10 мин','определяет режим: норма / whitelist / блок'],
+    ['Кэш дашборда','каждые 15 мин','сохраняет данные для показа под whitelist'],
+    ['Этот дашборд','по открытию','показывает состояние и список доменов']];
+  var rows='';for(var i=0;i<sc.length;i++){rows+='<div class="row"><div class="grow"><div class="nm">'+sc[i][0]+'</div><div class="sub">'+sc[i][2]+'</div></div><span class="mut small">'+sc[i][1]+'</span></div>'}
+  return card('Состояние системы',
+      kv('Сервер (Worker)',esc(W.worker||'—'))+
       kv('Конфиг',esc(W.conf_ver||'—'))+
-      kv('Подписка',(W.sub_age_min!=null?W.sub_age_min+' мин назад':'—'))+
-      kv('Узлы (порядок)',W.last_nodes_ts?ago(W.last_nodes_ts):'—')+
+      kv('Дашборд',esc(L.ver||'—'))+
+      kv('Подписка обновлена',(W.sub_age_min!=null?W.sub_age_min+' мин назад':'—'))+
+      kv('Порядок узлов',W.last_nodes_ts?ago(W.last_nodes_ts):'—')+
       kv('Кэш дашборда',L.cache_ts?ago(L.cache_ts):'—'))+
-    card('Скрипты',rows)+
-    card('Loon','<div class="btns"><a class="lk b" href="loon://LogLists">Логи Loon</a><a class="lk b" href="loon://requestLists">Запросы Loon</a></div>');
+    card('Фоновые скрипты',rows)+
+    card('Loon','<div class="btns"><a class="lk b" href="loon://">Открыть Loon</a></div><div class="hint" style="margin-top:8px">Логи и список запросов смотри внутри приложения Loon.</div>');
 }
 function render(){
   var d=$id('dot');d.className='dot '+(SRC==='live'?'live':(SRC==='cache'?'cache':''));
   $id('hkey').textContent=KEY;
   $id('upd').textContent='снято '+fts(L.ts);
   var r=getRkn(),b=$id('banner');
-  if(r&&r.mode){b.className='banner show '+r.mode;b.textContent='Режим: '+modeRu(r.mode)+' · '+ago(r.ts)}else{b.className='banner'}
+  if(r&&r.mode){b.className='banner show '+r.mode;
+    var txt=r.mode==='normal'?'Режим: Норма — узлы работают':(r.mode==='whitelist'?'Режим: Whitelist РКН — трафик идёт через обход':'Режим: Блокировка');
+    b.textContent=txt+' · '+ago(r.ts)}else{b.className='banner'}
   var f={ov:rOv,nd:rNd,dm:rDm,hs:rHs,sy:rSy}[S.tab];if(f)$id('main').innerHTML=f();
+  try{window.scrollTo(0,parseInt(localStorage.getItem('rh_scroll')||'0',10)||0)}catch(e){}
 }
+function setTab(t){var bs=document.querySelectorAll('.tab');for(var i=0;i<bs.length;i++)bs[i].classList.remove('on');
+  for(var j=0;j<bs.length;j++)if(bs[j].getAttribute('data-t')===t)bs[j].classList.add('on');
+  S.tab=t;try{localStorage.setItem('rh_tab',t)}catch(e){};render()}
 document.addEventListener('click',function(ev){
-  var t=ev.target.closest('.tab');if(t){var bs=document.querySelectorAll('.tab');for(var i=0;i<bs.length;i++)bs[i].classList.remove('on');t.classList.add('on');S.tab=t.getAttribute('data-t');render();return}
-  var g=ev.target.closest('#ndSeg button');if(g){S.seg=g.getAttribute('data-g');render();return}
-  var sv=ev.target.closest('#liveSeg button');if(sv){
-    var s=parseInt(sv.getAttribute('data-s'),10);
-    if(s===0){location.reload();return}
-    var bb=sv.parentNode.querySelectorAll('button');for(var k=0;k<bb.length;k++)bb[k].classList.remove('on');sv.classList.add('on');
-    if(S.h)clearInterval(S.h);S.h=setInterval(function(){if(!document.hidden)location.reload()},s*1000);
-  }
+  var t=ev.target.closest('.tab');if(t){setTab(t.getAttribute('data-t'));return}
+  var g=ev.target.closest('.segb');if(g){S.seg=g.getAttribute('data-g');try{localStorage.setItem('rh_seg',S.seg)}catch(e){};render();return}
 });
-document.addEventListener('visibilitychange',function(){if(!document.hidden&&S.h){/* таймер сам перезагрузит */}});
-if(location.hash==='#dm')S.tab='dm';if(location.hash==='#hs')S.tab='hs';if(location.hash==='#nd')S.tab='nd';if(location.hash==='#sy')S.tab='sy';
-render();
+// бесшовный reload: сохраняем вкладку/сегмент/скролл, переходим по ссылкам (мутации) штатно
+function saveScroll(){try{localStorage.setItem('rh_scroll',String(window.scrollY||window.pageYOffset||0))}catch(e){}}
+window.addEventListener('scroll',function(){saveScroll()});
+function doReload(){saveScroll();location.href='http://rh.box/'}
+// авто-тумблер
+var autoEl=$id('autoTg');
+try{S.auto=localStorage.getItem('rh_auto')==='1'}catch(e){}
+if(autoEl){autoEl.checked=S.auto;
+  autoEl.addEventListener('change',function(){S.auto=autoEl.checked;try{localStorage.setItem('rh_auto',S.auto?'1':'0')}catch(e){};armAuto()})}
+function armAuto(){if(S.h){clearInterval(S.h);S.h=null}if(S.auto)S.h=setInterval(function(){if(!document.hidden)doReload()},15000)}
+// восстановление вкладки/сегмента из прошлого показа или из хэша
+(function(){
+  var t=null;try{t=localStorage.getItem('rh_tab')}catch(e){}
+  var sg=null;try{sg=localStorage.getItem('rh_seg')}catch(e){}
+  if(sg==='wifi'||sg==='cell')S.seg=sg;
+  if(location.hash==='#dm')t='dm';else if(location.hash==='#hs')t='hs';else if(location.hash==='#nd')t='nd';else if(location.hash==='#sy')t='sy';
+  if(t)S.tab=t;
+  var bs=document.querySelectorAll('.tab');for(var i=0;i<bs.length;i++){bs[i].classList.remove('on');if(bs[i].getAttribute('data-t')===S.tab)bs[i].classList.add('on')}
+})();
+render();armAuto();
 </script>
 </body>
 </html>`;
 
-// =============================================================
-// Диспетчеризация
-// =============================================================
 try {
   if (PATH === '/' || PATH === '/index.html') serveDashboard();
   else if (PATH === '/add') doAdd();
