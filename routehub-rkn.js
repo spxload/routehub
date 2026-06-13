@@ -1,6 +1,10 @@
 // =============================================================
-// routehub-rkn.js v0.2.0 — детект режима сети по доступности узлов.
+// routehub-rkn.js v0.2.1 — детект режима сети по доступности узлов.
 // Тип: cron (раз в 10 мин). Ловит whitelist РКН в любой момент.
+//
+// v0.2.1: + запись в общий журнал rh_runlog (кольцо 50) ПРИ СМЕНЕ режима
+//   ({s:'rkn', m:<режим>}); видно во вкладке «История» дашборда.
+//   Каждый цикл НЕ пишем — иначе журнал забивается (смотрим только смены).
 //
 // ФИКС v0.2.0 (было ложное срабатывание на Wi-Fi):
 //   * НЕСКОЛЬКО ПРОБ вместо одной. VPN считается живым, если ответила
@@ -9,6 +13,11 @@
 //   * ПОДТВЕРЖДЕНИЕ: ненормальный режим (whitelist/block) объявляется
 //     только если повторился CONFIRM раз подряд. Иначе остаётся normal.
 //     Счётчик хранится в rh_rkn (pend/pendN).
+//
+// ВНИМАНИЕ (T1, 2026-06-12): $httpClient ИГНОРИРУЕТ параметр node на k1.
+//   Пробы probeOnce(group) фактически идут НЕ через указанную группу.
+//   Детект whitelist работал в полевом тесте Этапа F — механизм требует
+//   перепроверки на устройстве (см. ЭТАП_DASH_ПРОГРЕСС.md, открытый вопрос).
 //
 // Таблица вердикта (после проб):
 //   VPN ответил хоть раз            -> normal
@@ -39,6 +48,27 @@ var PROBES = 3;        // проб на группу
 var PROBE_TIMEOUT = 5000;
 var CONFIRM = 2;       // подряд циклов для смены на ненормальный режим
 var HIST_MAX = 20;     // хранить последних смен режима
+
+var K_RUNLOG = "rh_runlog";
+var RUNLOG_MAX = 50;
+var GAP_MS = 25 * 60 * 1000;
+
+function readJSON(k, d) { try { var s = $persistentStore.read(k); return s ? JSON.parse(s) : d; } catch (e) { return d; } }
+function writeJSON(k, o) { try { $persistentStore.write(JSON.stringify(o), k); } catch (e) {} }
+
+// общий журнал rh_runlog (тот же формат, что у speedtest/netwatch)
+function hb(ev) {
+  try {
+    var lg = readJSON(K_RUNLOG, []);
+    if (!Array.isArray(lg)) lg = [];
+    var prev = lg.length ? lg[lg.length - 1] : null;
+    ev.t = Date.now();
+    if (prev && prev.t && (ev.t - prev.t) > GAP_MS) ev.gap = Math.round((ev.t - prev.t) / 60000);
+    lg.push(ev);
+    if (lg.length > RUNLOG_MAX) lg = lg.slice(-RUNLOG_MAX);
+    writeJSON(K_RUNLOG, lg);
+  } catch (e) {}
+}
 
 // одна проба: callback(alive bool)
 function probeOnce(group, cb) {
@@ -112,6 +142,7 @@ function finish(raw) {
   try { $persistentStore.write(JSON.stringify(rec), "rh_rkn"); } catch (e) {}
 
   if (changed) {
+    hb({ s: "rkn", m: confirmed });
     $notification.post("RouteHub", "Сменился режим сети", modeLabel(confirmed));
   }
 
