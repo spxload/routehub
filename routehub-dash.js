@@ -1,5 +1,5 @@
 // =============================================================
-// routehub-dash.js v0.4.4 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.4.5 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
@@ -8,18 +8,21 @@
 //   туннеле) и вшивает в страницу как __BOOT__. Страница НЕ делает XHR.
 //   Мутации (add/del/toggle/check/sync) ОТДАЮТ свежий HTML (не 303).
 //
-// v0.4.4 (ДИАГНОСТИКА отправки в Worker):
-//   ПРОБЛЕМА (k1): домен попадает в локальный rh_watch (виден в дашборде),
-//   но в KV Worker не попадает — значит wPost('/addrule') не доходит или
-//   Worker отвечает ошибкой. wPost теперь пробрасывает статус и тело
-//   ответа, doAdd показывает их в flash — увидим точную причину
-//   (bad json / bad domain / unknown key / статус 0 = не дошёл).
+// v0.4.5:
+//   * Кнопка «Обновить Loon» = loon://update?sub=all (кастомная СХЕМА, не https —
+//     без белого экрана nsloon.com). Схема НЕ подтверждена документацией; если
+//     не сработает — список всё равно применится сам за минуту (update-interval=60).
+//   * Подсказка про «Синхронизировать»: дотягивает в сервер старые домены из
+//     дашборда, добавленные когда отправка ещё не работала (передобавлять не надо).
+//
+// v0.4.4: ДИАГНОСТИКА отправки — wPost пробрасывает статус+тело; РЕШЕНО:
+//   POST /addrule доходит, KV пишется (добавление/удаление работают).
 //
 // T6: node работает для имён УЗЛОВ (спидтест достоверен), не для групп.
 // Засев rh_watch: ТОЛЬКО whoosh.bike (обход ВКЛ).
 // =============================================================
 
-var VERSION = 'dash v0.4.4';
+var VERSION = 'dash v0.4.5';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -397,8 +400,8 @@ function rDm(){
         '<a class="b dz" href="http://rh.box/del?d='+de+'">Удалить</a>'+
       '</div></div>'}
   h+=card('Список наблюдения ('+wl.length+')',(rows||'<div class="mut small">пусто</div>')+
-    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a></div>'+
-    '<div class="hint">Изменения списка применяются в Loon автоматически примерно за минуту (правило обновляется раз в 60 с). <b>Как пользоваться:</b> «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН). «Проверить» открывает домен по текущему маршруту. Чтобы понять, нужен ли обход: выключи обход и проверь ПОД whitelist — откроется без обхода → можно убрать, нет → обход нужен.'+
+    '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a><button class="b" onclick="loonUpdate()">Обновить Loon</button></div>'+
+    '<div class="hint"><b>«Синхронизировать»</b> дотягивает на сервер старые домены из списка (если добавлялись, когда отправка ещё не работала — передобавлять не нужно). <b>«Обновить Loon»</b> просит Loon сразу подтянуть правила (иначе применится само за ~1 мин). <b>Как пользоваться:</b> «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН). «Проверить» открывает домен по текущему маршруту. Чтобы понять, нужен ли обход: выключи обход и проверь ПОД whitelist — откроется без обхода → можно убрать, нет → обход нужен.'+
     (r.mode==='whitelist'?' <b style="color:var(--warn)">Сейчас whitelist.</b>':(r.mode==='normal'?' <b>Сейчас норма — для проверки обхода дождись whitelist.</b>':''))+'</div>');
   return h;
 }
@@ -448,7 +451,7 @@ function rSy(){
       kv('Порядок узлов',W.last_nodes_ts?ago(W.last_nodes_ts):'—')+
       kv('Кэш дашборда',L.cache_ts?ago(L.cache_ts):'—'))+
     card('Фоновые скрипты',rows)+
-    card('Loon','<div class="hint" style="margin-top:0">Логи и список запросов — внутри приложения Loon (вкладка с журналом).</div>');
+    card('Loon','<div class="btns"><button class="b" onclick="loonUpdate()">Обновить ресурсы Loon</button></div><div class="hint" style="margin-top:8px">Логи и список запросов — внутри приложения Loon (вкладка с журналом).</div>');
 }
 function render(){
   var d=$id('dot');d.className='dot '+(SRC==='live'?'live':(SRC==='cache'?'cache':''));
@@ -465,6 +468,7 @@ function render(){
 function setTab(t){var bs=document.querySelectorAll('.tab');for(var i=0;i<bs.length;i++)bs[i].classList.remove('on');
   for(var j=0;j<bs.length;j++)if(bs[j].getAttribute('data-t')===t)bs[j].classList.add('on');
   S.tab=t;try{localStorage.setItem('rh_tab',t)}catch(e){};render()}
+function loonUpdate(){try{localStorage.setItem('rh_tab',S.tab)}catch(e){};window.location.href='loon://update?sub=all'}
 document.addEventListener('click',function(ev){
   var t=ev.target.closest('.tab');if(t){setTab(t.getAttribute('data-t'));return}
   var g=ev.target.closest('.segb');if(g){S.seg=g.getAttribute('data-g');try{localStorage.setItem('rh_seg',S.seg)}catch(e){};render();return}
