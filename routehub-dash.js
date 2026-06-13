@@ -1,5 +1,5 @@
 // =============================================================
-// routehub-dash.js v0.2.0 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.2.1 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
@@ -17,13 +17,16 @@
 //                   под whitelist -> обход (= «обход спасает?»); результат
 //                   подписывается режимом на момент проверки).
 //
+// v0.2.1: фикс — страница читает w.nodes (не w.metrics; Worker /dashboard
+//   отдаёт nodes:{wifi,cell}); apple-touch-icon -> Worker /apple-touch-icon.png.
+//
 // ИСТОЧНИК ПРАВДЫ списка — store rh_watch; KV mylist:<kN> — зеркало (только ВКЛ).
 // Мутации списка — ТОЛЬКО через этот диспетчер. Чтение /dashboard — страница
 // делает напрямую с Worker (CORS открыт с worker v1.7.0).
 // Засев rh_watch (решение Дианы 2026-06-12): ТОЛЬКО whoosh.bike (обход ВКЛ).
 // =============================================================
 
-var VERSION = 'dash v0.2.0';
+var VERSION = 'dash v0.2.1';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -87,7 +90,7 @@ var HTML = `<!DOCTYPE html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="RouteHub">
-<link rel="apple-touch-icon" href="https://raw.githubusercontent.com/spxload/routehub/main/assets/routehub-icon-180.png">
+<link rel="apple-touch-icon" href="https://routehub.proton4iker.workers.dev/apple-touch-icon.png">
 <title>RouteHub</title>
 <style>
 :root{--bg:#F4F6F5;--card:#FFFFFF;--ink:#10211C;--mut:#5E6E68;--line:#E2E8E5;--acc:#0E7A5F;--acc2:#5DCAA5;--ok:#1F9D6B;--warn:#C7900B;--bad:#C0392B;--grey:#9AA7A1;--tabbg:rgba(255,255,255,.92)}
@@ -214,7 +217,7 @@ function rOv(){
     kv('Узлов',(w.sub_nodes!=null?w.sub_nodes:'—')+' <span class="mut small">обновл. '+(w.sub_age_min!=null?w.sub_age_min+' мин назад':'—')+'</span>')+
     (tr.left_gb!=null?kv('Трафик',(Math.round(tr.used_gb*10)/10)+' / '+(Math.round(tr.total_gb*10)/10)+' ГБ · ост. '+(Math.round(tr.left_gb*10)/10)):'')+
     (tr.expire?kv('Действует до',fts(tr.expire*1000)):''));
-  var ms=(w.metrics&&w.metrics[S.seg])||[];var top=ms.slice(0,3),t3='';
+  var ms=(w.nodes&&w.nodes[S.seg])||[];var top=ms.slice(0,3),t3='';
   for(var i=0;i<top.length;i++){t3+='<div class="row">'+ring(top[i].score)+'<div class="grow"><div class="nm">'+esc(top[i].name)+'</div><div class="sub">'+top[i].down+' Мбит · '+top[i].rtt+' мс</div></div></div>'}
   h+=card('Топ узлов ('+(S.seg==='wifi'?'Wi-Fi':'сотовая')+')',t3||'<div class="mut small">нет данных</div>');
   var wl=(l.watch||[]),on=0;for(var j=0;j<wl.length;j++)if(wl[j].on)on++;
@@ -229,7 +232,7 @@ function ring(sc){
   return '<svg class="ring" width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="13" fill="none" stroke="var(--line)" stroke-width="3.4"/><circle cx="18" cy="18" r="13" fill="none" stroke="'+col+'" stroke-width="3.4" stroke-linecap="round" stroke-dasharray="'+d+' '+C.toFixed(1)+'" transform="rotate(-90 18 18)"/><text x="18" y="22" text-anchor="middle" font-size="11" fill="var(--ink)">'+(typeof sc==='number'?sc:'·')+'</text></svg>';
 }
 function rNd(){
-  var w=S.w||{},ms=(w.metrics&&w.metrics[S.seg])||[];
+  var w=S.w||{},ms=(w.nodes&&w.nodes[S.seg])||[];
   var h='<div class="card"><div class="seg" id="ndSeg"><button data-g="wifi" class="'+(S.seg==='wifi'?'on':'')+'">Wi-Fi</button><button data-g="cell" class="'+(S.seg==='cell'?'on':'')+'">Сотовая</button></div></div>';
   var rows='';
   for(var i=0;i<ms.length;i++){var n=ms[i];
