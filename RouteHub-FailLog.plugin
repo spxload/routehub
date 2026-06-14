@@ -1,9 +1,17 @@
-#!name = RouteHub FailLog
-#!desc = Сборщик упавших доменов (ШАГ 1). Без MITM. Пишет host упавших соединений в rh_faillog; дашборд показывает их как кандидатов на личный список. Привязывается к фильтру Loon (Статус=«Не удалось», Тип=CONNECT+TCP).
+#!name = RouteHub FailLog (ручной перехват)
+#!desc = РУЧНОЙ режим ловли упавших доменов. ВКЛЮЧАТЬ ТОЛЬКО когда что-то не грузится. Включаешь плагин -> MITM глобальный (с исключением банков/Госуслуг/Apple) -> faillog ловит HTTPS-домены упавших соединений -> добавляешь нужные в список в дашборде (rh.box) кнопкой "+ список" -> ВЫКЛЮЧАЕШЬ плагин (MITM уходит, банки целы). ВНИМАНИЕ: пока плагин включён, НЕ открывай банки/Госуслуги в нативных приложениях — исключения покрывают основные РФ-сервисы, но незнакомые приложения с пиннингом сертификата могут падать. MITM может «не пробить» часть современных сайтов (MITM Failed) — домен всё равно фиксируется. По умолчанию ВЫКЛЮЧЕН.
 #!author = RouteHub
 
 [Script]
-# http-request скрипт-сборщик. Сам по себе ловит ВСЁ; статус/тип сужает ФИЛЬТР Loon,
-# к которому этот скрипт привязывается в UI (или паттерн ниже).
-# Пишет домен в $persistentStore ключ rh_faillog (кольцо 50, дедуп, счётчик+время).
+# faillog: http-request сборщик. Пишет домен (host) в $persistentStore rh_faillog;
+# дашборд (rh.box) показывает их и даёт кнопку "+ список" (отправить в обход RH-RU).
 http-request ^https?:\/\/ script-path=https://raw.githubusercontent.com/spxload/routehub/main/routehub-faillog.js, requires-body=false, timeout=5, tag=RH-FailLog, enabled=true
+
+[MITM]
+# Глобальный MITM с исключениями. enable=true ВНУТРИ плагина: активен, только пока
+# плагин включён. Выключение плагина -> секция уходит -> MITM выключается (главный
+# конфиг держит enable=false). Исключения (-домен) — критичные РФ-сервисы с пиннингом
+# + Apple/iCloud: они НЕ расшифровываются и работают штатно. Дополнять по мере находок.
+enable = true
+skip-server-cert-verify = false
+hostname = *, -*.apple.com, -*.icloud.com, -*.mzstatic.com, -*.gosuslugi.ru, -*.gosuslugi.gov.ru, -*.gov.ru, -*.esia.gosuslugi.ru, -*.sberbank.ru, -*.sber.ru, -*.sberbank.online, -*.online.sberbank.ru, -*.tinkoff.ru, -*.tbank.ru, -*.vtb.ru, -*.vtb24.ru, -*.alfabank.ru, -*.gazprombank.ru, -*.raiffeisen.ru, -*.psbank.ru, -*.open.ru, -*.mkb.ru, -*.rshb.ru, -*.sovcombank.ru, -*.nspk.ru, -*.mir.ru, -*.nalog.ru, -*.nalog.gov.ru, -*.mos.ru
