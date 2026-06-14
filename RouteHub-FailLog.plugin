@@ -1,0 +1,9 @@
+#!name = RouteHub FailLog
+#!desc = Сборщик упавших доменов (ШАГ 1). Без MITM. Пишет host упавших соединений в rh_faillog; дашборд показывает их как кандидатов на личный список. Привязывается к фильтру Loon (Статус=«Не удалось», Тип=CONNECT+TCP).
+#!author = RouteHub
+
+[Script]
+# http-request скрипт-сборщик. Сам по себе ловит ВСЁ; статус/тип сужает ФИЛЬТР Loon,
+# к которому этот скрипт привязывается в UI (или паттерн ниже).
+# Пишет домен в $persistentStore ключ rh_faillog (кольцо 50, дедуп, счётчик+время).
+http-request ^https?:\/\/ script-path=https://raw.githubusercontent.com/spxload/routehub/main/routehub-faillog.js, requires-body=false, timeout=5, tag=RH-FailLog, enabled=true
