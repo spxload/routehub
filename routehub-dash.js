@@ -1,26 +1,22 @@
 // =============================================================
-// routehub-dash.js v0.4.9 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.5.0 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
 // АРХИТЕКТУРА: BOOTSTRAP — диспетчер при отдаче HTML собирает данные
 //   (локальные + Worker /dashboard) и вшивает как __BOOT__. Страница НЕ делает XHR.
-//   Мутации (add/del/toggle/check/sync) ОТДАЮТ свежий HTML.
 //
-// v0.4.9 (ШАГ 1 — лог упавших доменов, диагностика):
-//   * buildLocal читает rh_faillog (пишет routehub-faillog.js).
-//   * Вкладка «Домены»: диагностический блок «Упавшие» — показывает, что
-//     накопил сборщик. БЕЗ переноса (это ШАГ 2). Цель: убедиться, что
-//     упавшие соединения вообще доходят до http-request скрипта.
-//   * /faillog-clear — очистка лога (кнопка).
-//   * Дедуп предпросмотр: упавшие, покрытые суффиксом из личного списка,
-//     показываются серым с пометкой «уже покрыт» (в ШАГ 2 — скрывать).
+// v0.5.0 (ДИАГНОСТИКА faillog — что ловит скрипт):
+//   * Блок «Упавшие» показывает у каждой записи: proto (http/https), method,
+//     и метку MITM (body=1 → тело есть → MITM работает на домене).
+//   * Сводка сверху: сколько http / https / с MITM поймано. Сразу видно,
+//     ловит ли скрипт HTTPS без MITM (если есть https БЕЗ метки MITM — ловит).
 //
+// v0.4.9: блок «Упавшие» (диагностика), /faillog-clear, дедуп суффиксов.
 // v0.4.8: кнопка Loon = nsloon-ссылка; убран засев whoosh.bike (+чистка).
-// T6: node работает для имён УЗЛОВ (спидтест достоверен), не для групп.
 // =============================================================
 
-var VERSION = 'dash v0.4.9';
+var VERSION = 'dash v0.5.0';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -48,7 +44,7 @@ function watchSave(w) { wj(K_WATCH, w); }
 
 function faillogLoad() {
   var f = rj(K_FAILLOG, null);
-  if (!f || !(f.items instanceof Array)) f = { v: 1, items: [] };
+  if (!f || !(f.items instanceof Array)) f = { v: 2, items: [] };
   return f;
 }
 
@@ -181,7 +177,7 @@ function doCheck() {
   });
 }
 function doFaillogClear() {
-  try { $persistentStore.write(JSON.stringify({ v: 1, items: [] }), K_FAILLOG); } catch (e) {}
+  try { $persistentStore.write(JSON.stringify({ v: 2, items: [] }), K_FAILLOG); } catch (e) {}
   serveDashboard('dm', 'Лог упавших очищен');
 }
 function doSync() {
@@ -284,6 +280,9 @@ main{padding:4px 16px}
 .chip.bad{background:rgba(192,57,43,.16);color:var(--bad)}
 .chip.warn{background:rgba(199,144,11,.18);color:var(--warn)}
 .chip.na{background:rgba(154,167,161,.2);color:var(--mut)}
+.chip.https{background:rgba(14,122,95,.16);color:var(--acc)}
+.chip.http{background:rgba(199,144,11,.18);color:var(--warn)}
+.chip.mitm{background:rgba(93,202,165,.2);color:var(--acc)}
 a.b,button.b{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line);background:var(--card);color:var(--acc);border-radius:10px;padding:7px 13px;font-size:14px;text-decoration:none;cursor:pointer}
 a.b:active,button.b:active,.tab:active{transform:scale(.98)}
 a.b.pri,button.b.pri{background:var(--acc);border-color:var(--acc);color:#fff}
@@ -301,9 +300,10 @@ input.inp{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--i
 .sw.on{background:rgba(31,157,107,.16);color:var(--ok);border-color:transparent}
 .sw.off{background:rgba(154,167,161,.18);color:var(--mut)}
 .verdict{font-size:12px;margin-top:6px;line-height:1.45}
-.fitem{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.fitem{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line)}
 .fitem:last-child{border-bottom:0}
 .fitem.cov{opacity:.5}
+.fchips{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}
 .fcount{font-size:11px;padding:2px 8px;border-radius:99px;background:rgba(199,144,11,.18);color:var(--warn);white-space:nowrap}
 nav{position:fixed;left:0;right:0;bottom:0;background:var(--tabbg);backdrop-filter:blur(14px);border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
 .tab{flex:1;border:0;background:transparent;color:var(--mut);font-size:10px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0}
@@ -423,7 +423,6 @@ function chipFor(e){
   if(e.last.ok)return '<span class="chip ok">открылся '+(e.last.status||'')+'</span>';
   return '<span class="chip bad">не открылся</span>';
 }
-// покрыт ли домен d суффиксом из личного списка wl
 function coveredBy(d,wl){
   for(var i=0;i<wl.length;i++){var s=wl[i].d;
     if(d===s||d.length>s.length&&d.slice(d.length-s.length-1)==='.'+s)return s;}
@@ -431,16 +430,28 @@ function coveredBy(d,wl){
 }
 function rDm(){
   var wl=L.watch||[],r=getRkn(),fail=L.faillog||[];
-  // --- ЛОГ УПАВШИХ (ШАГ 1, диагностика) ---
+  // --- ЛОГ УПАВШИХ (ДИАГНОСТИКА v0.5.0: proto/method/MITM) ---
   var fsorted=fail.slice().sort(function(a,b){return (b.ts||0)-(a.ts||0)});
+  var cHttp=0,cHttps=0,cMitm=0;
+  for(var s=0;s<fsorted.length;s++){var fe=fsorted[s];
+    if(fe.proto==='https')cHttps++;else if(fe.proto==='http')cHttp++;
+    if(fe.body)cMitm++;}
   var frows='';
   for(var i=0;i<fsorted.length;i++){var e=fsorted[i],d=esc(e.d),cov=coveredBy(e.d,wl);
-    frows+='<div class="fitem'+(cov?' cov':'')+'"><div class="grow"><div class="nm">'+d+'</div><div class="sub">упал '+(e.n||1)+' раз · '+ago(e.ts)+(cov?' · уже покрыт ('+esc(cov)+')':'')+'</div></div>'+
-      (cov?'<span class="chip na">покрыт</span>':'<span class="fcount">'+(e.n||1)+'</span>')+'</div>'}
-  var fh=card('Упавшие домены (диагностика) · '+fail.length,
-    (frows||'<div class="mut small">пока пусто. Если фильтр настроен (CONNECT + «Не удалось» + скрипт faillog) — открой заблокированный сайт, домен появится здесь.</div>')+
+    var chips='';
+    if(e.proto==='https')chips+='<span class="chip https">https</span>';
+    else if(e.proto==='http')chips+='<span class="chip http">http</span>';
+    else chips+='<span class="chip na">'+esc(e.proto||'?')+'</span>';
+    if(e.method)chips+='<span class="chip na">'+esc(e.method)+'</span>';
+    if(e.body)chips+='<span class="chip mitm">MITM</span>';
+    if(cov)chips+='<span class="chip na">покрыт</span>';
+    frows+='<div class="fitem'+(cov?' cov':'')+'"><div class="grow"><div class="nm">'+d+'</div><div class="fchips">'+chips+'</div><div class="sub">'+(e.n||1)+' раз · '+ago(e.ts)+'</div></div><span class="fcount">'+(e.n||1)+'</span></div>'}
+  var summary='<div class="stats" style="margin-top:0"><div class="stat"><div class="n" style="color:var(--warn)">'+cHttp+'</div><div class="c">http</div></div><div class="stat"><div class="n" style="color:var(--acc)">'+cHttps+'</div><div class="c">https</div></div><div class="stat"><div class="n" style="color:var(--acc)">'+cMitm+'</div><div class="c">с MITM</div></div></div>';
+  var fh=card('Что ловит скрипт (диагностика) · '+fail.length,
+    (fail.length?summary:'')+
+    (frows||'<div class="mut small">пока пусто. Открой сайт при включённом фильтре+плагине faillog — домен появится здесь с метками протокола.</div>')+
     (fail.length?'<div class="btns"><a class="b dz" href="http://rh.box/faillog-clear">Очистить лог</a></div>':'')+
-    '<div class="hint"><b>Это ШАГ 1 — проверка.</b> Сборщик пишет сюда домены, у которых соединение упало. Если список наполняется — механизм работает, сделаю перенос в личный список одной кнопкой. Магнит сюда НЕ попадёт (он не шлёт запросов за плашкой). «Покрыт» — домен уже под суффиксом из твоего списка, добавлять не нужно.</div>');
+    '<div class="hint"><b>Диагностика.</b> Метки: <b>https</b>/<b>http</b> — протокол; <b>MITM</b> — у запроса есть тело (значит MITM расшифровал его). Если видишь <b>https БЕЗ метки MITM</b> — скрипт ловит HTTPS и без MITM. Если https появляется ТОЛЬКО с меткой MITM — без MITM Loon его скрипту не отдаёт.</div>');
   // --- ДОБАВИТЬ ВРУЧНУЮ ---
   var h=card('Добавить домен',
     '<form class="addl" action="http://rh.box/add" method="get"><input class="inp" name="d" placeholder="example.ru" autocapitalize="none" autocorrect="off"><button class="b pri" type="submit">Добавить</button></form>'+
