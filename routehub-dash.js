@@ -1,5 +1,5 @@
 // =============================================================
-// routehub-dash.js v0.4.8 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.4.9 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
@@ -7,19 +7,20 @@
 //   (локальные + Worker /dashboard) и вшивает как __BOOT__. Страница НЕ делает XHR.
 //   Мутации (add/del/toggle/check/sync) ОТДАЮТ свежий HTML.
 //
-// v0.4.8:
-//   * Кнопка «Обновить Loon» — ссылка на https://www.nsloon.com/openloon/update?sub=all
-//     (как просила Диана: этот URL у неё ОТКРЫВАЛСЯ через <a href>;
-//     схема loon:// не сработала ни button+JS, ни <a href>).
-//   * УБРАН засев whoosh.bike: дефолт rh_watch теперь ПУСТОЙ.
-//     ОДНОРАЗОВАЯ ЧИСТКА: если whoosh.bike ещё в сторе — удаляется локально
-//     и шлётся /delrule на Worker (флаг rh_seed_cleaned — один раз).
+// v0.4.9 (ШАГ 1 — лог упавших доменов, диагностика):
+//   * buildLocal читает rh_faillog (пишет routehub-faillog.js).
+//   * Вкладка «Домены»: диагностический блок «Упавшие» — показывает, что
+//     накопил сборщик. БЕЗ переноса (это ШАГ 2). Цель: убедиться, что
+//     упавшие соединения вообще доходят до http-request скрипта.
+//   * /faillog-clear — очистка лога (кнопка).
+//   * Дедуп предпросмотр: упавшие, покрытые суффиксом из личного списка,
+//     показываются серым с пометкой «уже покрыт» (в ШАГ 2 — скрывать).
 //
+// v0.4.8: кнопка Loon = nsloon-ссылка; убран засев whoosh.bike (+чистка).
 // T6: node работает для имён УЗЛОВ (спидтест достоверен), не для групп.
-// Засев rh_watch: ПУСТОЙ (whoosh.bike убран).
 // =============================================================
 
-var VERSION = 'dash v0.4.8';
+var VERSION = 'dash v0.4.9';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -32,6 +33,7 @@ var K_NET = 'rh_net_state';
 var K_RUNLOG = 'rh_runlog';
 var K_DASH = 'rh_dash';
 var K_SEED_CLEAN = 'rh_seed_cleaned';
+var K_FAILLOG = 'rh_faillog';
 var DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
 function rj(k, d) { try { var s = $persistentStore.read(k); return s ? JSON.parse(s) : d; } catch (e) { return d; } }
@@ -43,6 +45,12 @@ function watchLoad() {
   return w;
 }
 function watchSave(w) { wj(K_WATCH, w); }
+
+function faillogLoad() {
+  var f = rj(K_FAILLOG, null);
+  if (!f || !(f.items instanceof Array)) f = { v: 1, items: [] };
+  return f;
+}
 
 // колбэк: (ok, body, status, errMsg)
 function wPost(path, body, cb) {
@@ -74,8 +82,6 @@ function q(name) {
 }
 
 // ОДНОРАЗОВАЯ ЧИСТКА засеянного whoosh.bike (и прочих сидов).
-// Раньше дашборд засевал whoosh.bike — он остался в сторе и KV.
-// Убираем локально + /delrule на Worker. Один раз (флаг).
 function cleanSeedOnce(cb) {
   if ($persistentStore.read(K_SEED_CLEAN) === '1') { cb(); return; }
   var w = watchLoad(), nw = [], removed = [];
@@ -85,7 +91,6 @@ function cleanSeedOnce(cb) {
   }
   if (!removed.length) { $persistentStore.write('1', K_SEED_CLEAN); cb(); return; }
   watchSave(nw);
-  // убрать и из Worker KV
   var k = 0;
   function step() {
     if (k >= removed.length) { $persistentStore.write('1', K_SEED_CLEAN); cb(); return; }
@@ -99,9 +104,11 @@ function buildLocal(flash) {
   var cache = rj(K_DASH, null);
   var rl = rj(K_RUNLOG, []);
   if (!Array.isArray(rl)) rl = [];
+  var fl = faillogLoad();
   return {
     ver: VERSION, ts: Date.now(), key: KEY, origin: ORIGIN, flash: flash || null,
     watch: watchLoad(),
+    faillog: fl.items || [],
     rkn: { mode: rkn.mode, ts: rkn.ts, hist: rkn.hist || [] },
     net: rj(K_NET, null),
     runlog: rl.slice(-60),
@@ -172,6 +179,10 @@ function doCheck() {
       fin(false, 0);
     });
   });
+}
+function doFaillogClear() {
+  try { $persistentStore.write(JSON.stringify({ v: 1, items: [] }), K_FAILLOG); } catch (e) {}
+  serveDashboard('dm', 'Лог упавших очищен');
 }
 function doSync() {
   wGet('/mylist?key=' + KEY, function (ok, body) {
@@ -290,6 +301,10 @@ input.inp{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--i
 .sw.on{background:rgba(31,157,107,.16);color:var(--ok);border-color:transparent}
 .sw.off{background:rgba(154,167,161,.18);color:var(--mut)}
 .verdict{font-size:12px;margin-top:6px;line-height:1.45}
+.fitem{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.fitem:last-child{border-bottom:0}
+.fitem.cov{opacity:.5}
+.fcount{font-size:11px;padding:2px 8px;border-radius:99px;background:rgba(199,144,11,.18);color:var(--warn);white-space:nowrap}
 nav{position:fixed;left:0;right:0;bottom:0;background:var(--tabbg);backdrop-filter:blur(14px);border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
 .tab{flex:1;border:0;background:transparent;color:var(--mut);font-size:10px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0}
 .tab.on{color:var(--acc)}
@@ -336,7 +351,6 @@ function modeRu(m){return m==='normal'?'Норма':(m==='whitelist'?'Whitelist 
 function modeCls(m){return m==='normal'?'ok':(m==='whitelist'?'warn':(m==='block'?'bad':'na'))}
 function netRu(n){return n==='wifi'?'Wi-Fi':(n==='cell'||n==='cell-whitelist'?'Сотовая':(n==='offline'?'Нет сети':(n||'—')))}
 function getRkn(){return (L.rkn&&L.rkn.mode)?L.rkn:((W&&W.rkn)||{})}
-function topName(seg){var ms=(W.nodes&&W.nodes[seg])||[];return ms.length?ms[0].name:null}
 function card(t,inner){return '<div class="card">'+(t?'<h3>'+t+'</h3>':'')+inner+'</div>'}
 function kv(k,v){return '<div class="kv"><span class="mut">'+k+'</span><b>'+v+'</b></div>'}
 function tile(lbl,big,sub){return '<div class="tile"><div class="lbl">'+lbl+'</div><div class="big">'+big+'</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'</div>'}
@@ -409,26 +423,44 @@ function chipFor(e){
   if(e.last.ok)return '<span class="chip ok">открылся '+(e.last.status||'')+'</span>';
   return '<span class="chip bad">не открылся</span>';
 }
+// покрыт ли домен d суффиксом из личного списка wl
+function coveredBy(d,wl){
+  for(var i=0;i<wl.length;i++){var s=wl[i].d;
+    if(d===s||d.length>s.length&&d.slice(d.length-s.length-1)==='.'+s)return s;}
+  return null;
+}
 function rDm(){
-  var wl=L.watch||[],r=getRkn();
+  var wl=L.watch||[],r=getRkn(),fail=L.faillog||[];
+  // --- ЛОГ УПАВШИХ (ШАГ 1, диагностика) ---
+  var fsorted=fail.slice().sort(function(a,b){return (b.ts||0)-(a.ts||0)});
+  var frows='';
+  for(var i=0;i<fsorted.length;i++){var e=fsorted[i],d=esc(e.d),cov=coveredBy(e.d,wl);
+    frows+='<div class="fitem'+(cov?' cov':'')+'"><div class="grow"><div class="nm">'+d+'</div><div class="sub">упал '+(e.n||1)+' раз · '+ago(e.ts)+(cov?' · уже покрыт ('+esc(cov)+')':'')+'</div></div>'+
+      (cov?'<span class="chip na">покрыт</span>':'<span class="fcount">'+(e.n||1)+'</span>')+'</div>'}
+  var fh=card('Упавшие домены (диагностика) · '+fail.length,
+    (frows||'<div class="mut small">пока пусто. Если фильтр настроен (CONNECT + «Не удалось» + скрипт faillog) — открой заблокированный сайт, домен появится здесь.</div>')+
+    (fail.length?'<div class="btns"><a class="b dz" href="http://rh.box/faillog-clear">Очистить лог</a></div>':'')+
+    '<div class="hint"><b>Это ШАГ 1 — проверка.</b> Сборщик пишет сюда домены, у которых соединение упало. Если список наполняется — механизм работает, сделаю перенос в личный список одной кнопкой. Магнит сюда НЕ попадёт (он не шлёт запросов за плашкой). «Покрыт» — домен уже под суффиксом из твоего списка, добавлять не нужно.</div>');
+  // --- ДОБАВИТЬ ВРУЧНУЮ ---
   var h=card('Добавить домен',
     '<form class="addl" action="http://rh.box/add" method="get"><input class="inp" name="d" placeholder="example.ru" autocapitalize="none" autocorrect="off"><button class="b pri" type="submit">Добавить</button></form>'+
     '<div class="hint">Новый домен сразу получает обход (попадает в личный список RH-RU).</div>');
+  // --- ЛИЧНЫЙ СПИСОК ---
   var rows='';
-  for(var i=0;i<wl.length;i++){var e=wl[i],d=esc(e.d),de=encodeURIComponent(e.d);
-    rows+='<div class="dmitem"><div class="dmtop"><span class="dmname">'+d+'</span>'+chipFor(e)+'</div>'+
-      (e.last?'<div class="sub">проверен '+ago(e.last.ts)+' · '+modeRu(e.last.mode)+(e.last.on?' · был с обходом':' · был без обхода')+'</div>':'')+
-      verdict(e)+
+  for(var i2=0;i2<wl.length;i2++){var e2=wl[i2],dd=esc(e2.d),de=encodeURIComponent(e2.d);
+    rows+='<div class="dmitem"><div class="dmtop"><span class="dmname">'+dd+'</span>'+chipFor(e2)+'</div>'+
+      (e2.last?'<div class="sub">проверен '+ago(e2.last.ts)+' · '+modeRu(e2.last.mode)+(e2.last.on?' · был с обходом':' · был без обхода')+'</div>':'')+
+      verdict(e2)+
       '<div class="dmact">'+
         '<a class="b" href="http://rh.box/check?d='+de+'">Проверить</a>'+
-        '<a class="sw '+(e.on?'on':'off')+'" href="http://rh.box/toggle?d='+de+'">'+(e.on?'обход вкл':'обход выкл')+'</a>'+
+        '<a class="sw '+(e2.on?'on':'off')+'" href="http://rh.box/toggle?d='+de+'">'+(e2.on?'обход вкл':'обход выкл')+'</a>'+
         '<a class="b dz" href="http://rh.box/del?d='+de+'">Удалить</a>'+
       '</div></div>'}
   h+=card('Список наблюдения ('+wl.length+')',(rows||'<div class="mut small">пусто — добавь домен выше</div>')+
     '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a><a class="b" href="https://www.nsloon.com/openloon/update?sub=all">Обновить Loon</a></div>'+
-    '<div class="hint"><b>«Синхронизировать»</b> дотягивает на сервер старые домены из списка (передобавлять не нужно). <b>«Обновить Loon»</b> просит Loon сразу подтянуть правила (иначе применится само за ~1 мин). <b>Как пользоваться:</b> «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН). «Проверить» открывает домен по текущему маршруту. Чтобы понять, нужен ли обход: выключи обход и проверь ПОД whitelist — откроется без обхода → можно убрать, нет → обход нужен.'+
+    '<div class="hint"><b>«Синхронизировать»</b> дотягивает на сервер старые домены из списка. <b>«Обновить Loon»</b> просит Loon сразу подтянуть правила (иначе применится само за ~1 мин). «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН).'+
     (r.mode==='whitelist'?' <b style="color:var(--warn)">Сейчас whitelist.</b>':(r.mode==='normal'?' <b>Сейчас норма — для проверки обхода дождись whitelist.</b>':''))+'</div>');
-  return h;
+  return fh+h;
 }
 function rHs(){
   var hist=(L.rkn&&L.rkn.hist)||W.rkn_hist||[];
@@ -457,7 +489,7 @@ function rHs(){
     if(ev.gap)tx+=' <span class="gap">· перед этим перерыв '+ev.gap+' мин</span>';
     rr+='<div class="ev"><span class="ed '+cls+'"></span><div class="grow">'+tx+'<div class="et">'+fts(ev.t||ev.ts)+'</div></div></div>'}
   h+=card('Журнал работы ('+rl.length+')',rr||'<div class="mut small">журнал пуст — фоновые скрипты ещё не отрабатывали</div>');
-  h+='<div class="card"><div class="hint" style="margin-top:0"><b>Что это.</b> «Смены режима» — переходы сети между нормой и whitelist РКН. «Журнал» — отметки о работе фоновых скриптов: спидтест, смена сети, детектор режима, обновление кэша. «Перерыв N мин» — промежуток, когда Loon/VPN не работал (телефон спал или связь пропала).</div></div>';
+  h+='<div class="card"><div class="hint" style="margin-top:0"><b>Что это.</b> «Смены режима» — переходы сети между нормой и whitelist РКН. «Журнал» — отметки о работе фоновых скриптов. «Перерыв N мин» — промежуток, когда Loon/VPN не работал.</div></div>';
   return h;
 }
 function rSy(){
@@ -466,6 +498,7 @@ function rSy(){
     ['Смена сети','при Wi-Fi↔сотовая','переключает узлы под текущую сеть, определяет режим'],
     ['Детектор РКН','каждые 3 мин','определяет режим: норма / whitelist / блок'],
     ['Кэш дашборда','каждые 15 мин','сохраняет данные для показа под whitelist'],
+    ['Лог упавших','при падении запроса','собирает домены, что не загрузились (фильтр Loon)'],
     ['Этот дашборд','по открытию','показывает состояние и список доменов']];
   var rows='';for(var i=0;i<sc.length;i++){rows+='<div class="row"><div class="grow"><div class="nm">'+sc[i][0]+'</div><div class="sub">'+sc[i][2]+'</div></div><span class="mut small">'+sc[i][1]+'</span></div>'}
   return card('Состояние системы',
@@ -526,6 +559,7 @@ try {
   else if (PATH === '/del') doDel();
   else if (PATH === '/toggle') doToggle();
   else if (PATH === '/check') doCheck();
+  else if (PATH === '/faillog-clear') doFaillogClear();
   else if (PATH === '/sync') doSync();
   else cleanSeedOnce(function () { serveDashboard(); });
 } catch (eX) {
