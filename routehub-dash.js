@@ -1,22 +1,25 @@
 // =============================================================
-// routehub-dash.js v0.5.0 — локальный дашборд RouteHub (диспетчер + HTML).
+// routehub-dash.js v0.6.0 — локальный дашборд RouteHub (диспетчер + HTML).
 // Тип: http-request на ^http:\/\/rh\.box (HTTP, без MITM).
 // argument = "<key>|<origin>" (Worker инжектит при выдаче /config).
 //
 // АРХИТЕКТУРА: BOOTSTRAP — диспетчер при отдаче HTML собирает данные
 //   (локальные + Worker /dashboard) и вшивает как __BOOT__. Страница НЕ делает XHR.
 //
-// v0.5.0 (ДИАГНОСТИКА faillog — что ловит скрипт):
-//   * Блок «Упавшие» показывает у каждой записи: proto (http/https), method,
-//     и метку MITM (body=1 → тело есть → MITM работает на домене).
-//   * Сводка сверху: сколько http / https / с MITM поймано. Сразу видно,
-//     ловит ли скрипт HTTPS без MITM (если есть https БЕЗ метки MITM — ловит).
+// v0.6.0 (вкладка «Домены» — режим РУЧНОГО перехвата):
+//   * Блок «Перехваченные домены»: у каждого домена кнопка «＋ список» —
+//     одним тапом отправляет домен в обход (личный список RH-RU). Метки
+//     https/http/MITM сохранены. «в списке» — уже добавлен (дедуп по суффиксу).
+//   * Связка: плагин RouteHub FailLog (ручной) + перехват MITM в Loon ловят
+//     HTTPS-домены упавших соединений -> здесь -> кнопкой в список -> выключить.
+//   * Текст почищен от диагностики, оставлен рабочий сценарий.
 //
-// v0.4.9: блок «Упавшие» (диагностика), /faillog-clear, дедуп суффиксов.
+// v0.5.0: диагностика faillog (proto/method/MITM).
+// v0.4.9: блок «Упавшие», /faillog-clear, дедуп суффиксов.
 // v0.4.8: кнопка Loon = nsloon-ссылка; убран засев whoosh.bike (+чистка).
 // =============================================================
 
-var VERSION = 'dash v0.5.0';
+var VERSION = 'dash v0.6.0';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -178,7 +181,7 @@ function doCheck() {
 }
 function doFaillogClear() {
   try { $persistentStore.write(JSON.stringify({ v: 2, items: [] }), K_FAILLOG); } catch (e) {}
-  serveDashboard('dm', 'Лог упавших очищен');
+  serveDashboard('dm', 'Перехваченные домены очищены');
 }
 function doSync() {
   wGet('/mylist?key=' + KEY, function (ok, body) {
@@ -286,6 +289,7 @@ main{padding:4px 16px}
 a.b,button.b{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line);background:var(--card);color:var(--acc);border-radius:10px;padding:7px 13px;font-size:14px;text-decoration:none;cursor:pointer}
 a.b:active,button.b:active,.tab:active{transform:scale(.98)}
 a.b.pri,button.b.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+a.b.sm{padding:5px 11px;font-size:13px}
 a.b.dz{color:var(--bad);border-color:var(--line)}
 .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 input.inp{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:9px 11px;font-size:15px;min-width:0}
@@ -302,9 +306,9 @@ input.inp{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--i
 .verdict{font-size:12px;margin-top:6px;line-height:1.45}
 .fitem{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line)}
 .fitem:last-child{border-bottom:0}
-.fitem.cov{opacity:.5}
-.fchips{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}
-.fcount{font-size:11px;padding:2px 8px;border-radius:99px;background:rgba(199,144,11,.18);color:var(--warn);white-space:nowrap}
+.fitem.cov{opacity:.55}
+.fchips{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px;align-items:center}
+.fcount{font-size:11px;padding:2px 8px;border-radius:99px;background:rgba(154,167,161,.2);color:var(--mut);white-space:nowrap}
 nav{position:fixed;left:0;right:0;bottom:0;background:var(--tabbg);backdrop-filter:blur(14px);border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
 .tab{flex:1;border:0;background:transparent;color:var(--mut);font-size:10px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0}
 .tab.on{color:var(--acc)}
@@ -430,44 +434,43 @@ function coveredBy(d,wl){
 }
 function rDm(){
   var wl=L.watch||[],r=getRkn(),fail=L.faillog||[];
-  // --- ЛОГ УПАВШИХ (ДИАГНОСТИКА v0.5.0: proto/method/MITM) ---
+  // --- ПЕРЕХВАЧЕННЫЕ ДОМЕНЫ (ручной перехват: плагин FailLog + MITM) ---
   var fsorted=fail.slice().sort(function(a,b){return (b.ts||0)-(a.ts||0)});
   var cHttp=0,cHttps=0,cMitm=0;
   for(var s=0;s<fsorted.length;s++){var fe=fsorted[s];
     if(fe.proto==='https')cHttps++;else if(fe.proto==='http')cHttp++;
     if(fe.body)cMitm++;}
   var frows='';
-  for(var i=0;i<fsorted.length;i++){var e=fsorted[i],d=esc(e.d),cov=coveredBy(e.d,wl);
+  for(var i=0;i<fsorted.length;i++){var e=fsorted[i],d=esc(e.d),de=encodeURIComponent(e.d),cov=coveredBy(e.d,wl);
     var chips='';
     if(e.proto==='https')chips+='<span class="chip https">https</span>';
     else if(e.proto==='http')chips+='<span class="chip http">http</span>';
-    else chips+='<span class="chip na">'+esc(e.proto||'?')+'</span>';
-    if(e.method)chips+='<span class="chip na">'+esc(e.method)+'</span>';
     if(e.body)chips+='<span class="chip mitm">MITM</span>';
-    if(cov)chips+='<span class="chip na">покрыт</span>';
-    frows+='<div class="fitem'+(cov?' cov':'')+'"><div class="grow"><div class="nm">'+d+'</div><div class="fchips">'+chips+'</div><div class="sub">'+(e.n||1)+' раз · '+ago(e.ts)+'</div></div><span class="fcount">'+(e.n||1)+'</span></div>'}
-  var summary='<div class="stats" style="margin-top:0"><div class="stat"><div class="n" style="color:var(--warn)">'+cHttp+'</div><div class="c">http</div></div><div class="stat"><div class="n" style="color:var(--acc)">'+cHttps+'</div><div class="c">https</div></div><div class="stat"><div class="n" style="color:var(--acc)">'+cMitm+'</div><div class="c">с MITM</div></div></div>';
-  var fh=card('Что ловит скрипт (диагностика) · '+fail.length,
-    (fail.length?summary:'')+
-    (frows||'<div class="mut small">пока пусто. Открой сайт при включённом фильтре+плагине faillog — домен появится здесь с метками протокола.</div>')+
-    (fail.length?'<div class="btns"><a class="b dz" href="http://rh.box/faillog-clear">Очистить лог</a></div>':'')+
-    '<div class="hint"><b>Диагностика.</b> Метки: <b>https</b>/<b>http</b> — протокол; <b>MITM</b> — у запроса есть тело (значит MITM расшифровал его). Если видишь <b>https БЕЗ метки MITM</b> — скрипт ловит HTTPS и без MITM. Если https появляется ТОЛЬКО с меткой MITM — без MITM Loon его скрипту не отдаёт.</div>');
+    chips+='<span class="fcount">'+(e.n||1)+' · '+ago(e.ts)+'</span>';
+    var btn=cov?'<span class="chip na">в списке</span>':'<a class="b pri sm" href="http://rh.box/add?d='+de+'">＋ список</a>';
+    frows+='<div class="fitem'+(cov?' cov':'')+'"><div class="grow"><div class="nm">'+d+'</div><div class="fchips">'+chips+'</div></div>'+btn+'</div>'}
+  var summary=fail.length?('<div class="stats" style="margin-top:0"><div class="stat"><div class="n" style="color:var(--acc)">'+cHttps+'</div><div class="c">https</div></div><div class="stat"><div class="n" style="color:var(--warn)">'+cHttp+'</div><div class="c">http</div></div><div class="stat"><div class="n" style="color:var(--acc)">'+cMitm+'</div><div class="c">расшифр.</div></div></div>'):'';
+  var fh=card('Перехваченные домены · '+fail.length,
+    summary+
+    (frows||'<div class="mut small">Пусто. Чтобы поймать домены упавшего сайта: включи плагин <b>RouteHub FailLog</b> и перехват MITM в Loon, открой нужный сайт — домены появятся здесь. Затем жми «＋ список» и выключи перехват.</div>')+
+    (fail.length?'<div class="btns"><a class="b dz" href="http://rh.box/faillog-clear">Очистить</a></div>':'')+
+    '<div class="hint">Метки: <b>https</b>/<b>http</b> — протокол; <b>MITM</b> — соединение расшифровано. «＋ список» — отправить домен в обход (RH-RU). «в списке» — уже добавлен (или покрыт суффиксом).</div>');
   // --- ДОБАВИТЬ ВРУЧНУЮ ---
-  var h=card('Добавить домен',
+  var h=card('Добавить вручную',
     '<form class="addl" action="http://rh.box/add" method="get"><input class="inp" name="d" placeholder="example.ru" autocapitalize="none" autocorrect="off"><button class="b pri" type="submit">Добавить</button></form>'+
-    '<div class="hint">Новый домен сразу получает обход (попадает в личный список RH-RU).</div>');
+    '<div class="hint">Домен сразу получает обход (личный список RH-RU).</div>');
   // --- ЛИЧНЫЙ СПИСОК ---
   var rows='';
-  for(var i2=0;i2<wl.length;i2++){var e2=wl[i2],dd=esc(e2.d),de=encodeURIComponent(e2.d);
+  for(var i2=0;i2<wl.length;i2++){var e2=wl[i2],dd=esc(e2.d),de2=encodeURIComponent(e2.d);
     rows+='<div class="dmitem"><div class="dmtop"><span class="dmname">'+dd+'</span>'+chipFor(e2)+'</div>'+
       (e2.last?'<div class="sub">проверен '+ago(e2.last.ts)+' · '+modeRu(e2.last.mode)+(e2.last.on?' · был с обходом':' · был без обхода')+'</div>':'')+
       verdict(e2)+
       '<div class="dmact">'+
-        '<a class="b" href="http://rh.box/check?d='+de+'">Проверить</a>'+
-        '<a class="sw '+(e2.on?'on':'off')+'" href="http://rh.box/toggle?d='+de+'">'+(e2.on?'обход вкл':'обход выкл')+'</a>'+
-        '<a class="b dz" href="http://rh.box/del?d='+de+'">Удалить</a>'+
+        '<a class="b" href="http://rh.box/check?d='+de2+'">Проверить</a>'+
+        '<a class="sw '+(e2.on?'on':'off')+'" href="http://rh.box/toggle?d='+de2+'">'+(e2.on?'обход вкл':'обход выкл')+'</a>'+
+        '<a class="b dz" href="http://rh.box/del?d='+de2+'">Удалить</a>'+
       '</div></div>'}
-  h+=card('Список наблюдения ('+wl.length+')',(rows||'<div class="mut small">пусто — добавь домен выше</div>')+
+  h+=card('Список наблюдения ('+wl.length+')',(rows||'<div class="mut small">пусто — добавь домен выше или из перехваченных</div>')+
     '<div class="btns"><a class="b" href="http://rh.box/sync">Синхронизировать с сервером</a><a class="b" href="https://www.nsloon.com/openloon/update?sub=all">Обновить Loon</a></div>'+
     '<div class="hint"><b>«Синхронизировать»</b> дотягивает на сервер старые домены из списка. <b>«Обновить Loon»</b> просит Loon сразу подтянуть правила (иначе применится само за ~1 мин). «обход вкл» — домен идёт через обходной узел (нужно под whitelist РКН).'+
     (r.mode==='whitelist'?' <b style="color:var(--warn)">Сейчас whitelist.</b>':(r.mode==='normal'?' <b>Сейчас норма — для проверки обхода дождись whitelist.</b>':''))+'</div>');
@@ -509,7 +512,7 @@ function rSy(){
     ['Смена сети','при Wi-Fi↔сотовая','переключает узлы под текущую сеть, определяет режим'],
     ['Детектор РКН','каждые 3 мин','определяет режим: норма / whitelist / блок'],
     ['Кэш дашборда','каждые 15 мин','сохраняет данные для показа под whitelist'],
-    ['Лог упавших','при падении запроса','собирает домены, что не загрузились (фильтр Loon)'],
+    ['FailLog (ручной)','когда включишь','ловит домены упавших сайтов (плагин + перехват MITM)'],
     ['Этот дашборд','по открытию','показывает состояние и список доменов']];
   var rows='';for(var i=0;i<sc.length;i++){rows+='<div class="row"><div class="grow"><div class="nm">'+sc[i][0]+'</div><div class="sub">'+sc[i][2]+'</div></div><span class="mut small">'+sc[i][1]+'</span></div>'}
   return card('Состояние системы',
