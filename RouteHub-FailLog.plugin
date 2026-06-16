@@ -1,5 +1,5 @@
 #!name = RouteHub FailLog (ручной перехват)
-#!desc = РУЧНОЙ режим ловли упавших доменов. ТЕСТ: MITM в плагине на ОДИН домен httpbin.org (проверка, пробрасывает ли плагин MITM-хост). Если httpbin.org поймается с меткой MITM в дашборде -> заменить hostname на * (ловить всё). ПОРЯДОК: 1) включи этот плагин; 2) проверь Loon -> MITM: появился ли httpbin.org в списке хостов и включился ли перехват; 3) очисти лог в дашборде; 4) открой https://httpbin.org/get; 5) дашборд rh.box -> «Домены»: появился ли httpbin.org. Если ДА с * -> ловит всё (но банки в исключениях!). ВНИМАНИЕ: при hostname=* нативные банк/госприложения вне исключений могут падать. По умолчанию плагин ВЫКЛЮЧЕН.
+#!desc = РУЧНОЙ режим ловли упавших доменов. ТЕСТ: MITM в плагине на ОДИН домен ru.wikipedia.org (httpbin.org лежал — 503). Проверка, ловит ли faillog HTTPS при MITM от плагина. ПОРЯДОК: 1) включи плагин; 2) очисти лог в дашборде; 3) открой https://ru.wikipedia.org; 4) дашборд rh.box -> «Домены»: появился ли ru.wikipedia.org и с какой меткой (https / MITM). Если ловит -> заменить hostname на * (ловить всё; банки в исключениях). ВНИМАНИЕ: при hostname=* нативные банк/госприложения вне исключений могут падать. По умолчанию плагин ВЫКЛЮЧЕН.
 #!author = RouteHub
 
 [Script]
@@ -8,13 +8,11 @@
 http-request ^https?:\/\/ script-path=https://raw.githubusercontent.com/spxload/routehub/main/routehub-faillog.js, requires-body=false, timeout=5, tag=RH-FailLog, enabled=true
 
 [MITM]
-# ТЕСТ: один домен httpbin.org. Проверяем, пробрасывает ли плагин MITM-хост в
-# глобальный MITM (прошлый раз с hostname=* «*» не появилась — возможно, дело было
-# в формате или в самом «*»). enable=true обязателен — иначе MITM не активен.
-# ЕСЛИ httpbin.org поймается -> заменить строку hostname на: hostname = *, -исключения
-# (полный список исключений банков — см. ниже в комментарии).
+# ТЕСТ: один ЖИВОЙ домен ru.wikipedia.org (httpbin.org возвращал 503 — мёртвый стенд).
+# Проверяем, ловит ли faillog HTTPS-домен при MITM от плагина. enable=true обязателен.
+# ЕСЛИ ru.wikipedia.org поймается -> заменить строку hostname на: hostname = *, -исключения.
 enable = true
 skip-server-cert-verify = false
-hostname = httpbin.org
+hostname = *.wikipedia.org
 # Для расширения до «всё» заменить строку выше на (БАНКИ В ИСКЛЮЧЕНИЯХ):
 # hostname = *, -*.apple.com, -*.icloud.com, -*.mzstatic.com, -*.gosuslugi.ru, -*.gosuslugi.gov.ru, -*.gov.ru, -*.esia.gosuslugi.ru, -*.sberbank.ru, -*.sber.ru, -*.sberbank.online, -*.online.sberbank.ru, -*.tinkoff.ru, -*.tbank.ru, -*.vtb.ru, -*.vtb24.ru, -*.alfabank.ru, -*.gazprombank.ru, -*.raiffeisen.ru, -*.psbank.ru, -*.open.ru, -*.mkb.ru, -*.rshb.ru, -*.sovcombank.ru, -*.nspk.ru, -*.mir.ru, -*.nalog.ru, -*.nalog.gov.ru, -*.mos.ru
