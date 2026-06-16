@@ -1,18 +1,19 @@
-#!name = RouteHub FailLog (ручной перехват)
-#!desc = РУЧНОЙ режим ловли упавших доменов. ТЕСТ: MITM в плагине на ОДИН домен ru.wikipedia.org (httpbin.org лежал — 503). Проверка, ловит ли faillog HTTPS при MITM от плагина. ПОРЯДОК: 1) включи плагин; 2) очисти лог в дашборде; 3) открой https://ru.wikipedia.org; 4) дашборд rh.box -> «Домены»: появился ли ru.wikipedia.org и с какой меткой (https / MITM). Если ловит -> заменить hostname на * (ловить всё; банки в исключениях). ВНИМАНИЕ: при hostname=* нативные банк/госприложения вне исключений могут падать. По умолчанию плагин ВЫКЛЮЧЕН.
+#!name = RouteHub FailLog (сборщик доменов)
+#!desc = faillog-скрипт: ловит host из http-request и пишет в rh_faillog; дашборд (rh.box -> «Домены») показывает домены и даёт кнопку «+ список» (обход RH-RU). MITM этот плагин НЕ включает — на устройстве проверено многократно: [MITM] из плагина не даёт перехвата (хост в MITM-страницу попадает, но HTTPS скрипту не отдаётся; ловило ТОЛЬКО когда MITM стоял в ГЛАВНОМ конфиге — C-draft-30 с example.com). Перехват HTTPS включается ВРУЧНУЮ в Loon: MITM (Захват сессии) -> «Включить перехват пакетов» + «Дополнительное имя хоста MitM»: * и -исключения банков. ПОРЯДОК: 1) включи перехват MITM в Loon (с * и исключениями); 2) включи этот плагин; 3) открой упавший сайт; 4) дашборд -> «Домены» -> «+ список»; 5) ВЫКЛЮЧИ перехват и плагин. Пока перехват вкл: НЕ открывай нативные банк/госприложения вне списка исключений (пиннинг -> падение). По умолчанию плагин ВЫКЛЮЧЕН.
 #!author = RouteHub
 
 [Script]
-# faillog: http-request сборщик. Пишет host в $persistentStore rh_faillog;
-# дашборд (rh.box) показывает домены и даёт кнопку «+ список» (обход RH-RU).
+# faillog: http-request сборщик. HTTP ловит всегда; HTTPS — только когда в Loon
+# ВРУЧНУЮ включён перехват MITM (UI-тумблер «Включить перехват пакетов» + hostname=*).
+# Пишет host в $persistentStore rh_faillog; дашборд показывает и даёт «+ список».
 http-request ^https?:\/\/ script-path=https://raw.githubusercontent.com/spxload/routehub/main/routehub-faillog.js, requires-body=false, timeout=5, tag=RH-FailLog, enabled=true
 
-[MITM]
-# ТЕСТ: один ЖИВОЙ домен ru.wikipedia.org (httpbin.org возвращал 503 — мёртвый стенд).
-# Проверяем, ловит ли faillog HTTPS-домен при MITM от плагина. enable=true обязателен.
-# ЕСЛИ ru.wikipedia.org поймается -> заменить строку hostname на: hostname = *, -исключения.
-enable = true
-skip-server-cert-verify = false
-hostname = *.wikipedia.org
-# Для расширения до «всё» заменить строку выше на (БАНКИ В ИСКЛЮЧЕНИЯХ):
-# hostname = *, -*.apple.com, -*.icloud.com, -*.mzstatic.com, -*.gosuslugi.ru, -*.gosuslugi.gov.ru, -*.gov.ru, -*.esia.gosuslugi.ru, -*.sberbank.ru, -*.sber.ru, -*.sberbank.online, -*.online.sberbank.ru, -*.tinkoff.ru, -*.tbank.ru, -*.vtb.ru, -*.vtb24.ru, -*.alfabank.ru, -*.gazprombank.ru, -*.raiffeisen.ru, -*.psbank.ru, -*.open.ru, -*.mkb.ru, -*.rshb.ru, -*.sovcombank.ru, -*.nspk.ru, -*.mir.ru, -*.nalog.ru, -*.nalog.gov.ru, -*.mos.ru
+# [MITM] В ПЛАГИНЕ НЕ РАБОТАЕТ (проверено: httpbin/wikipedia/* — перехвата нет).
+# MITM включать ТОЛЬКО вручную в Loon. Список исключений для вставки в UI
+# («Дополнительное имя хоста MitM»):
+# *, -*.apple.com, -*.icloud.com, -*.mzstatic.com, -*.gosuslugi.ru, -*.gosuslugi.gov.ru,
+# -*.gov.ru, -*.esia.gosuslugi.ru, -*.sberbank.ru, -*.sber.ru, -*.sberbank.online,
+# -*.online.sberbank.ru, -*.tinkoff.ru, -*.tbank.ru, -*.vtb.ru, -*.vtb24.ru,
+# -*.alfabank.ru, -*.gazprombank.ru, -*.raiffeisen.ru, -*.psbank.ru, -*.open.ru,
+# -*.mkb.ru, -*.rshb.ru, -*.sovcombank.ru, -*.nspk.ru, -*.mir.ru, -*.nalog.ru,
+# -*.nalog.gov.ru, -*.mos.ru
