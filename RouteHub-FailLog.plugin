@@ -1,17 +1,20 @@
 #!name = RouteHub FailLog (ручной перехват)
-#!desc = РУЧНОЙ режим ловли упавших доменов. ВКЛЮЧАТЬ ТОЛЬКО когда что-то не грузится. Включаешь плагин -> MITM глобальный (с исключением банков/Госуслуг/Apple) -> faillog ловит HTTPS-домены упавших соединений -> добавляешь нужные в список в дашборде (rh.box) кнопкой "+ список" -> ВЫКЛЮЧАЕШЬ плагин (MITM уходит, банки целы). ВНИМАНИЕ: пока плагин включён, НЕ открывай банки/Госуслуги в нативных приложениях — исключения покрывают основные РФ-сервисы, но незнакомые приложения с пиннингом сертификата могут падать. MITM может «не пробить» часть современных сайтов (MITM Failed) — домен всё равно фиксируется. По умолчанию ВЫКЛЮЧЕН.
+#!desc = РУЧНОЙ режим ловли упавших доменов (faillog-скрипт). MITM этот плагин НЕ включает (проверено на устройстве: [MITM] в плагине не пробрасывает hostname=* в глобальный MITM). Перехват HTTPS управляется ВРУЧНУЮ в Loon: MITM -> «Включить перехват пакетов» + в «Дополнительное имя хоста MitM» вписать * и исключения банков. ПОРЯДОК: 1) включи перехват MITM в Loon (с * и исключениями); 2) включи этот плагин; 3) открой упавший сайт; 4) в дашборде rh.box -> «Домены» жми «+ список»; 5) ВЫКЛЮЧИ перехват MITM и плагин. Пока перехват вкл: НЕ открывай банки/Госуслуги в нативных приложениях вне списка исключений (пиннинг -> падение). По умолчанию плагин ВЫКЛЮЧЕН.
 #!author = RouteHub
 
 [Script]
-# faillog: http-request сборщик. Пишет домен (host) в $persistentStore rh_faillog;
-# дашборд (rh.box) показывает их и даёт кнопку "+ список" (отправить в обход RH-RU).
+# faillog: http-request сборщик. Ловит host из запроса (HTTP всегда; HTTPS — когда
+# в Loon включён перехват MITM с hostname=*). Пишет домен в $persistentStore rh_faillog;
+# дашборд (rh.box) показывает их и даёт кнопку «+ список» (отправить в обход RH-RU).
 http-request ^https?:\/\/ script-path=https://raw.githubusercontent.com/spxload/routehub/main/routehub-faillog.js, requires-body=false, timeout=5, tag=RH-FailLog, enabled=true
 
-[MITM]
-# Глобальный MITM с исключениями. enable=true ВНУТРИ плагина: активен, только пока
-# плагин включён. Выключение плагина -> секция уходит -> MITM выключается (главный
-# конфиг держит enable=false). Исключения (-домен) — критичные РФ-сервисы с пиннингом
-# + Apple/iCloud: они НЕ расшифровываются и работают штатно. Дополнять по мере находок.
-enable = true
-skip-server-cert-verify = false
-hostname = *, -*.apple.com, -*.icloud.com, -*.mzstatic.com, -*.gosuslugi.ru, -*.gosuslugi.gov.ru, -*.gov.ru, -*.esia.gosuslugi.ru, -*.sberbank.ru, -*.sber.ru, -*.sberbank.online, -*.online.sberbank.ru, -*.tinkoff.ru, -*.tbank.ru, -*.vtb.ru, -*.vtb24.ru, -*.alfabank.ru, -*.gazprombank.ru, -*.raiffeisen.ru, -*.psbank.ru, -*.open.ru, -*.mkb.ru, -*.rshb.ru, -*.sovcombank.ru, -*.nspk.ru, -*.mir.ru, -*.nalog.ru, -*.nalog.gov.ru, -*.mos.ru
+# [MITM] УБРАН: в плагине Loon не пробрасывает hostname=* в глобальный MITM (на
+# устройстве «*» не появилась). MITM включается ВРУЧНУЮ в Loon (Захват сессии ->
+# «Включить перехват пакетов» + «Дополнительное имя хоста MitM»: * и -исключения).
+# Список исключений для вставки в UI (критичные РФ-сервисы с пиннингом + Apple):
+# *, -*.apple.com, -*.icloud.com, -*.mzstatic.com, -*.gosuslugi.ru, -*.gosuslugi.gov.ru,
+# -*.gov.ru, -*.esia.gosuslugi.ru, -*.sberbank.ru, -*.sber.ru, -*.sberbank.online,
+# -*.online.sberbank.ru, -*.tinkoff.ru, -*.tbank.ru, -*.vtb.ru, -*.vtb24.ru,
+# -*.alfabank.ru, -*.gazprombank.ru, -*.raiffeisen.ru, -*.psbank.ru, -*.open.ru,
+# -*.mkb.ru, -*.rshb.ru, -*.sovcombank.ru, -*.nspk.ru, -*.mir.ru, -*.nalog.ru,
+# -*.nalog.gov.ru, -*.mos.ru
