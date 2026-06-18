@@ -1,5 +1,13 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.7.4 (2026-06-18) — ПАРАМЕТРЫ ПОДПИСКИ ИЗ КОНФИГА:
+//   handleConfig больше НЕ срезает хвост параметров строки Lastdep. Раньше
+//   подставлялось жёстко '?key=kN,udp=true,enabled=true' — все параметры из
+//   конфига (block-quic, fast-open, vmess-aead, skip-cert-verify, flexible-sni)
+//   терялись, и Loon ставил их по умолчанию (block-quic=true!). Теперь Worker
+//   берёт хвост параметров из строки [Remote Proxy] конфига и сохраняет его,
+//   меняя только URL на свой origin/nodes?key=kN. Если параметров в конфиге нет
+//   — запасной дефолт ',udp=true,enabled=true'. Так block-quic=false доходит до устройства.
 // VERSION: worker v1.7.3 (2026-06-13) — иконка приложения обновлена
 //   (хаб + 6 прямых лучей к узлам, бирюзовый акцент; читаемее на сетке iOS).
 // VERSION: worker v1.7.2 (2026-06-12) — иконка приложения как SVG (надёжная
@@ -219,6 +227,20 @@ function classifyNet(asOrg) {
   return 'wifi';
 }
 
+// Извлечь хвост параметров Loon из строки [Remote Proxy] конфига.
+// Строка вида: "Lastdep = <url>,p1=v1,p2=v2,...". URL запятых не содержит,
+// поэтому всё ПОСЛЕ первой запятой — параметры подписки (block-quic, udp, ...).
+// Возвращает ведущую запятую + параметры (",udp=true,...") либо запасной дефолт.
+function subParamsFromConf(conf) {
+  const m = String(conf).match(/^Lastdep\s*=\s*(.*)$/m);
+  if (!m) return ',udp=true,enabled=true';
+  const rhs = m[1].trim();
+  const ci = rhs.indexOf(',');
+  if (ci < 0) return ',udp=true,enabled=true'; // параметров нет — запасной дефолт
+  const params = rhs.slice(ci + 1).trim();      // всё после URL (без ведущей запятой)
+  return params ? (',' + params) : ',udp=true,enabled=true';
+}
+
 async function fetchUpstream(env) {
   if (!env.SUBSCRIPTION_URL) throw new Error('SUBSCRIPTION_URL не задан (секрет CF)');
   const r = await fetch(env.SUBSCRIPTION_URL, {
@@ -379,6 +401,10 @@ async function handleConfig(url, env) {
   const cv = confVersion(conf);
   if (cv && reg[key].conf_ver !== cv) { reg[key].conf_ver = cv; try { await kvPutJSON(env, 'devices', reg); } catch (e) {} }
 
+  // Параметры подписки берём ИЗ КОНФИГА (block-quic, udp, fast-open и т.д.) ДО
+  // переписывания строки Lastdep — иначе они теряются и Loon ставит свои дефолты.
+  const subParams = subParamsFromConf(conf);
+
   const sub = await getSub(env, false);
   const masterLines = sub.text.split('\n').filter(Boolean);
   const state = (await kvGetJSON(env, 'metrics:' + key)) || {};
@@ -386,7 +412,8 @@ async function handleConfig(url, env) {
   conf = conf.replace('# __RH_AI_FILTERS__', blocks.filters);
   conf = conf.replace('# __RH_AI_GROUPS__', blocks.groups);
 
-  const subUrl = url.origin + '/nodes?key=' + key + ',udp=true,enabled=true';
+  // URL заменяем на свой origin, ХВОСТ ПАРАМЕТРОВ сохраняем из конфига.
+  const subUrl = url.origin + '/nodes?key=' + key + subParams;
   conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + subUrl);
   const mylistUrl = url.origin + '/mylist?key=' + key;
   conf = conf.replace('# __RH_MYLIST_URL__', mylistUrl);
@@ -581,7 +608,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.7.3',
+    worker: 'v1.7.4',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
