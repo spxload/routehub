@@ -1,5 +1,28 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.8.0 (2026-08-03) — ХРАНИЛИЩЕ ПЕРЕВЕДЕНО НА D1:
+//   ПРИЧИНА: KV free-план — 1000 записей/сутки НА АККАУНТ. При двух устройствах
+//   расход был 760-800/сутки (замер Дианы), третье устройство пробивало лимит.
+//   Интервалы cron и состав записываемых данных НЕ меняли принципиально —
+//   вместо этого сменили хранилище: D1 free — 100 000 строк/сутки (в 100 раз).
+//   * kvGetJSON/kvPutJSON теперь работают с D1 (binding RH_DB, база routehub-db,
+//     таблица kv: key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER).
+//     Модель данных ПРЕЖНЯЯ: один ключ = один JSON-блок (metrics:<kN> — все узлы
+//     одним объектом). Один kvPutJSON = одна записанная строка, как один put в KV.
+//     Все вызывающие места (handleConfig/handleNodes/handleSpeed/handleRkn/
+//     handleRule/handleDashboard/getSub/loadRegistry) НЕ изменены — они и раньше
+//     обращались только к обёрткам.
+//   * kvPutManyJSON() — парные записи одним RH_DB.batch() (транзакция):
+//     handleSpeed (metrics+devices), handleRkn при смене режима (rkn+rkn_hist).
+//     Квоту НЕ экономит (каждая строка считается отдельно) — даёт атомарность
+//     и меньше сетевых обращений; раньше два независимых await могли разъехаться.
+//   * handleConfig: реестр devices пишется ОДИН раз за запрос. Раньше при смене
+//     C-draft писалось дважды подряд (last_config_ts, затем conf_ver).
+//   ДАННЫЕ перенесены из KV разово через /admin/migrate (v1.7.6) и сверены:
+//   9 ключей, привязки nonce и флаги устройств сохранены.
+//   KV-биндинг RH_KV ОСТАВЛЕН в wrangler.toml как путь отката и для работы
+//   /admin/backup, /admin/migrate, /admin/verify. Удаление namespace — Диана,
+//   после нескольких суток стабильной работы на D1.
 // VERSION: worker v1.7.6 (2026-08-03) — ШАГ 1 МИГРАЦИИ НА D1 (данные ещё в KV):
 //   * Добавлен биндинг RH_DB (D1, база routehub-db) в wrangler.toml.
 //     ЧТЕНИЕ И ЗАПИСЬ ПО-ПРЕЖНЕМУ В KV — обёртки kvGetJSON/kvPutJSON не тронуты,
@@ -82,15 +105,16 @@
 // GET  /mylist?key=kN  -> личный список RH-RU для [Remote Rule] (DOMAIN-SUFFIX,...).
 // GET  /icon.svg /icon.png /apple-touch-icon.png -> SVG-иконка приложения (плагин и домашний экран).
 // GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
-// POST /speed          -> метрики устройства (KV).
-// POST /rkn            -> режим сети от routehub-rkn (KV rkn:<kN> + rkn_hist:<kN>).
-// POST /addrule        -> {key, domain} добавить домен в личный список (KV mylist:<kN>).
+// POST /speed          -> метрики устройства (D1).
+// POST /rkn            -> режим сети от routehub-rkn (D1 rkn:<kN> + rkn_hist:<kN>).
+// POST /addrule        -> {key, domain} добавить домен в личный список (D1 mylist:<kN>).
 // POST /delrule        -> {key, domain} убрать домен из личного списка.
 // GET  /whoami         -> детект сети/оператора по request.cf.
 // GET  /admin/backup?key=<ADMIN_KEY> -> ПОЛНЫЙ дамп KV (диагностика, временно, до переноса на D1).
 // GET  /admin/migrate?key=<ADMIN_KEY> -> РАЗОВЫЙ перенос KV -> D1 (временно, шаг миграции).
 // GET  /admin/verify?key=<ADMIN_KEY> -> сверка ключей KV и D1 (временно, шаг миграции).
-// env: RH_KV (KV binding), RH_DB (D1 binding), SUBSCRIPTION_URL + SUB_HWID + ADMIN_KEY (секреты CF), CONFIG_URL.
+// env: RH_DB (D1 binding — ОСНОВНОЕ ХРАНИЛИЩЕ), RH_KV (KV binding — только откат
+//      и /admin/*), SUBSCRIPTION_URL + SUB_HWID + ADMIN_KEY (секреты CF), CONFIG_URL.
 // =============================================================
 
 const METRIC_SEP = ' \u00B7 ';
@@ -212,8 +236,28 @@ function jsonResp(obj, status) {
   return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' } });
 }
 
-async function kvGetJSON(env, k) { const s = await env.RH_KV.get(k); if (!s) return null; try { return JSON.parse(s); } catch (e) { return null; } }
-async function kvPutJSON(env, k, o) { await env.RH_KV.put(k, JSON.stringify(o)); }
+// ХРАНИЛИЩЕ — Cloudflare D1 (таблица kv: key/value/updated_at), эмуляция KV.
+// Модель прежняя: один ключ = один JSON-блок (metrics:<kN> — ВСЕ узлы одним
+// объектом, не строка на узел). Одна запись = одна строка -> расход как у KV,
+// но лимит в 100 раз выше (100 000 строк/сутки против 1000 записей/сутки).
+const KV_UPSERT = 'INSERT INTO kv(key,value,updated_at) VALUES(?,?,?) ' +
+  'ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at';
+async function kvGetJSON(env, k) {
+  const r = await env.RH_DB.prepare('SELECT value FROM kv WHERE key = ?').bind(k).first();
+  if (!r || r.value == null) return null;
+  try { return JSON.parse(r.value); } catch (e) { return null; }
+}
+async function kvPutJSON(env, k, o) {
+  await env.RH_DB.prepare(KV_UPSERT).bind(k, JSON.stringify(o), Date.now()).run();
+}
+// Несколько записей одним обращением к D1 (транзакция: пройдут все или ни одной).
+// На расход квоты НЕ влияет — каждая строка считается отдельно; выигрыш в
+// задержке и атомарности (раньше два независимых await могли разъехаться).
+async function kvPutManyJSON(env, pairs) {
+  const stmt = env.RH_DB.prepare(KV_UPSERT);
+  const now = Date.now();
+  await env.RH_DB.batch(pairs.map(function (p) { return stmt.bind(p[0], JSON.stringify(p[1]), now); }));
+}
 async function loadMylist(env, key) { return (await kvGetJSON(env, 'mylist:' + key)) || []; }
 
 function b64ToUtf8(s) {
@@ -417,7 +461,6 @@ async function handleConfig(url, env) {
   if (!reg[key]) return new Response('unknown key', { status: 403 });
   ensureFlags(reg);
   reg[key].last_config_ts = new Date().toISOString();
-  try { await kvPutJSON(env, 'devices', reg); } catch (e) {}
 
   // Обход кэша: no-store (кэш Workers) + ?t=now (CDN GitHub считает ресурс новым)
   const cfgUrl = env.CONFIG_URL + (env.CONFIG_URL.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
@@ -425,7 +468,9 @@ async function handleConfig(url, env) {
   if (!cr.ok) throw new Error('config fetch ' + cr.status);
   let conf = await cr.text();
   const cv = confVersion(conf);
-  if (cv && reg[key].conf_ver !== cv) { reg[key].conf_ver = cv; try { await kvPutJSON(env, 'devices', reg); } catch (e) {} }
+  if (cv && reg[key].conf_ver !== cv) reg[key].conf_ver = cv;
+  // Одна запись реестра на запрос (раньше при смене C-draft писалось дважды).
+  try { await kvPutJSON(env, 'devices', reg); } catch (e) {}
 
   // Параметры подписки берём ИЗ КОНФИГА (block-quic, udp, fast-open и т.д.) ДО
   // переписывания строки Lastdep — иначе они теряются и Loon ставит свои дефолты.
@@ -634,7 +679,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.7.6',
+    worker: 'v1.8.0',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
@@ -676,12 +721,14 @@ async function handleRkn(req, env) {
   const mode = String((data && data.mode) || '');
   if (['normal', 'whitelist', 'block'].indexOf(mode) < 0) return jsonResp({ error: 'bad mode' }, 400);
   const rec = { mode: mode, ts: (data && data.ts) || new Date().toISOString() };
-  await kvPutJSON(env, 'rkn:' + key, rec);
   let hist = (await kvGetJSON(env, 'rkn_hist:' + key)) || [];
   if (!hist.length || hist[hist.length - 1].mode !== mode) {
     hist.push(rec);
     if (hist.length > 50) hist = hist.slice(-50);
-    await kvPutJSON(env, 'rkn_hist:' + key, hist);
+    // Смена режима: текущее состояние + история — одной транзакцией.
+    await kvPutManyJSON(env, [['rkn:' + key, rec], ['rkn_hist:' + key, hist]]);
+  } else {
+    await kvPutJSON(env, 'rkn:' + key, rec);
   }
   return jsonResp({ ok: true, key: key, mode: mode });
 }
@@ -733,8 +780,8 @@ async function handleSpeed(req, env) {
   let labeled = 0;
   for (const k in state) if (state[k] && (state[k].w || state[k].c)) labeled++;
 
-  await kvPutJSON(env, 'metrics:' + key, state);
-  await kvPutJSON(env, 'devices', reg);
+  // Парная запись одним обращением к D1 (атомарно): метрики + реестр.
+  await kvPutManyJSON(env, [['metrics:' + key, state], ['devices', reg]]);
 
   return jsonResp({ ok: true, key: key, status: e.status, labeled: labeled, sent_wifi: sentW, sent_cell: sentC });
 }
@@ -775,8 +822,8 @@ async function kvDumpAll(env) {
 }
 
 // РАЗОВЫЙ перенос KV -> D1. Идемпотентен (UPSERT по PRIMARY KEY).
-// Не удаляет ничего ни в KV, ни в D1. Обёртки kvGetJSON/kvPutJSON НЕ затронуты —
-// рабочая система в этот момент продолжает читать и писать в KV.
+// Не удаляет ничего ни в KV, ни в D1. После v1.8.0 основное хранилище — D1,
+// этот эндпоинт остаётся только как аварийный повтор переноса из старого KV.
 async function handleAdminMigrate(url, env) {
   const denied = adminGate(url, env);
   if (denied) return denied;
@@ -784,10 +831,7 @@ async function handleAdminMigrate(url, env) {
   const data = await kvDumpAll(env);
   const now = Date.now();
   const names = Object.keys(data);
-  const stmt = env.RH_DB.prepare(
-    'INSERT INTO kv(key,value,updated_at) VALUES(?,?,?) ' +
-    'ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at'
-  );
+  const stmt = env.RH_DB.prepare(KV_UPSERT);
   const batch = [];
   const moved = [];
   for (const n of names) {
@@ -806,6 +850,8 @@ async function handleAdminMigrate(url, env) {
 }
 
 // Сверка KV и D1: что где лежит и совпадают ли длины значений. Только чтение.
+// После v1.8.0 расхождения ОЖИДАЕМЫ: D1 живёт и обновляется, KV заморожен
+// на момент переключения — это норма, а не ошибка.
 async function handleAdminVerify(url, env) {
   const denied = adminGate(url, env);
   if (denied) return denied;
