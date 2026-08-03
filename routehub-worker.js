@@ -1,5 +1,15 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.7.5 (2026-08-03) — ВРЕМЕННЫЙ ДИАГНОСТИЧЕСКИЙ ЭНДПОИНТ:
+//   GET /admin/backup?key=<ADMIN_KEY> — полный дамп всех ключей KV (сырые
+//   строки, без парсинга) для бэкапа перед миграцией на D1. Гейт — отдельный
+//   секрет ADMIN_KEY (завести в CF Dashboard, тип Secret — НЕ Text, иначе
+//   перезапишется дефолтом из [vars] при следующем деплое). Без ADMIN_KEY
+//   в env эндпоинт всегда отвечает 403, доступа нет ни у кого. Только чтение
+//   (KV.list + KV.get), ничего не пишет и не удаляет. ВАЖНО: sub_cache
+//   содержит сырые vless:// URI с учётными данными — результат не публиковать
+//   и не коммитить в репозиторий (публичный), хранить только как личный файл.
+//   Убрать эндпоинт из кода после завершения миграции на D1 (см. СТАРТ.md).
 // VERSION: worker v1.7.4 (2026-06-18) — ПАРАМЕТРЫ ПОДПИСКИ ИЗ КОНФИГА:
 //   handleConfig больше НЕ срезает хвост параметров строки Lastdep. Раньше
 //   подставлялось жёстко '?key=kN,udp=true,enabled=true' — все параметры из
@@ -64,7 +74,8 @@
 // POST /addrule        -> {key, domain} добавить домен в личный список (KV mylist:<kN>).
 // POST /delrule        -> {key, domain} убрать домен из личного списка.
 // GET  /whoami         -> детект сети/оператора по request.cf.
-// env: RH_KV (KV binding), SUBSCRIPTION_URL + SUB_HWID (секреты CF), CONFIG_URL.
+// GET  /admin/backup?key=<ADMIN_KEY> -> ПОЛНЫЙ дамп KV (диагностика, временно, до переноса на D1).
+// env: RH_KV (KV binding), SUBSCRIPTION_URL + SUB_HWID + ADMIN_KEY (секреты CF), CONFIG_URL.
 // =============================================================
 
 const METRIC_SEP = ' \u00B7 ';
@@ -608,7 +619,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.7.4',
+    worker: 'v1.7.5',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
@@ -713,6 +724,27 @@ async function handleSpeed(req, env) {
   return jsonResp({ ok: true, key: key, status: e.status, labeled: labeled, sent_wifi: sentW, sent_cell: sentC });
 }
 
+// Временный диагностический дамп ВСЕХ ключей KV (сырые строки, без парсинга).
+// Только чтение — KV.list()+KV.get(), ничего не пишет. Гейт: env.ADMIN_KEY
+// (секрет CF, тип Secret). Если секрет не задан — эндпоинт закрыт наглухо
+// (403 для всех, даже с пустым key). Убрать после переноса на D1.
+async function handleAdminBackup(url, env) {
+  if (!env.ADMIN_KEY) return jsonResp({ error: 'admin disabled' }, 403);
+  const key = url.searchParams.get('key') || '';
+  if (key !== env.ADMIN_KEY) return jsonResp({ error: 'forbidden' }, 403);
+  const data = {};
+  let cursor;
+  let pages = 0;
+  do {
+    const page = await env.RH_KV.list(cursor ? { cursor: cursor } : {});
+    for (const k of page.keys) data[k.name] = await env.RH_KV.get(k.name);
+    cursor = page.list_complete ? null : page.cursor;
+    pages++;
+    if (pages > 50) break; // защита от зацикливания при аномалии пагинации
+  } while (cursor);
+  return jsonResp({ ok: true, dumped_at: new Date().toISOString(), count: Object.keys(data).length, data: data });
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
@@ -733,6 +765,7 @@ export default {
       if (req.method === 'GET' && url.pathname === '/dashboard') return await handleDashboard(url, env);
       if (req.method === 'GET' && url.pathname === '/mylist') return await handleMylist(url, env);
       if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env);
+      if (req.method === 'GET' && url.pathname === '/admin/backup') return await handleAdminBackup(url, env);
       if (req.method === 'POST' && url.pathname === '/rkn') return await handleRkn(req, env);
       if (req.method === 'POST' && url.pathname === '/addrule') return await handleRule(req, env, true);
       if (req.method === 'POST' && url.pathname === '/delrule') return await handleRule(req, env, false);
