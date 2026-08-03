@@ -1,5 +1,18 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.7.6 (2026-08-03) — ШАГ 1 МИГРАЦИИ НА D1 (данные ещё в KV):
+//   * Добавлен биндинг RH_DB (D1, база routehub-db) в wrangler.toml.
+//     ЧТЕНИЕ И ЗАПИСЬ ПО-ПРЕЖНЕМУ В KV — обёртки kvGetJSON/kvPutJSON не тронуты,
+//     рабочая система не затронута, поведение на устройствах не меняется.
+//   * GET /admin/migrate?key=<ADMIN_KEY> — РАЗОВЫЙ перенос всех ключей KV -> D1
+//     (таблица kv: key/value/updated_at, UPSERT). Данные идут внутри Cloudflare,
+//     наружу (в чат/репозиторий) не выгружаются. Идемпотентен: повторный запуск
+//     просто перезапишет строки теми же значениями.
+//   * GET /admin/verify?key=<ADMIN_KEY> — сверка KV и D1: список ключей с обеих
+//     сторон, длины значений, расхождения. Только чтение.
+//   Переключение обёрток на D1 — СЛЕДУЮЩИМ коммитом (v1.8.0), после сверки.
+//   Порядок именно такой: если переключить обёртки ДО переноса, D1 будет пуст,
+//   loadRegistry() создаст devices заново и POST /speed перепривяжет nonce.
 // VERSION: worker v1.7.5 (2026-08-03) — ВРЕМЕННЫЙ ДИАГНОСТИЧЕСКИЙ ЭНДПОИНТ:
 //   GET /admin/backup?key=<ADMIN_KEY> — полный дамп всех ключей KV (сырые
 //   строки, без парсинга) для бэкапа перед миграцией на D1. Гейт — отдельный
@@ -75,7 +88,9 @@
 // POST /delrule        -> {key, domain} убрать домен из личного списка.
 // GET  /whoami         -> детект сети/оператора по request.cf.
 // GET  /admin/backup?key=<ADMIN_KEY> -> ПОЛНЫЙ дамп KV (диагностика, временно, до переноса на D1).
-// env: RH_KV (KV binding), SUBSCRIPTION_URL + SUB_HWID + ADMIN_KEY (секреты CF), CONFIG_URL.
+// GET  /admin/migrate?key=<ADMIN_KEY> -> РАЗОВЫЙ перенос KV -> D1 (временно, шаг миграции).
+// GET  /admin/verify?key=<ADMIN_KEY> -> сверка ключей KV и D1 (временно, шаг миграции).
+// env: RH_KV (KV binding), RH_DB (D1 binding), SUBSCRIPTION_URL + SUB_HWID + ADMIN_KEY (секреты CF), CONFIG_URL.
 // =============================================================
 
 const METRIC_SEP = ' \u00B7 ';
@@ -619,7 +634,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.7.5',
+    worker: 'v1.7.6',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
@@ -729,9 +744,23 @@ async function handleSpeed(req, env) {
 // (секрет CF, тип Secret). Если секрет не задан — эндпоинт закрыт наглухо
 // (403 для всех, даже с пустым key). Убрать после переноса на D1.
 async function handleAdminBackup(url, env) {
+  const denied = adminGate(url, env);
+  if (denied) return denied;
+  const data = await kvDumpAll(env);
+  return jsonResp({ ok: true, dumped_at: new Date().toISOString(), count: Object.keys(data).length, data: data });
+}
+
+// Общий гейт админ-эндпоинтов: без секрета ADMIN_KEY в env закрыто наглухо.
+// Возвращает null, если доступ разрешён, иначе готовый Response с отказом.
+function adminGate(url, env) {
   if (!env.ADMIN_KEY) return jsonResp({ error: 'admin disabled' }, 403);
   const key = url.searchParams.get('key') || '';
   if (key !== env.ADMIN_KEY) return jsonResp({ error: 'forbidden' }, 403);
+  return null;
+}
+
+// Прочитать ВСЕ ключи KV (имя -> сырая строка). Общая часть backup/migrate/verify.
+async function kvDumpAll(env) {
   const data = {};
   let cursor;
   let pages = 0;
@@ -742,7 +771,65 @@ async function handleAdminBackup(url, env) {
     pages++;
     if (pages > 50) break; // защита от зацикливания при аномалии пагинации
   } while (cursor);
-  return jsonResp({ ok: true, dumped_at: new Date().toISOString(), count: Object.keys(data).length, data: data });
+  return data;
+}
+
+// РАЗОВЫЙ перенос KV -> D1. Идемпотентен (UPSERT по PRIMARY KEY).
+// Не удаляет ничего ни в KV, ни в D1. Обёртки kvGetJSON/kvPutJSON НЕ затронуты —
+// рабочая система в этот момент продолжает читать и писать в KV.
+async function handleAdminMigrate(url, env) {
+  const denied = adminGate(url, env);
+  if (denied) return denied;
+  if (!env.RH_DB) return jsonResp({ error: 'RH_DB binding отсутствует' }, 500);
+  const data = await kvDumpAll(env);
+  const now = Date.now();
+  const names = Object.keys(data);
+  const stmt = env.RH_DB.prepare(
+    'INSERT INTO kv(key,value,updated_at) VALUES(?,?,?) ' +
+    'ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at'
+  );
+  const batch = [];
+  const moved = [];
+  for (const n of names) {
+    if (data[n] == null) continue; // ключ исчез между list и get — пропускаем
+    batch.push(stmt.bind(n, data[n], now));
+    moved.push({ key: n, len: data[n].length });
+  }
+  if (!batch.length) return jsonResp({ ok: false, error: 'в KV нет ключей' }, 500);
+  await env.RH_DB.batch(batch);
+  const cnt = await env.RH_DB.prepare('SELECT COUNT(*) AS n FROM kv').first();
+  return jsonResp({
+    ok: true, migrated_at: new Date(now).toISOString(),
+    kv_keys: names.length, written: moved.length,
+    d1_rows_total: cnt ? cnt.n : null, keys: moved,
+  });
+}
+
+// Сверка KV и D1: что где лежит и совпадают ли длины значений. Только чтение.
+async function handleAdminVerify(url, env) {
+  const denied = adminGate(url, env);
+  if (denied) return denied;
+  if (!env.RH_DB) return jsonResp({ error: 'RH_DB binding отсутствует' }, 500);
+  const kv = await kvDumpAll(env);
+  const rows = await env.RH_DB.prepare('SELECT key, LENGTH(value) AS len, updated_at FROM kv').all();
+  const d1 = {};
+  for (const r of (rows.results || [])) d1[r.key] = { len: r.len, updated_at: r.updated_at };
+  const report = [];
+  const onlyKv = [], onlyD1 = [], mismatch = [];
+  for (const k in kv) {
+    const kvLen = kv[k] == null ? null : kv[k].length;
+    const d = d1[k];
+    if (!d) { onlyKv.push(k); continue; }
+    if (d.len !== kvLen) mismatch.push({ key: k, kv_len: kvLen, d1_len: d.len });
+    report.push({ key: k, kv_len: kvLen, d1_len: d.len, d1_updated_at: d.updated_at });
+  }
+  for (const k in d1) if (!(k in kv)) onlyD1.push(k);
+  return jsonResp({
+    ok: onlyKv.length === 0 && mismatch.length === 0,
+    kv_keys: Object.keys(kv).length, d1_rows: Object.keys(d1).length,
+    only_in_kv: onlyKv, only_in_d1: onlyD1, length_mismatch: mismatch,
+    detail: report, checked_at: new Date().toISOString(),
+  });
 }
 
 export default {
@@ -766,6 +853,8 @@ export default {
       if (req.method === 'GET' && url.pathname === '/mylist') return await handleMylist(url, env);
       if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env);
       if (req.method === 'GET' && url.pathname === '/admin/backup') return await handleAdminBackup(url, env);
+      if (req.method === 'GET' && url.pathname === '/admin/migrate') return await handleAdminMigrate(url, env);
+      if (req.method === 'GET' && url.pathname === '/admin/verify') return await handleAdminVerify(url, env);
       if (req.method === 'POST' && url.pathname === '/rkn') return await handleRkn(req, env);
       if (req.method === 'POST' && url.pathname === '/addrule') return await handleRule(req, env, true);
       if (req.method === 'POST' && url.pathname === '/delrule') return await handleRule(req, env, false);
