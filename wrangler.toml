@@ -2,11 +2,17 @@ name = "routehub"
 main = "routehub-worker.js"
 compatibility_date = "2026-06-01"
 
-# Worker v1.1.0: KV — единственное хранилище (sub_cache, devices, metrics:<kN>).
+# Worker v1.7.6: ШАГ 1 миграции KV -> D1.
+#   Данные СЕЙЧАС в KV (RH_KV) — обёртки kvGetJSON/kvPutJSON читают и пишут туда.
+#   Биндинг RH_DB (D1, база routehub-db) добавлен ЗАРАНЕЕ, чтобы разовый перенос
+#   /admin/migrate мог писать в D1, пока рабочая система продолжает жить на KV.
+#   Переключение обёрток на RH_DB — следующим коммитом (v1.8.0), после сверки
+#   /admin/verify. KV-биндинг после переключения остаётся как путь отката.
+#   Причина миграции: KV free-план — 1000 записей/сутки на аккаунт, при двух
+#   устройствах расход 760-800/сутки. D1 free — 100 000 строк/сутки.
 # Секреты Cloudflare (тип Secret, НЕ Text — plaintext-переменные стираются
-# каждым деплоем из этого файла): SUBSCRIPTION_URL, SUB_HWID.
-# Гист/GitHub Actions/publish_nodes.py больше не используются.
-# cron — фоновое обновление подписки в KV раз в 2 часа.
+# каждым деплоем из этого файла): SUBSCRIPTION_URL, SUB_HWID, ADMIN_KEY.
+# cron — фоновое обновление подписки раз в 2 часа.
 
 [triggers]
 crons = ["0 */2 * * *"]
@@ -14,6 +20,11 @@ crons = ["0 */2 * * *"]
 [[kv_namespaces]]
 binding = "RH_KV"
 id = "fd80cc3ca9b344109e5f203f9b345f37"
+
+[[d1_databases]]
+binding = "RH_DB"
+database_name = "routehub-db"
+database_id = "b03b5540-80aa-43e6-9dce-92bd8e221507"
 
 [vars]
 CONFIG_URL = "https://raw.githubusercontent.com/spxload/routehub/main/routehub.conf"
