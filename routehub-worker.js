@@ -1,5 +1,22 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.8.2 (2026-08-03) — ТОКЕН ДОСТУПА (ЗАКРЫТИЕ ПОДПИСКИ):
+//   ПРИЧИНА: /nodes был защищён только значением kN (k1/k2/k3 подбираются за
+//   минуту), а полная ссылка лежала в ПУБЛИЧНОМ репозитории строкой Lastdep.
+//   Любой, кто нашёл репо, забирал оплаченную подписку целиком.
+//   РЕШЕНИЕ: у каждого устройства свой token (32 симв., crypto.getRandomValues),
+//   передаётся ПРЕФИКСОМ ПУТИ: /t/<token>/nodes?key=kN.
+//   Почему префиксом, а не полем аргумента: все 5 скриптов на устройстве строят
+//   запрос как ORIGIN + '/путь'. Достаточно подставить им ORIGIN со встроенным
+//   токеном — и скрипты править НЕ НУЖНО вообще (проверено по исходникам
+//   speedtest/netwatch/rkn/dash/dashcache). Меньше правок = меньше риск.
+//   Дополнительно принимается ?token=<token> — для ручных заходов из браузера.
+//   ФАЗА 1 (сейчас): TOKEN_REQUIRED=false — запрос БЕЗ токена ещё работает,
+//   чтобы не потерять доступ при переходе. Токены уже выдаются и проверяются:
+//   если токен передан и НЕ совпал — отказ немедленно.
+//   ФАЗА 2 (после подтверждения Дианы): TOKEN_REQUIRED=true — запрос без токена
+//   получает 403 с ТЕКСТОВОЙ ПОДСКАЗКОЙ, где взять новую ссылку.
+//   GET /admin/keys?key=<ADMIN_KEY> — готовые ссылки по всем устройствам.
 // VERSION: worker v1.8.1 (2026-08-03) — РЕГИОНАЛЬНЫЙ ПОРЯДОК AI-ТИЕРОВ:
 //   buildAiTiers сортировал страны ТОЛЬКО по числу узлов -> Турция (4 узла)
 //   попадала выше Латвии и наравне с NL/EE, а США — ниже Турции. Для ИИ-сервисов
@@ -54,64 +71,47 @@
 //   конфига (block-quic, fast-open, vmess-aead, skip-cert-verify, flexible-sni)
 //   терялись, и Loon ставил их по умолчанию (block-quic=true!). Теперь Worker
 //   берёт хвост параметров из строки [Remote Proxy] конфига и сохраняет его,
-//   меняя только URL на свой origin/nodes?key=kN. Если параметров в конфиге нет
-//   — запасной дефолт ',udp=true,enabled=true'. Так block-quic=false доходит до устройства.
-// VERSION: worker v1.7.3 (2026-06-13) — иконка приложения обновлена
-//   (хаб + 6 прямых лучей к узлам, бирюзовый акцент; читаемее на сетке iOS).
-// VERSION: worker v1.7.2 (2026-06-12) — иконка приложения как SVG (надёжная
-//   передача; PNG-константа давала битый base64). /icon.svg, /icon.png,
-//   /apple-touch-icon.png -> один SVG (хаб и маршруты).
-// VERSION: worker v1.7.1 (2026-06-12) — ДАШБОРД-ЭТАП: иконка приложения (PNG, заменена в 1.7.2).
+//   меняя только URL на свой origin/nodes?key=kN.
+// VERSION: worker v1.7.3 (2026-06-13) — иконка приложения обновлена.
+// VERSION: worker v1.7.2 (2026-06-12) — иконка приложения как SVG.
+// VERSION: worker v1.7.1 (2026-06-12) — ДАШБОРД-ЭТАП: иконка приложения.
 // VERSION: worker v1.7.0 (2026-06-12) — ДАШБОРД-ЭТАП, шаг 0:
-//   * CORS: Access-Control-Allow-Origin:* на JSON-ответах + обработка
-//     OPTIONS (preflight). Без этого Safari блокирует чтение /dashboard.
-//   * Личный список RH-RU: GET /mylist?key=kN (текст DOMAIN-SUFFIX,...
-//     для [Remote Rule]), POST /addrule, POST /delrule (mylist:<kN>).
-//   * История режима РКН: POST /rkn пишет кольцевой буфер rkn_hist:<kN>
-//     (последние 50, только при смене режима); /dashboard отдаёт 20 + mylist.
-// VERSION: worker v1.6.0 (2026-06-12) — AI-группы (aiBlocks): fallback
-//   interval=600 -> interval=120, max-timeout=2000 (синхрон с C-draft-23).
-// VERSION: worker v1.5.0 (2026-06-11) — POST /rkn: приём режима сети
-//   (normal/whitelist/block) от routehub-rkn -> rkn:<kN> -> /dashboard.
-// VERSION: worker v1.4.1 (2026-06-11) — argument для RH-Dash/RH-DashCache
-//   (key|origin) — скрипты дашборда и обновлятора кэша получают ключ и origin.
-// VERSION: worker v1.4.0 (2026-06-11) — ДАШБОРД: GET /dashboard?key=kN (JSON):
-//   версия конфига, возраст кэша подписки, время последних /config и /nodes,
-//   остаток ГБ (из subscription-userinfo), узлы W/C с метриками+☎, режим РКН.
-// VERSION: worker v1.3.0 (2026-06-11) — ОБХОД КЭША КОНФИГА: fetch(CONFIG_URL)
-//   с cache:'no-store' + ?t=now — /config больше не отдаёт устаревший routehub.conf
-//   из кэша CDN GitHub после коммита. Подписка (/nodes) — без изменений.
-// VERSION: worker v1.2.0 (2026-06-11) — ЗВОНКИ: маркер ☎ (voiceOk) в метке
-//   узлов, годных для голоса (jit<=30, bl<=50, med<=160; раздельно 🛜/📱).
+//   * CORS: Access-Control-Allow-Origin:* на JSON-ответах + обработка OPTIONS.
+//   * Личный список RH-RU: GET /mylist, POST /addrule, POST /delrule.
+//   * История режима РКН: кольцевой буфер rkn_hist:<kN> (последние 50).
+// VERSION: worker v1.6.0 (2026-06-12) — AI-группы: interval=120, max-timeout=2000.
+// VERSION: worker v1.5.0 (2026-06-11) — POST /rkn: приём режима сети.
+// VERSION: worker v1.4.1 (2026-06-11) — argument для RH-Dash/RH-DashCache.
+// VERSION: worker v1.4.0 (2026-06-11) — ДАШБОРД: GET /dashboard?key=kN (JSON).
+// VERSION: worker v1.3.0 (2026-06-11) — ОБХОД КЭША КОНФИГА (no-store + ?t=now).
+// VERSION: worker v1.2.0 (2026-06-11) — ЗВОНКИ: маркер ☎ (voiceOk) в метке узлов.
 // VERSION: worker v1.1.0 (2026-06-11) — ЧИСТКА: гист-сид удалён.
-// VERSION: worker v1.0.1 — /refresh ходит к Lastdep напрямую, сбой = ok:false+причина.
+// VERSION: worker v1.0.1 — /refresh ходит к Lastdep напрямую.
 // VERSION: worker v1.0.0 — МИГРАЦИЯ НА KV (историческое; с v1.8.0 хранилище — D1):
-//   * Worker САМ качает подписку Lastdep: stale-while-revalidate — кэш старше
-//     FRESH_MS (10 мин) при ЛЮБОМ запросе обновляется синхронно; сбой -> старый кэш.
+//   * Worker САМ качает подписку Lastdep: stale-while-revalidate, FRESH_MS 10 мин.
 //   * Cron Trigger (раз в 2 ч) — фоновое обновление кэша.
-//   * Балл: задержка = med (медиана проб), фолбэк rtt. Метка ↓ — rtt (min).
+//   * Балл: задержка = med (медиана проб), фолбэк rtt.
 //
 // ОДНА ССЫЛКА НА ВСЕХ — НЕВОЗМОЖНА без ?key: Loon не передаёт идентификатора
-//   устройства. key=kN — единственный идентификатор; привязка АВТОМАТИЧЕСКАЯ
+//   устройства. key=kN — идентификатор, token — секрет; привязка АВТОМАТИЧЕСКАЯ
 //   (nonce при первом POST /speed), запасной свободный ключ создаётся сам.
 //
-// GET  /config?key=kN  -> конфиг (AI-тиеры, script-path, argument).
-// GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; no-store; заголовки подписки.
+// ВСЕ эндпоинты устройства доступны как /t/<token>/<путь> либо с ?token=<token>.
+// GET  /config?key=kN  -> конфиг (AI-тиеры, script-path, argument с токеном).
+// GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; no-store.
 // GET  /refresh?key=kN -> принудительно обновить подписку СЕЙЧАС.
-// GET  /dashboard?key=kN -> JSON для дашборда (статус, узлы, ГБ, режим РКН, история, mylist).
-// GET  /mylist?key=kN  -> личный список RH-RU для [Remote Rule] (DOMAIN-SUFFIX,...).
-// GET  /icon.svg /icon.png /apple-touch-icon.png -> SVG-иконка приложения.
-// GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
+// GET  /dashboard?key=kN -> JSON для дашборда.
+// GET  /mylist?key=kN  -> личный список RH-RU для [Remote Rule].
+// GET  /icon.svg /icon.png /apple-touch-icon.png -> SVG-иконка (без токена).
+// GET  /status?key=kN  -> диагностика.
 // POST /speed          -> метрики устройства (D1).
-// POST /rkn            -> режим сети от routehub-rkn (D1 rkn:<kN> + rkn_hist:<kN>).
-// POST /addrule        -> {key, domain} добавить домен в личный список (D1 mylist:<kN>).
-// POST /delrule        -> {key, domain} убрать домен из личного списка.
-// GET  /whoami         -> детект сети/оператора по request.cf.
-// GET  /admin/backup?key=<ADMIN_KEY> -> ПОЛНЫЙ дамп KV (временно).
-// GET  /admin/migrate?key=<ADMIN_KEY> -> РАЗОВЫЙ перенос KV -> D1 (временно).
-// GET  /admin/verify?key=<ADMIN_KEY> -> сверка ключей KV и D1 (временно).
-// env: RH_DB (D1 binding — ОСНОВНОЕ ХРАНИЛИЩЕ), RH_KV (KV binding — только откат
-//      и /admin/*), SUBSCRIPTION_URL + SUB_HWID + ADMIN_KEY (секреты CF), CONFIG_URL.
+// POST /rkn            -> режим сети от routehub-rkn.
+// POST /addrule /delrule -> {key, domain} личный список.
+// GET  /whoami         -> детект сети/оператора по request.cf (без токена).
+// GET  /admin/keys?key=<ADMIN_KEY> -> ссылки устройств с токенами.
+// GET  /admin/backup /admin/migrate /admin/verify -> временные, миграция KV->D1.
+// env: RH_DB (D1 — ОСНОВНОЕ ХРАНИЛИЩЕ), RH_KV (откат и /admin/*),
+//      SUBSCRIPTION_URL + SUB_HWID + ADMIN_KEY (секреты CF), CONFIG_URL.
 // =============================================================
 
 const METRIC_SEP = ' \u00B7 ';
@@ -123,6 +123,13 @@ const BLK = ['\u2581', '\u2583', '\u2585', '\u2587', '\u2588']; // ▁▃▅▇�
 const SUP_PLUS = '\u207A';             // ⁺
 const SUP_DIG = ['\u2070', '\u00B9', '\u00B2', '\u00B3', '\u2074', '\u2075', '\u2076', '\u2077', '\u2078', '\u2079'];
 const KEY_RE = /^k\d+$/;
+// ФАЗА 2 миграции на токены: поставить true -> запрос без токена отклоняется.
+// Пока false: старые ссылки продолжают работать, новые уже проверяются.
+const TOKEN_REQUIRED = false;
+const TOKEN_LEN = 32;
+const TOKEN_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const TOKEN_RE = /^[A-Za-z0-9]{16,64}$/;
+const PATH_TOKEN_RE = /^\/t\/([A-Za-z0-9]{16,64})(\/.*)?$/;
 const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9-]+\.)+[a-z]{2,}$/;
 const FLAGS = ['cell_unlim', 'ewma', 'show_rtt', 'auto_refresh'];
 const CELL_HINTS = ['mts', 'mobile telesystems', 'megafon', 'vimpelcom', 'beeline',
@@ -322,7 +329,6 @@ function classifyNet(asOrg) {
 // Извлечь хвост параметров Loon из строки [Remote Proxy] конфига.
 // Строка вида: "Lastdep = <url>,p1=v1,p2=v2,...". URL запятых не содержит,
 // поэтому всё ПОСЛЕ первой запятой — параметры подписки (block-quic, udp, ...).
-// Возвращает ведущую запятую + параметры (",udp=true,...") либо запасной дефолт.
 function subParamsFromConf(conf) {
   const m = String(conf).match(/^Lastdep\s*=\s*(.*)$/m);
   if (!m) return ',udp=true,enabled=true';
@@ -400,8 +406,13 @@ async function getSub(env, force) {
 
 async function loadRegistry(env) {
   let reg = await kvGetJSON(env, 'devices');
-  if (reg) return reg;
+  if (reg) {
+    // Разовая доводка: у старых ключей токена нет — выдать и сохранить.
+    if (ensureTokens(reg)) { try { await kvPutJSON(env, 'devices', reg); } catch (e) {} }
+    return reg;
+  }
   reg = { k1: { status: 'free' } };
+  ensureTokens(reg);
   await kvPutJSON(env, 'devices', reg);
   return reg;
 }
@@ -409,8 +420,41 @@ function ensureFreeSpare(reg) {
   for (const k in reg) if (reg[k].status === 'free') return;
   let max = 0;
   for (const k in reg) { const n = parseInt(k.slice(1), 10); if (n > max) max = n; }
-  reg['k' + (max + 1)] = { status: 'free' };
+  reg['k' + (max + 1)] = { status: 'free', token: makeToken() };
 }
+
+// Токен устройства: 32 символа без похожих (0/O/l/1) — читаемо при переносе руками.
+function makeToken() {
+  const buf = new Uint8Array(TOKEN_LEN);
+  crypto.getRandomValues(buf);
+  let out = '';
+  for (let i = 0; i < TOKEN_LEN; i++) out += TOKEN_ALPHABET[buf[i] % TOKEN_ALPHABET.length];
+  return out;
+}
+// Выдать токен каждому ключу, у которого его ещё нет. true -> реестр изменён.
+function ensureTokens(reg) {
+  let ch = false;
+  for (const k in reg) {
+    if (!TOKEN_RE.test(String(reg[k].token || ''))) { reg[k].token = makeToken(); ch = true; }
+  }
+  return ch;
+}
+// Проверка доступа. Возвращает null если можно, иначе Response с отказом.
+// ФАЗА 1: токен не передан -> пропускаем. Передан и не совпал -> отказ всегда.
+function tokenGate(reg, key, tok, asText) {
+  const want = reg[key] && reg[key].token;
+  if (tok) return (want && tok === want) ? null : denyToken(asText, 'токен не подходит');
+  if (!TOKEN_REQUIRED) return null;
+  return denyToken(asText, 'ссылка устарела');
+}
+function denyToken(asText, why) {
+  const hint = 'RouteHub: ' + why + '.\n' +
+    'Нужна новая ссылка с токеном. Открой /admin/keys?key=<ADMIN_KEY> и скопируй строку своего устройства.\n' +
+    'Формат: <origin>/t/<token>/config?key=kN';
+  if (asText) return new Response(hint, { status: 403, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  return jsonResp({ error: why, hint: hint }, 403);
+}
+
 function ensureFlags(reg) {
   let ch = false;
   for (const k in reg) {
@@ -479,12 +523,13 @@ function aiBlocks(tiers) {
   return { filters: filters, groups: groups };
 }
 
-async function handleConfig(url, env) {
+async function handleConfig(url, env, tok) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
 
   const reg = await loadRegistry(env);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
+  const bad = tokenGate(reg, key, tok, true); if (bad) return bad;
   ensureFlags(reg);
   reg[key].last_config_ts = new Date().toISOString();
 
@@ -498,9 +543,11 @@ async function handleConfig(url, env) {
   // Одна запись реестра на запрос (раньше при смене C-draft писалось дважды).
   try { await kvPutJSON(env, 'devices', reg); } catch (e) {}
 
-  // Параметры подписки берём ИЗ КОНФИГА (block-quic, udp, fast-open и т.д.) ДО
-  // переписывания строки Lastdep — иначе они теряются и Loon ставит свои дефолты.
+  // Параметры подписки берём ИЗ КОНФИГА ДО переписывания строки Lastdep.
   const subParams = subParamsFromConf(conf);
+  // База со встроенным токеном: скрипты на устройстве строят запрос как
+  // ORIGIN + '/путь', поэтому токен доезжает до них без правки самих скриптов.
+  const base = url.origin + '/t/' + reg[key].token;
 
   const sub = await getSub(env, false);
   const masterLines = sub.text.split('\n').filter(Boolean);
@@ -509,32 +556,32 @@ async function handleConfig(url, env) {
   conf = conf.replace('# __RH_AI_FILTERS__', blocks.filters);
   conf = conf.replace('# __RH_AI_GROUPS__', blocks.groups);
 
-  // URL заменяем на свой origin, ХВОСТ ПАРАМЕТРОВ сохраняем из конфига.
-  const subUrl = url.origin + '/nodes?key=' + key + subParams;
+  const subUrl = base + '/nodes?key=' + key + subParams;
   conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + subUrl);
-  const mylistUrl = url.origin + '/mylist?key=' + key;
+  const mylistUrl = base + '/mylist?key=' + key;
   conf = conf.replace('# __RH_MYLIST_URL__', mylistUrl);
   const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
   conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
   const sFlags = [];
   if (reg[key].cell_unlim) sFlags.push('cellall');
   if (reg[key].ewma) sFlags.push('ewma');
-  conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + url.origin + '|' + sFlags.join(','));
+  conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + base + '|' + sFlags.join(','));
   const nOpts = reg[key].auto_refresh ? 'autorefresh' : '';
-  conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + url.origin + '|' + nOpts);
-  conf = conf.replace('tag=RH-DashCache,', 'tag=RH-DashCache, argument=' + key + '|' + url.origin + ',');
-  conf = conf.replace('tag=RH-Dash,', 'tag=RH-Dash, argument=' + key + '|' + url.origin + ',');
-  conf = conf.replace('tag=RH-RKN,', 'tag=RH-RKN, argument=' + key + '|' + url.origin + ',');
+  conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + base + '|' + nOpts);
+  conf = conf.replace('tag=RH-DashCache,', 'tag=RH-DashCache, argument=' + key + '|' + base + ',');
+  conf = conf.replace('tag=RH-Dash,', 'tag=RH-Dash, argument=' + key + '|' + base + ',');
+  conf = conf.replace('tag=RH-RKN,', 'tag=RH-RKN, argument=' + key + '|' + base + ',');
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
 
-async function handleStatus(url, env) {
+async function handleStatus(url, env, tok) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
   const reg = await loadRegistry(env);
   const e = reg[key];
   if (!e) return jsonResp({ error: 'unknown key' }, 403);
+  const bad = tokenGate(reg, key, tok, false); if (bad) return bad;
   const c = await kvGetJSON(env, 'sub_cache');
   return jsonResp({
     key: key, status: e.status || null, net: e.net || null,
@@ -593,11 +640,12 @@ function renderNodesBoth(masterLines, state, showRtt) {
   return wifiBlock.concat(cellBlock, bypassOut).join('\n');
 }
 
-async function handleNodes(url, env) {
+async function handleNodes(url, env, tok) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
   const reg = await loadRegistry(env);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
+  const bad = tokenGate(reg, key, tok, true); if (bad) return bad;
   const showRtt = !!reg[key].show_rtt;
   reg[key].last_nodes_ts = new Date().toISOString();
   reg[key].nodes_n = (reg[key].nodes_n || 0) + 1;
@@ -613,11 +661,12 @@ async function handleNodes(url, env) {
   return new Response(utf8ToB64(out), { headers: headers });
 }
 
-async function handleRefresh(url, env) {
+async function handleRefresh(url, env, tok) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
   const reg = await loadRegistry(env);
   if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
+  const bad = tokenGate(reg, key, tok, false); if (bad) return bad;
   try {
     const fresh = await fetchUpstream(env);
     await kvPutJSON(env, 'sub_cache', fresh);
@@ -627,11 +676,12 @@ async function handleRefresh(url, env) {
   }
 }
 
-async function handleMylist(url, env) {
+async function handleMylist(url, env, tok) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
   const reg = await loadRegistry(env);
   if (!reg[key]) return new Response('unknown key', { status: 403 });
+  const bad = tokenGate(reg, key, tok, true); if (bad) return bad;
   const list = await loadMylist(env, key);
   const lines = ['# RouteHub личный список RH-RU (' + key + '), доменов: ' + list.length];
   for (const d of list) lines.push('DOMAIN-SUFFIX,' + d);
@@ -640,13 +690,14 @@ async function handleMylist(url, env) {
   });
 }
 
-async function handleRule(req, env, add) {
+async function handleRule(req, env, add, tok) {
   let data;
   try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
   const key = (data && data.key) || '';
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
   const reg = await loadRegistry(env);
   if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
+  const badT = tokenGate(reg, key, tok, false); if (badT) return badT;
   const domain = String((data && data.domain) || '').trim().toLowerCase();
   if (!DOMAIN_RE.test(domain)) return jsonResp({ error: 'bad domain' }, 400);
   let list = await loadMylist(env, key);
@@ -689,12 +740,13 @@ function nodesForDash(masterLines, state) {
   return { wifi: pack('w'), cell: pack('c') };
 }
 
-async function handleDashboard(url, env) {
+async function handleDashboard(url, env, tok) {
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
   const reg = await loadRegistry(env);
   const e = reg[key];
   if (!e) return jsonResp({ error: 'unknown key' }, 403);
+  const bad = tokenGate(reg, key, tok, false); if (bad) return bad;
   const c = await kvGetJSON(env, 'sub_cache');
   const state = (await kvGetJSON(env, 'metrics:' + key)) || {};
   const masterLines = (c && c.text) ? c.text.split('\n').filter(Boolean) : [];
@@ -705,7 +757,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.8.1',
+    worker: 'v1.8.2',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
@@ -737,13 +789,14 @@ function metricOf(s) {
   return o;
 }
 
-async function handleRkn(req, env) {
+async function handleRkn(req, env, tok) {
   let data;
   try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
   const key = (data && data.key) || '';
   if (!KEY_RE.test(key)) return jsonResp({ error: 'bad key' }, 400);
   const reg = await loadRegistry(env);
   if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
+  const badT = tokenGate(reg, key, tok, false); if (badT) return badT;
   const mode = String((data && data.mode) || '');
   if (['normal', 'whitelist', 'block'].indexOf(mode) < 0) return jsonResp({ error: 'bad mode' }, 400);
   const rec = { mode: mode, ts: (data && data.ts) || new Date().toISOString() };
@@ -759,7 +812,7 @@ async function handleRkn(req, env) {
   return jsonResp({ ok: true, key: key, mode: mode });
 }
 
-async function handleSpeed(req, env) {
+async function handleSpeed(req, env, tok) {
   let data;
   try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
 
@@ -770,6 +823,7 @@ async function handleSpeed(req, env) {
 
   const reg = await loadRegistry(env);
   if (!reg[key]) return jsonResp({ error: 'unknown key' }, 403);
+  const badT = tokenGate(reg, key, tok, false); if (badT) return badT;
   ensureFlags(reg);
 
   const now = new Date().toISOString();
@@ -812,19 +866,7 @@ async function handleSpeed(req, env) {
   return jsonResp({ ok: true, key: key, status: e.status, labeled: labeled, sent_wifi: sentW, sent_cell: sentC });
 }
 
-// Временный диагностический дамп ВСЕХ ключей KV (сырые строки, без парсинга).
-// Только чтение — KV.list()+KV.get(), ничего не пишет. Гейт: env.ADMIN_KEY
-// (секрет CF, тип Secret). Если секрет не задан — эндпоинт закрыт наглухо
-// (403 для всех, даже с пустым key). Убрать после стабилизации D1.
-async function handleAdminBackup(url, env) {
-  const denied = adminGate(url, env);
-  if (denied) return denied;
-  const data = await kvDumpAll(env);
-  return jsonResp({ ok: true, dumped_at: new Date().toISOString(), count: Object.keys(data).length, data: data });
-}
-
 // Общий гейт админ-эндпоинтов: без секрета ADMIN_KEY в env закрыто наглухо.
-// Возвращает null, если доступ разрешён, иначе готовый Response с отказом.
 function adminGate(url, env) {
   if (!env.ADMIN_KEY) return jsonResp({ error: 'admin disabled' }, 403);
   const key = url.searchParams.get('key') || '';
@@ -847,9 +889,36 @@ async function kvDumpAll(env) {
   return data;
 }
 
+// Временный диагностический дамп ВСЕХ ключей KV. Только чтение.
+async function handleAdminBackup(url, env) {
+  const denied = adminGate(url, env);
+  if (denied) return denied;
+  const data = await kvDumpAll(env);
+  return jsonResp({ ok: true, dumped_at: new Date().toISOString(), count: Object.keys(data).length, data: data });
+}
+
+// Готовые ссылки по устройствам — отсюда Диана берёт строку для нового телефона.
+// Токен показывается ТОЛЬКО здесь и только под ADMIN_KEY.
+async function handleAdminKeys(url, env) {
+  const denied = adminGate(url, env);
+  if (denied) return denied;
+  const reg = await loadRegistry(env);
+  const out = [];
+  for (const k in reg) {
+    const e = reg[k];
+    out.push({
+      key: k, status: e.status || null,
+      first_seen: e.first_seen || null, last_seen: e.last_seen || null,
+      conf_ver: e.conf_ver || null,
+      config_url: url.origin + '/t/' + e.token + '/config?key=' + k,
+      dashboard_url: url.origin + '/t/' + e.token + '/dashboard?key=' + k,
+      refresh_url: url.origin + '/t/' + e.token + '/refresh?key=' + k,
+    });
+  }
+  return jsonResp({ ok: true, token_required: TOKEN_REQUIRED, devices: out });
+}
+
 // РАЗОВЫЙ перенос KV -> D1. Идемпотентен (UPSERT по PRIMARY KEY).
-// Не удаляет ничего ни в KV, ни в D1. После v1.8.0 основное хранилище — D1,
-// этот эндпоинт остаётся только как аварийный повтор переноса из старого KV.
 async function handleAdminMigrate(url, env) {
   const denied = adminGate(url, env);
   if (denied) return denied;
@@ -875,9 +944,7 @@ async function handleAdminMigrate(url, env) {
   });
 }
 
-// Сверка KV и D1: что где лежит и совпадают ли длины значений. Только чтение.
-// После v1.8.0 расхождения ОЖИДАЕМЫ: D1 живёт и обновляется, KV заморожен
-// на момент переключения — это норма, а не ошибка.
+// Сверка KV и D1. После v1.8.0 расхождения ОЖИДАЕМЫ: D1 живёт, KV заморожен.
 async function handleAdminVerify(url, env) {
   const denied = adminGate(url, env);
   if (denied) return denied;
@@ -907,6 +974,16 @@ async function handleAdminVerify(url, env) {
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
+    // Токен: префикс пути /t/<token>/... (так его получают скрипты через ORIGIN)
+    // либо ?token=... для ручных заходов из браузера. Префикс срезаем и дальше
+    // маршрутизируем как раньше — все обработчики видят прежние пути.
+    let tok = '';
+    const pm = url.pathname.match(PATH_TOKEN_RE);
+    if (pm) { tok = pm[1]; url.pathname = pm[2] || '/'; }
+    else {
+      const qt = url.searchParams.get('token') || '';
+      if (TOKEN_RE.test(qt)) tok = qt;
+    }
     try {
       if (req.method === 'OPTIONS') {
         return new Response(null, { status: 204, headers: {
@@ -918,19 +995,20 @@ export default {
       }
       if (req.method === 'GET' && (url.pathname === '/icon.svg' || url.pathname === '/icon.png' || url.pathname === '/apple-touch-icon.png')) return iconResp();
       if (req.method === 'GET' && url.pathname === '/whoami') return handleWhoami(req);
-      if (req.method === 'GET' && url.pathname === '/config') return await handleConfig(url, env);
-      if (req.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env);
-      if (req.method === 'GET' && url.pathname === '/refresh') return await handleRefresh(url, env);
-      if (req.method === 'GET' && url.pathname === '/dashboard') return await handleDashboard(url, env);
-      if (req.method === 'GET' && url.pathname === '/mylist') return await handleMylist(url, env);
-      if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env);
+      if (req.method === 'GET' && url.pathname === '/config') return await handleConfig(url, env, tok);
+      if (req.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env, tok);
+      if (req.method === 'GET' && url.pathname === '/refresh') return await handleRefresh(url, env, tok);
+      if (req.method === 'GET' && url.pathname === '/dashboard') return await handleDashboard(url, env, tok);
+      if (req.method === 'GET' && url.pathname === '/mylist') return await handleMylist(url, env, tok);
+      if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/admin/backup') return await handleAdminBackup(url, env);
       if (req.method === 'GET' && url.pathname === '/admin/migrate') return await handleAdminMigrate(url, env);
       if (req.method === 'GET' && url.pathname === '/admin/verify') return await handleAdminVerify(url, env);
-      if (req.method === 'POST' && url.pathname === '/rkn') return await handleRkn(req, env);
-      if (req.method === 'POST' && url.pathname === '/addrule') return await handleRule(req, env, true);
-      if (req.method === 'POST' && url.pathname === '/delrule') return await handleRule(req, env, false);
-      if (req.method === 'POST' && url.pathname === '/speed') return await handleSpeed(req, env);
+      if (req.method === 'GET' && url.pathname === '/admin/keys') return await handleAdminKeys(url, env);
+      if (req.method === 'POST' && url.pathname === '/rkn') return await handleRkn(req, env, tok);
+      if (req.method === 'POST' && url.pathname === '/addrule') return await handleRule(req, env, true, tok);
+      if (req.method === 'POST' && url.pathname === '/delrule') return await handleRule(req, env, false, tok);
+      if (req.method === 'POST' && url.pathname === '/speed') return await handleSpeed(req, env, tok);
       return new Response('routehub-worker: not found', { status: 404 });
     } catch (err) {
       return new Response('error: ' + (err && err.message ? err.message : 'unknown'), { status: 500 });
