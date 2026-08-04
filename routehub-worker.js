@@ -1,5 +1,19 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.8.1 (2026-08-03) — РЕГИОНАЛЬНЫЙ ПОРЯДОК AI-ТИЕРОВ:
+//   buildAiTiers сортировал страны ТОЛЬКО по числу узлов -> Турция (4 узла)
+//   попадала выше Латвии и наравне с NL/EE, а США — ниже Турции. Для ИИ-сервисов
+//   это плохо: не-европейские выходы чаще ловят геоблок/иную выдачу.
+//   ТЕПЕРЬ ключ сортировки: (регион, число узлов, скорость, близость).
+//   Регионы: 0 Европа -> 1 Америка -> 2 Россия/СНГ -> 3 прочие (Турция, ОАЭ,
+//   Индия, Азия, Африка). DE по-прежнему принудительно первой.
+//   ИЗ AI ИСКЛЮЧЁН ВЕСЬ РЕГИОН СНГ (regionOf==2): RU, BY, KZ, AM, GE, AZ, UZ,
+//   KG, TJ. Раньше жёстко исключались только RU и BY, из-за чего Казахстан
+//   (3 узла) попадал в AI-тиеры. Для ИИ-сервисов у СНГ та же проблема, что
+//   у РФ: иная выдача и риск блокировок. Исключение сквозное — СНГ убран и из
+//   AI-тиеров, и из запасного фильтра AIrest (иначе узлы вернулись бы туда).
+//   На обычный трафик (RH-АВТО) это НЕ влияет — там СНГ третьим тиром.
+//   Синхронно с routehub.conf C-draft-36 (там же региональный каскад RH-АВТО).
 // VERSION: worker v1.8.0 (2026-08-03) — ХРАНИЛИЩЕ ПЕРЕВЕДЕНО НА D1:
 //   ПРИЧИНА: KV free-план — 1000 записей/сутки НА АККАУНТ. При двух устройствах
 //   расход был 760-800/сутки (замер Дианы), третье устройство пробивало лимит.
@@ -25,27 +39,15 @@
 //   после нескольких суток стабильной работы на D1.
 // VERSION: worker v1.7.6 (2026-08-03) — ШАГ 1 МИГРАЦИИ НА D1 (данные ещё в KV):
 //   * Добавлен биндинг RH_DB (D1, база routehub-db) в wrangler.toml.
-//     ЧТЕНИЕ И ЗАПИСЬ ПО-ПРЕЖНЕМУ В KV — обёртки kvGetJSON/kvPutJSON не тронуты,
-//     рабочая система не затронута, поведение на устройствах не меняется.
-//   * GET /admin/migrate?key=<ADMIN_KEY> — РАЗОВЫЙ перенос всех ключей KV -> D1
-//     (таблица kv: key/value/updated_at, UPSERT). Данные идут внутри Cloudflare,
-//     наружу (в чат/репозиторий) не выгружаются. Идемпотентен: повторный запуск
-//     просто перезапишет строки теми же значениями.
-//   * GET /admin/verify?key=<ADMIN_KEY> — сверка KV и D1: список ключей с обеих
-//     сторон, длины значений, расхождения. Только чтение.
-//   Переключение обёрток на D1 — СЛЕДУЮЩИМ коммитом (v1.8.0), после сверки.
-//   Порядок именно такой: если переключить обёртки ДО переноса, D1 будет пуст,
+//   * GET /admin/migrate?key=<ADMIN_KEY> — РАЗОВЫЙ перенос всех ключей KV -> D1.
+//   * GET /admin/verify?key=<ADMIN_KEY> — сверка KV и D1. Только чтение.
+//   Порядок критичен: если переключить обёртки ДО переноса, D1 будет пуст,
 //   loadRegistry() создаст devices заново и POST /speed перепривяжет nonce.
 // VERSION: worker v1.7.5 (2026-08-03) — ВРЕМЕННЫЙ ДИАГНОСТИЧЕСКИЙ ЭНДПОИНТ:
-//   GET /admin/backup?key=<ADMIN_KEY> — полный дамп всех ключей KV (сырые
-//   строки, без парсинга) для бэкапа перед миграцией на D1. Гейт — отдельный
-//   секрет ADMIN_KEY (завести в CF Dashboard, тип Secret — НЕ Text, иначе
-//   перезапишется дефолтом из [vars] при следующем деплое). Без ADMIN_KEY
-//   в env эндпоинт всегда отвечает 403, доступа нет ни у кого. Только чтение
-//   (KV.list + KV.get), ничего не пишет и не удаляет. ВАЖНО: sub_cache
-//   содержит сырые vless:// URI с учётными данными — результат не публиковать
-//   и не коммитить в репозиторий (публичный), хранить только как личный файл.
-//   Убрать эндпоинт из кода после завершения миграции на D1 (см. СТАРТ.md).
+//   GET /admin/backup?key=<ADMIN_KEY> — полный дамп всех ключей KV для бэкапа
+//   перед миграцией. Гейт — секрет ADMIN_KEY (тип Secret, НЕ Text). Без него
+//   всегда 403. ВАЖНО: sub_cache содержит сырые vless:// URI — результат не
+//   публиковать и не коммитить в репозиторий (публичный).
 // VERSION: worker v1.7.4 (2026-06-18) — ПАРАМЕТРЫ ПОДПИСКИ ИЗ КОНФИГА:
 //   handleConfig больше НЕ срезает хвост параметров строки Lastdep. Раньше
 //   подставлялось жёстко '?key=kN,udp=true,enabled=true' — все параметры из
@@ -64,31 +66,26 @@
 //   * CORS: Access-Control-Allow-Origin:* на JSON-ответах + обработка
 //     OPTIONS (preflight). Без этого Safari блокирует чтение /dashboard.
 //   * Личный список RH-RU: GET /mylist?key=kN (текст DOMAIN-SUFFIX,...
-//     для [Remote Rule]), POST /addrule, POST /delrule (KV mylist:<kN>).
+//     для [Remote Rule]), POST /addrule, POST /delrule (mylist:<kN>).
 //   * История режима РКН: POST /rkn пишет кольцевой буфер rkn_hist:<kN>
 //     (последние 50, только при смене режима); /dashboard отдаёт 20 + mylist.
 // VERSION: worker v1.6.0 (2026-06-12) — AI-группы (aiBlocks): fallback
 //   interval=600 -> interval=120, max-timeout=2000 (синхрон с C-draft-23).
 // VERSION: worker v1.5.0 (2026-06-11) — POST /rkn: приём режима сети
-//   (normal/whitelist/block) от routehub-rkn -> KV rkn:<kN> -> /dashboard.
+//   (normal/whitelist/block) от routehub-rkn -> rkn:<kN> -> /dashboard.
 // VERSION: worker v1.4.1 (2026-06-11) — argument для RH-Dash/RH-DashCache
 //   (key|origin) — скрипты дашборда и обновлятора кэша получают ключ и origin.
 // VERSION: worker v1.4.0 (2026-06-11) — ДАШБОРД: GET /dashboard?key=kN (JSON):
 //   версия конфига, возраст кэша подписки, время последних /config и /nodes,
-//   остаток ГБ (из subscription-userinfo), узлы W/C с метриками+☎, режим РКН
-//   (из KV rkn:<kN>, пишет скрипт routehub-rkn на устройстве). last_config_ts/
-//   last_nodes_ts пишутся при КАЖДОМ запросе /config и /nodes.
+//   остаток ГБ (из subscription-userinfo), узлы W/C с метриками+☎, режим РКН.
 // VERSION: worker v1.3.0 (2026-06-11) — ОБХОД КЭША КОНФИГА: fetch(CONFIG_URL)
 //   с cache:'no-store' + ?t=now — /config больше не отдаёт устаревший routehub.conf
-//   из кэша CDN GitHub после коммита. Подписка (/nodes, KV) — без изменений.
+//   из кэша CDN GitHub после коммита. Подписка (/nodes) — без изменений.
 // VERSION: worker v1.2.0 (2026-06-11) — ЗВОНКИ: маркер ☎ (voiceOk) в метке
 //   узлов, годных для голоса (jit<=30, bl<=50, med<=160; раздельно 🛜/📱).
-// VERSION: worker v1.1.0 (2026-06-11) — ЧИСТКА: гист-сид удалён, KV —
-//   единственное хранилище. env GIST_TOKEN/GIST_ID/MASTER_FILE больше не нужны.
+// VERSION: worker v1.1.0 (2026-06-11) — ЧИСТКА: гист-сид удалён.
 // VERSION: worker v1.0.1 — /refresh ходит к Lastdep напрямую, сбой = ok:false+причина.
-// VERSION: worker v1.0.0 — МИГРАЦИЯ НА KV:
-//   * Данные в Cloudflare KV (binding RH_KV): sub_cache (узлы+заголовки
-//     подписки), devices (реестр+флаги; править в KV-дашборде), metrics:<kN>.
+// VERSION: worker v1.0.0 — МИГРАЦИЯ НА KV (историческое; с v1.8.0 хранилище — D1):
 //   * Worker САМ качает подписку Lastdep: stale-while-revalidate — кэш старше
 //     FRESH_MS (10 мин) при ЛЮБОМ запросе обновляется синхронно; сбой -> старый кэш.
 //   * Cron Trigger (раз в 2 ч) — фоновое обновление кэша.
@@ -100,19 +97,19 @@
 //
 // GET  /config?key=kN  -> конфиг (AI-тиеры, script-path, argument).
 // GET  /nodes?key=kN   -> оба набора (🛜+📱) + обход; base64; no-store; заголовки подписки.
-// GET  /refresh?key=kN -> принудительно обновить подписку в KV СЕЙЧАС.
+// GET  /refresh?key=kN -> принудительно обновить подписку СЕЙЧАС.
 // GET  /dashboard?key=kN -> JSON для дашборда (статус, узлы, ГБ, режим РКН, история, mylist).
 // GET  /mylist?key=kN  -> личный список RH-RU для [Remote Rule] (DOMAIN-SUFFIX,...).
-// GET  /icon.svg /icon.png /apple-touch-icon.png -> SVG-иконка приложения (плагин и домашний экран).
+// GET  /icon.svg /icon.png /apple-touch-icon.png -> SVG-иконка приложения.
 // GET  /status?key=kN  -> диагностика (+ возраст кэша подписки).
 // POST /speed          -> метрики устройства (D1).
 // POST /rkn            -> режим сети от routehub-rkn (D1 rkn:<kN> + rkn_hist:<kN>).
 // POST /addrule        -> {key, domain} добавить домен в личный список (D1 mylist:<kN>).
 // POST /delrule        -> {key, domain} убрать домен из личного списка.
 // GET  /whoami         -> детект сети/оператора по request.cf.
-// GET  /admin/backup?key=<ADMIN_KEY> -> ПОЛНЫЙ дамп KV (диагностика, временно, до переноса на D1).
-// GET  /admin/migrate?key=<ADMIN_KEY> -> РАЗОВЫЙ перенос KV -> D1 (временно, шаг миграции).
-// GET  /admin/verify?key=<ADMIN_KEY> -> сверка ключей KV и D1 (временно, шаг миграции).
+// GET  /admin/backup?key=<ADMIN_KEY> -> ПОЛНЫЙ дамп KV (временно).
+// GET  /admin/migrate?key=<ADMIN_KEY> -> РАЗОВЫЙ перенос KV -> D1 (временно).
+// GET  /admin/verify?key=<ADMIN_KEY> -> сверка ключей KV и D1 (временно).
 // env: RH_DB (D1 binding — ОСНОВНОЕ ХРАНИЛИЩЕ), RH_KV (KV binding — только откат
 //      и /admin/*), SUBSCRIPTION_URL + SUB_HWID + ADMIN_KEY (секреты CF), CONFIG_URL.
 // =============================================================
@@ -158,6 +155,31 @@ const PROX = {
   '\uD83C\uDDE7\uD83C\uDDF7': 34, '\uD83C\uDDE6\uD83C\uDDF7': 35, '\uD83C\uDDF3\uD83C\uDDEC': 36,
 };
 function proxOf(fl) { return (fl in PROX) ? PROX[fl] : 99; }
+
+// РЕГИОНЫ (v1.8.1) — порядок предпочтения для ИИ и обычного трафика:
+// 0 Европа, 1 Америка, 2 Россия/СНГ, 3 прочие (незнакомый флаг -> 3).
+// Списки синхронны с региональными фильтрами routehub.conf (C-draft-36).
+const REGION_EU = ['\uD83C\uDDE9\uD83C\uDDEA', '\uD83C\uDDF3\uD83C\uDDF1', '\uD83C\uDDEB\uD83C\uDDEE',
+  '\uD83C\uDDF5\uD83C\uDDF1', '\uD83C\uDDEA\uD83C\uDDEA', '\uD83C\uDDF1\uD83C\uDDFB', '\uD83C\uDDF1\uD83C\uDDF9',
+  '\uD83C\uDDF8\uD83C\uDDEA', '\uD83C\uDDF3\uD83C\uDDF4', '\uD83C\uDDE9\uD83C\uDDF0', '\uD83C\uDDEE\uD83C\uDDEA',
+  '\uD83C\uDDEC\uD83C\uDDE7', '\uD83C\uDDEB\uD83C\uDDF7', '\uD83C\uDDEA\uD83C\uDDF8', '\uD83C\uDDEE\uD83C\uDDF9',
+  '\uD83C\uDDE8\uD83C\uDDED', '\uD83C\uDDE6\uD83C\uDDF9', '\uD83C\uDDE7\uD83C\uDDEA', '\uD83C\uDDE8\uD83C\uDDFF',
+  '\uD83C\uDDF7\uD83C\uDDF4', '\uD83C\uDDF7\uD83C\uDDF8', '\uD83C\uDDF5\uD83C\uDDF9', '\uD83C\uDDEC\uD83C\uDDF7',
+  '\uD83C\uDDED\uD83C\uDDFA', '\uD83C\uDDF8\uD83C\uDDF0', '\uD83C\uDDF8\uD83C\uDDEE', '\uD83C\uDDED\uD83C\uDDF7',
+  '\uD83C\uDDE7\uD83C\uDDEC', '\uD83C\uDDF1\uD83C\uDDFA', '\uD83C\uDDEE\uD83C\uDDF8', '\uD83C\uDDF2\uD83C\uDDE9',
+  '\uD83C\uDDFA\uD83C\uDDE6'];
+const REGION_AM = ['\uD83C\uDDFA\uD83C\uDDF8', '\uD83C\uDDE8\uD83C\uDDE6', '\uD83C\uDDE7\uD83C\uDDF7',
+  '\uD83C\uDDE6\uD83C\uDDF7', '\uD83C\uDDF2\uD83C\uDDFD', '\uD83C\uDDE8\uD83C\uDDF1', '\uD83C\uDDE8\uD83C\uDDF4',
+  '\uD83C\uDDF5\uD83C\uDDEA'];
+const REGION_RU = ['\uD83C\uDDF7\uD83C\uDDFA', '\uD83C\uDDE7\uD83C\uDDFE', '\uD83C\uDDF0\uD83C\uDDFF',
+  '\uD83C\uDDE6\uD83C\uDDF2', '\uD83C\uDDEC\uD83C\uDDEA', '\uD83C\uDDE6\uD83C\uDDFF', '\uD83C\uDDFA\uD83C\uDDFF',
+  '\uD83C\uDDF0\uD83C\uDDEC', '\uD83C\uDDF9\uD83C\uDDEF'];
+function regionOf(fl) {
+  if (REGION_EU.indexOf(fl) >= 0) return 0;
+  if (REGION_AM.indexOf(fl) >= 0) return 1;
+  if (REGION_RU.indexOf(fl) >= 0) return 2;
+  return 3;
+}
 
 function speedBlock(down) {
   if (down < 1) return BLK[0];
@@ -421,9 +443,11 @@ function buildAiTiers(masterLines, state) {
     }
     if (!(fl in spd) || s > spd[fl]) spd[fl] = s;
   }
-  const others = Object.keys(cnt).filter(function (f) { return f !== DE && f !== RU && f !== BY; });
+  const others = Object.keys(cnt).filter(function (f) { return f !== DE && regionOf(f) !== 2; });
+  // v1.8.1: сначала РЕГИОН (Европа -> Америка -> СНГ -> прочие), потом число узлов.
   const multi = others.filter(function (f) { return cnt[f] >= 2; }).sort(function (a, b) {
-    return (cnt[b] - cnt[a]) || ((spd[b] || 0) - (spd[a] || 0)) || (proxOf(a) - proxOf(b));
+    return (regionOf(a) - regionOf(b)) || (cnt[b] - cnt[a]) ||
+      ((spd[b] || 0) - (spd[a] || 0)) || (proxOf(a) - proxOf(b));
   });
   const tiers = [];
   if (cnt[DE]) tiers.push(DE);
@@ -439,7 +463,9 @@ function aiBlocks(tiers) {
     gW.push('RH-Filter-W-AI' + id);
     gC.push('RH-Filter-C-AI' + id);
   });
-  const exclAlt = [RU, BY].concat(tiers).join('|');
+  // Запасной фильтр AIrest: исключаем ВЕСЬ СНГ + уже занятые тиеры, иначе
+  // исключённые из тиеров узлы СНГ вернулись бы в AI через AIrest.
+  const exclAlt = REGION_RU.concat(tiers).join('|');
   fW.push('RH-Filter-W-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*\\[VPN\\].*' + ICON_WIFI);
   fC.push('RH-Filter-C-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*\\[VPN\\].*' + ICON_CELL);
   gW.push('RH-Filter-W-AIrest');
@@ -679,7 +705,7 @@ async function handleDashboard(url, env) {
   const traffic = c ? parseUserinfo(c.meta || {}) : null;
   return jsonResp({
     key: key,
-    worker: 'v1.8.0',
+    worker: 'v1.8.1',
     conf_ver: e.conf_ver || null,
     status: e.status || null,
     sub_age_min: c ? Math.round((Date.now() - c.ts) / 60000) : null,
@@ -789,7 +815,7 @@ async function handleSpeed(req, env) {
 // Временный диагностический дамп ВСЕХ ключей KV (сырые строки, без парсинга).
 // Только чтение — KV.list()+KV.get(), ничего не пишет. Гейт: env.ADMIN_KEY
 // (секрет CF, тип Secret). Если секрет не задан — эндпоинт закрыт наглухо
-// (403 для всех, даже с пустым key). Убрать после переноса на D1.
+// (403 для всех, даже с пустым key). Убрать после стабилизации D1.
 async function handleAdminBackup(url, env) {
   const denied = adminGate(url, env);
   if (denied) return denied;
