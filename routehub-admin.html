@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>RouteHub — пульт</title>
+<link rel="icon" href="/icon.svg">
+<style>
+:root{
+  --bg:#0b0f0e; --panel:#111917; --line:#1e2c28; --ink:#cfe8de; --dim:#6f8a80;
+  --acc:#5dcaa5; --acc2:#9fe1cb; --warn:#e0b050; --bad:#e06a5a; --ok:#5dcaa5;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  padding:12px;padding-bottom:40px}
+h1{font-size:15px;margin:0;letter-spacing:.08em;text-transform:uppercase;color:var(--acc2)}
+h2{font-size:12px;margin:0 0 8px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+a{color:var(--acc)}
+.top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.top .meta{color:var(--dim);font-size:11px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:10px 12px;margin-bottom:10px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
+button{font:inherit;background:#17241f;color:var(--ink);border:1px solid var(--line);
+  border-radius:5px;padding:5px 9px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+button.p{background:var(--acc);color:#04221c;border-color:var(--acc);font-weight:600}
+button.d{border-color:#43241f;color:#e6a79c}
+button.d:hover{border-color:var(--bad)}
+input{font:inherit;background:#0a120f;color:var(--ink);border:1px solid var(--line);
+  border-radius:5px;padding:6px 8px}
+input:focus{outline:none;border-color:var(--acc)}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th,td{text-align:left;padding:3px 8px 3px 0;border-bottom:1px solid var(--line);
+  white-space:nowrap}
+th{color:var(--dim);font-weight:400}
+td.num,th.num{text-align:right}
+.dim{color:var(--dim)}
+.ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:4px;
+  padding:0 6px;font-size:11px;color:var(--dim)}
+.tag.on{border-color:var(--acc);color:var(--acc)}
+.tok{font-size:11px;word-break:break-all;color:var(--dim)}
+.casc{display:flex;gap:4px;align-items:stretch}
+.tier{flex:1;min-width:0;border:1px solid var(--line);border-radius:6px;padding:6px;
+  background:#0d1512;position:relative;overflow:hidden}
+.tier .n{font-size:10px;letter-spacing:.1em;color:var(--dim)}
+.tier .v{font-size:15px}
+.tier .bar{position:absolute;left:0;bottom:0;height:2px;background:var(--acc)}
+.arrow{align-self:center;color:var(--dim);font-size:11px}
+label.f{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);cursor:pointer}
+label.f input{accent-color:var(--acc)}
+#login{max-width:340px;margin:40px auto}
+#app{display:none}
+.err{color:var(--bad);min-height:16px;font-size:12px}
+.hint{color:var(--dim);font-size:11px;margin-top:6px}
+.mono{font-size:11px;color:var(--dim);word-break:break-all}
+ul.dom{list-style:none;margin:6px 0 0;padding:0;columns:2;column-gap:14px}
+ul.dom li{display:flex;justify-content:space-between;gap:8px;padding:2px 0;
+  break-inside:avoid}
+@media(max-width:560px){.casc{flex-wrap:wrap}.tier{flex:1 1 30%}.arrow{display:none}
+  ul.dom{columns:1}}
+</style>
+</head>
+<body>
+
+<div id="login" class="card">
+  <h1>RouteHub</h1>
+  <p class="dim" style="font-size:12px">Пульт управления. Ключ хранится только в этой
+  вкладке: в адрес не пишется, в localStorage не сохраняется, при перезагрузке
+  страницы вводится заново.</p>
+  <div class="row">
+    <input id="key" type="password" placeholder="ADMIN_KEY" autocomplete="off"
+      style="flex:1;min-width:160px">
+    <button class="p" id="enter">Войти</button>
+  </div>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<div id="app">
+  <div class="top">
+    <h1>RouteHub</h1>
+    <span class="meta" id="hdr"></span>
+    <span style="flex:1"></span>
+    <button id="reload">Обновить</button>
+    <button id="logout">Выйти</button>
+  </div>
+  <div class="err" id="err"></div>
+
+  <div class="card">
+    <h2>Каскад RH-АВТО — живых / всего</h2>
+    <div class="casc" id="casc"></div>
+    <div class="hint">Живым считается узел, у которого есть метрика без пометки
+      «мёртв» по выбранному устройству. Порядок тиров совпадает с fallback
+      главного конфига.</div>
+  </div>
+
+  <div class="card">
+    <h2>Подписка</h2>
+    <div class="row" id="sub"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="refresh">Обновить подписку сейчас</button>
+      <span class="dim" id="refreshMsg"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Устройства</h2>
+    <div class="grid" id="devs"></div>
+  </div>
+
+  <div class="card">
+    <h2>Личный список RH-RU <span class="dim" id="mylistDev"></span></h2>
+    <div class="row">
+      <input id="dom" placeholder="example.com" autocomplete="off" style="flex:1;min-width:160px">
+      <button id="addDom">Добавить</button>
+    </div>
+    <ul class="dom" id="mylist"></ul>
+  </div>
+
+  <div class="card">
+    <h2>Доступ по токенам</h2>
+    <div class="row">
+      <label class="f"><input type="checkbox" id="tokreq">
+        <span>Фаза 2: запросы без токена отклоняются</span></label>
+    </div>
+    <div class="hint">Пока выключено, работают и старые ссылки без токена — то есть
+      подписка открыта всякому, кто знает адрес. Включать только после того, как
+      ссылки с токеном прописаны на ВСЕХ устройствах: флаг общий для Worker'а,
+      и старые ссылки умрут одновременно. Переключатель обратимый, деплой не нужен.</div>
+  </div>
+
+  <div class="card">
+    <h2>Хранилище D1</h2>
+    <table><thead><tr><th>ключ</th><th class="num">байт</th><th>обновлён</th></tr></thead>
+      <tbody id="store"></tbody></table>
+  </div>
+</div>
+
+<script>
+'use strict';
+var KEY = '';            // живёт только в памяти вкладки
+var ST = null;           // последняя сводка /admin/state
+var DEV = '';            // устройство, по которому смотрим метрики и список
+
+var $ = function (id) { return document.getElementById(id); };
+
+function api(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({ 'X-Admin-Key': KEY }, opts.headers || {});
+  if (opts.body != null && typeof opts.body !== 'string') {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  return fetch(path, opts).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) {
+      if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+      return j;
+    });
+  });
+}
+
+function ts(s) {
+  if (!s) return '—';
+  var d = new Date(s);
+  if (isNaN(d)) return '—';
+  var mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return 'только что';
+  if (mins < 60) return mins + ' мин назад';
+  if (mins < 60 * 48) return Math.round(mins / 60) + ' ч назад';
+  return Math.round(mins / 1440) + ' сут назад';
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+function copy(text, btn) {
+  var done = function () { var t = btn.textContent; btn.textContent = 'скопировано';
+    setTimeout(function () { btn.textContent = t; }, 1200); };
+  if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
+  else {
+    var ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+}
+
+// ------------------------------------------------------------------- отрисовка
+var TIERS = [
+  { k: 'EU', n: 'ЕВРОПА' }, { k: 'AM', n: 'АМЕРИКА' }, { k: 'RU', n: 'РФ/СНГ' },
+  { k: 'REST', n: 'ПРОЧИЕ' }, { k: 'GAME', n: 'ИГРЫ' }, { k: 'BYPASS', n: 'ОБХОД' }
+];
+function drawCascade(c) {
+  var out = [];
+  TIERS.forEach(function (t, i) {
+    var v = (c && c[t.k]) || { total: 0, live: 0 };
+    var pct = v.total ? Math.round(v.live / v.total * 100) : 0;
+    var cls = v.total === 0 ? 'dim' : (v.live === 0 ? 'bad' : (pct < 50 ? 'warn' : 'ok'));
+    out.push('<div class="tier"><div class="n">' + t.n + '</div>' +
+      '<div class="v ' + cls + '">' + v.live + '<span class="dim">/' + v.total + '</span></div>' +
+      '<div class="bar" style="width:' + pct + '%"></div></div>');
+    if (i < TIERS.length - 1) out.push('<div class="arrow">→</div>');
+  });
+  $('casc').innerHTML = out.join('');
+}
+
+function drawSub(s) {
+  var age = s.age_min == null ? '—' : (s.age_min + ' мин');
+  var cls = s.age_min == null ? 'dim' : (s.age_min > 120 ? 'bad' : (s.age_min > s.fresh_min ? 'warn' : 'ok'));
+  var t = s.traffic;
+  var parts = [
+    '<span class="tag">узлов <b>' + s.nodes + '</b></span>',
+    '<span class="tag">кэш <b class="' + cls + '">' + age + '</b></span>',
+    '<span class="tag">свежесть до ' + s.fresh_min + ' мин</span>'
+  ];
+  if (t) {
+    var lcls = t.left_gb < 10 ? 'bad' : (t.left_gb < 40 ? 'warn' : 'ok');
+    parts.push('<span class="tag">остаток <b class="' + lcls + '">' + t.left_gb + ' ГБ</b>' +
+      ' из ' + t.total_gb + '</span>');
+    if (t.expire) parts.push('<span class="tag">до ' +
+      new Date(t.expire * 1000).toLocaleDateString('ru-RU') + '</span>');
+  }
+  $('sub').innerHTML = parts.join('');
+}
+
+var FLAG_NAMES = {
+  cell_unlim: 'безлимит на сотовой',
+  ewma: 'сглаживание EWMA',
+  show_rtt: 'цифры в имени узла',
+  auto_refresh: 'авто-обновление узлов'
+};
+function drawDevices(list) {
+  var out = list.map(function (d) {
+    var scls = d.status === 'bound' ? 'ok' : (d.status === 'conflict' ? 'bad' : 'dim');
+    var sel = d.key === DEV ? ' tag on' : ' tag';
+    var flags = Object.keys(FLAG_NAMES).map(function (f) {
+      return '<label class="f"><input type="checkbox" data-dev="' + d.key + '" data-flag="' + f + '"' +
+        (d.flags[f] ? ' checked' : '') + '><span>' + FLAG_NAMES[f] + '</span></label>';
+    }).join('');
+    return '<div class="card" style="margin:0">' +
+      '<div class="row"><b>' + d.key + '</b>' +
+      '<span class="' + scls + '">' + (d.status || '—') + '</span>' +
+      '<span class="' + sel + '" data-pick="' + d.key + '" style="cursor:pointer">смотреть</span></div>' +
+      '<table style="margin-top:6px"><tbody>' +
+      '<tr><th>связь</th><td>' + ts(d.last_seen) + '</td></tr>' +
+      '<tr><th>конфиг</th><td>' + ts(d.last_config_ts) + ' <span class="dim">' +
+        esc(d.conf_ver || '—') + '</span></td></tr>' +
+      '<tr><th>узлы</th><td>' + ts(d.last_nodes_ts) + ' <span class="dim">запросов ' +
+        d.nodes_n + '</span></td></tr>' +
+      '</tbody></table>' +
+      '<div style="margin-top:6px">' + flags + '</div>' +
+      '<div class="tok" style="margin-top:6px" data-url="' + esc(d.config_url) + '"></div>' +
+      '<div class="row" style="margin-top:6px">' +
+      '<button data-copy="' + esc(d.config_url) + '">Ссылка конфига</button>' +
+      '<button data-show="' + d.key + '">Показать</button>' +
+      '<button class="d" data-regen="' + d.key + '">Новый токен</button>' +
+      '<button class="d" data-unbind="' + d.key + '">Отвязать</button>' +
+      '</div></div>';
+  });
+  $('devs').innerHTML = out.join('');
+}
+
+function drawMylist(list) {
+  $('mylistDev').textContent = DEV ? ('— ' + DEV) : '';
+  if (!list.length) { $('mylist').innerHTML = '<li class="dim">пусто</li>'; return; }
+  $('mylist').innerHTML = list.map(function (d) {
+    return '<li><span>' + esc(d) + '</span>' +
+      '<button class="d" data-del="' + esc(d) + '">×</button></li>';
+  }).join('');
+}
+
+function drawStore(rows) {
+  $('store').innerHTML = rows.map(function (r) {
+    return '<tr><td>' + esc(r.key) + '</td><td class="num">' + r.len + '</td>' +
+      '<td class="dim">' + ts(r.updated_at ? new Date(r.updated_at).toISOString() : null) + '</td></tr>';
+  }).join('');
+}
+
+function render(s) {
+  ST = s; DEV = s.dev || '';
+  $('hdr').textContent = 'worker ' + s.worker + ' · ' + new Date(s.server_now)
+    .toLocaleTimeString('ru-RU') + (s.rkn ? (' · режим ' + s.rkn.mode) : '');
+  drawCascade(s.cascade);
+  drawSub(s.sub);
+  drawDevices(s.devices);
+  drawMylist(s.mylist);
+  drawStore(s.storage);
+  $('tokreq').checked = !!s.token_required;
+}
+
+function load(dev) {
+  $('err').textContent = '';
+  return api('/admin/state' + (dev ? ('?dev=' + encodeURIComponent(dev)) : ''))
+    .then(render)
+    .catch(function (e) { $('err').textContent = 'Ошибка: ' + e.message; });
+}
+
+// ------------------------------------------------------------------ действия
+$('enter').onclick = function () {
+  var k = $('key').value.trim();
+  if (!k) return;
+  KEY = k;
+  api('/admin/state').then(function (s) {
+    $('key').value = '';
+    $('login').style.display = 'none';
+    $('app').style.display = 'block';
+    render(s);
+  }).catch(function (e) {
+    KEY = '';
+    $('loginErr').textContent = e.message === 'forbidden' ? 'Ключ не подходит.' : ('Ошибка: ' + e.message);
+  });
+};
+$('key').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('enter').click(); });
+
+$('reload').onclick = function () { load(DEV); };
+$('logout').onclick = function () {
+  KEY = ''; ST = null;
+  $('app').style.display = 'none';
+  $('login').style.display = 'block';
+  $('loginErr').textContent = '';
+};
+
+$('refresh').onclick = function () {
+  var b = this; b.disabled = true; $('refreshMsg').textContent = 'запрашиваю Lastdep…';
+  api('/admin/action', { method: 'POST', body: { action: 'refresh_sub' } })
+    .then(function (j) { $('refreshMsg').textContent = 'узлов: ' + j.nodes; return load(DEV); })
+    .catch(function (e) { $('refreshMsg').textContent = 'ошибка: ' + e.message; })
+    .then(function () { b.disabled = false; });
+};
+
+$('tokreq').onchange = function () {
+  var want = this.checked;
+  var self = this;
+  if (want && !confirm('Включить фазу 2?\n\nВсе ссылки без токена перестанут работать НЕМЕДЛЕННО. ' +
+      'Устройство, на котором не прописана ссылка с токеном, останется без конфига и без подписки.')) {
+    self.checked = false; return;
+  }
+  api('/admin/settings', { method: 'POST', body: { token_required: want } })
+    .then(function () { return load(DEV); })
+    .catch(function (e) { self.checked = !want; $('err').textContent = 'Ошибка: ' + e.message; });
+};
+
+$('addDom').onclick = function () {
+  var d = $('dom').value.trim().toLowerCase();
+  if (!d || !DEV) return;
+  api('/admin/mylist', { method: 'POST', body: { key: DEV, domain: d } })
+    .then(function (j) { $('dom').value = ''; drawMylist(j.domains); })
+    .catch(function (e) { $('err').textContent = 'Ошибка: ' + e.message; });
+};
+$('dom').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('addDom').click(); });
+
+$('mylist').addEventListener('click', function (e) {
+  var d = e.target.getAttribute('data-del');
+  if (!d || !DEV) return;
+  api('/admin/mylist', { method: 'POST', body: { key: DEV, domain: d, add: false } })
+    .then(function (j) { drawMylist(j.domains); })
+    .catch(function (err) { $('err').textContent = 'Ошибка: ' + err.message; });
+});
+
+$('devs').addEventListener('change', function (e) {
+  var dev = e.target.getAttribute('data-dev');
+  var flag = e.target.getAttribute('data-flag');
+  if (!dev || !flag) return;
+  var flags = {}; flags[flag] = e.target.checked;
+  api('/admin/device', { method: 'POST', body: { key: dev, flags: flags } })
+    .then(function () { return load(DEV); })
+    .catch(function (err) {
+      e.target.checked = !e.target.checked;
+      $('err').textContent = 'Ошибка: ' + err.message;
+    });
+});
+
+$('devs').addEventListener('click', function (e) {
+  var t = e.target;
+  var pick = t.getAttribute('data-pick');
+  if (pick) { load(pick); return; }
+  var cp = t.getAttribute('data-copy');
+  if (cp) { copy(cp, t); return; }
+  var show = t.getAttribute('data-show');
+  if (show) {
+    var box = t.closest('.card').querySelector('.tok');
+    box.textContent = box.textContent ? '' : box.getAttribute('data-url');
+    return;
+  }
+  var rg = t.getAttribute('data-regen');
+  if (rg) {
+    if (!confirm('Перевыпустить токен ' + rg + '?\n\nСтарая ссылка перестанет работать сразу. ' +
+      'На устройство придётся прописать новую вручную.')) return;
+    api('/admin/device', { method: 'POST', body: { key: rg, action: 'regen_token' } })
+      .then(function () { return load(DEV); })
+      .catch(function (err) { $('err').textContent = 'Ошибка: ' + err.message; });
+    return;
+  }
+  var ub = t.getAttribute('data-unbind');
+  if (ub) {
+    if (!confirm('Отвязать ' + ub + '?\n\nКлюч станет свободным и привяжется к тому устройству, ' +
+      'которое первым пришлёт замер скорости. Метрики при этом сохраняются.')) return;
+    api('/admin/device', { method: 'POST', body: { key: ub, action: 'unbind' } })
+      .then(function () { return load(DEV); })
+      .catch(function (err) { $('err').textContent = 'Ошибка: ' + err.message; });
+  }
+});
+</script>
+</body>
+</html>
