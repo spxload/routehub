@@ -1,5 +1,23 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.9.1 (2026-08-06) — СЕССИЯ АДМИН-ПАНЕЛИ:
+//   ПРИЧИНА: ADMIN_KEY жил только в памяти вкладки, поэтому при каждой
+//   перезагрузке страницы его приходилось вводить заново.
+//   РЕШЕНИЕ: POST /admin/login принимает ключ ОДИН раз и выдаёт cookie rh_adm
+//   вида <exp>.<подпись>, где подпись = HMAC-SHA256 по строке 'rh-admin-v1|<exp>'
+//   с ключом ADMIN_KEY. Состояние на сервере НЕ хранится — в D1 ничего не
+//   пишется, расхода квоты нет. Атрибуты cookie: HttpOnly (скриптам страницы
+//   значение недоступно, в отличие от localStorage), Secure, SameSite=Strict
+//   (закрывает CSRF), Path=/admin (на эндпоинты устройств cookie не уходит),
+//   Max-Age = 30 суток.
+//   Отзыв: POST /admin/logout гасит cookie в текущем браузере; смена секрета
+//   ADMIN_KEY в Cloudflare обнуляет ВСЕ выданные сессии разом, поскольку он же
+//   служит ключом подписи.
+//   adminGate стал async и проверяет в порядке: X-Admin-Key -> ?key= -> cookie.
+//   Прежние способы входа сохранены: ручной заход по ?key= не сломан.
+//   Неверный ключ в /admin/login отвечает 403 с задержкой ~300 мс (грубая
+//   помеха перебору; счётчики попыток не заводились — они требовали бы записей
+//   в D1 на каждый запрос).
 // VERSION: worker v1.9.0 (2026-08-05) — БЛОК 1 (уборка после D1) + БЛОК 3 (админ-панель):
 //   * FRESH_MS 10 мин -> 60 мин. Loon дёргает /config раз в 15-20 мин, поэтому при
 //     пороге 10 мин кэш почти всегда протухший и Worker СИНХРОННО ждал Lastdep.
@@ -134,6 +152,8 @@
 // POST /addrule /delrule -> {key, domain} личный список.
 // GET  /whoami         -> детект сети/оператора по request.cf (без токена).
 // GET  /admin          -> HTML админ-панели (ключ вводится внутри страницы).
+// POST /admin/login    -> обмен ADMIN_KEY на сессионную cookie (30 суток).
+// POST /admin/logout   -> погасить сессию в этом браузере.
 // GET  /admin/keys     -> ссылки устройств с токенами (JSON).
 // GET  /admin/state    -> сводка панели: настройки, подписка, устройства,
 //                         хранилище, каскад регионов.
@@ -141,7 +161,8 @@
 // POST /admin/settings -> переключатель token_required (фаза 2 токенов).
 // POST /admin/action   -> refresh_sub (обновить подписку сейчас).
 // POST /admin/mylist   -> личный список RH-RU из панели.
-// Все /admin/* — под ADMIN_KEY: заголовок X-Admin-Key либо ?key=<ADMIN_KEY>.
+// Все /admin/* — под ADMIN_KEY: заголовок X-Admin-Key, ?key=<ADMIN_KEY> либо
+// сессионная cookie rh_adm, выданная /admin/login.
 // env: RH_DB (D1 — ЕДИНСТВЕННОЕ ХРАНИЛИЩЕ),
 //      SUBSCRIPTION_URL + SUB_HWID + ADMIN_KEY (секреты CF), CONFIG_URL.
 // =============================================================
@@ -165,7 +186,7 @@ const KEY_RE = /^k\d+$/;
 // деплоя. Константа ниже — значение по умолчанию при отсутствии ключа settings.
 const TOKEN_REQUIRED_DEFAULT = false;
 const SETTINGS_KEY = 'settings';
-const WORKER_VER = 'v1.9.0';
+const WORKER_VER = 'v1.9.1';
 const TOKEN_LEN = 32;
 const TOKEN_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const TOKEN_RE = /^[A-Za-z0-9]{16,64}$/;
@@ -935,17 +956,108 @@ async function handleSpeed(req, env, tok) {
 }
 
 // ======================== АДМИН-ПАНЕЛЬ (v1.9.0) ============================
-// Гейт: ключ берётся из заголовка X-Admin-Key (панель держит его только в
-// памяти вкладки и в URL не пишет) либо из ?key= — для ручных заходов.
-function adminGate(req, url, env) {
+// СЕССИЯ (v1.9.1). Cookie rh_adm = '<exp>.<подпись>', подпись — HMAC-SHA256 по
+// строке 'rh-admin-v1|<exp>' с ключом ADMIN_KEY. Проверяется пересчётом, поэтому
+// на сервере ничего не хранится (в D1 записей нет). Смена ADMIN_KEY обнуляет все
+// выданные сессии автоматически: подпись перестаёт сходиться.
+const ADMIN_COOKIE = 'rh_adm';
+const ADMIN_SESSION_MS = 30 * 24 * 60 * 60 * 1000; // 30 суток
+const ADMIN_SESSION_TAG = 'rh-admin-v1';
+
+function b64url(bytes) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+// Сравнение за постоянное время: посимвольный XOR без раннего выхода.
+// Разная длина отвергается сразу — длина секретом не является.
+function timingEq(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= (a.charCodeAt(i) ^ b.charCodeAt(i));
+  return d === 0;
+}
+async function signSession(secret, exp) {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey('raw', enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', k, enc.encode(ADMIN_SESSION_TAG + '|' + exp));
+  return b64url(new Uint8Array(sig));
+}
+async function makeSession(secret) {
+  const exp = Date.now() + ADMIN_SESSION_MS;
+  return exp + '.' + (await signSession(secret, exp));
+}
+// Любая невнятность (нет точки, срок истёк, подпись не сошлась) -> false.
+async function verifySession(secret, val) {
+  const s = String(val || '');
+  const i = s.indexOf('.');
+  if (i <= 0) return false;
+  const exp = Number(s.slice(0, i));
+  if (!Number.isFinite(exp) || exp <= Date.now()) return false;
+  return timingEq(s.slice(i + 1), await signSession(secret, exp));
+}
+function readCookie(req, name) {
+  const raw = req.headers.get('Cookie') || '';
+  for (const part of raw.split(';')) {
+    const p = part.trim();
+    const i = p.indexOf('=');
+    if (i > 0 && p.slice(0, i) === name) return p.slice(i + 1);
+  }
+  return '';
+}
+// Path=/admin — на эндпоинты устройств (/config, /nodes, /speed) cookie не уходит.
+// SameSite=Strict закрывает CSRF, HttpOnly прячет значение от скриптов страницы.
+function sessionCookie(value, maxAgeSec) {
+  return ADMIN_COOKIE + '=' + value + '; Path=/admin; Max-Age=' + maxAgeSec +
+    '; HttpOnly; Secure; SameSite=Strict';
+}
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+// Гейт: X-Admin-Key (панель шлёт его только при входе) -> ?key= (ручные заходы)
+// -> сессионная cookie. Async из-за пересчёта HMAC.
+async function adminGate(req, url, env) {
   if (!env.ADMIN_KEY) return jsonResp({ error: 'admin disabled' }, 403);
   const key = req.headers.get('X-Admin-Key') || url.searchParams.get('key') || '';
-  if (key !== env.ADMIN_KEY) return jsonResp({ error: 'forbidden' }, 403);
-  return null;
+  if (key && timingEq(key, env.ADMIN_KEY)) return null;
+  const c = readCookie(req, ADMIN_COOKIE);
+  if (c && await verifySession(env.ADMIN_KEY, c)) return null;
+  return jsonResp({ error: 'forbidden' }, 403);
+}
+
+// Обмен ADMIN_KEY на сессию. Неверный ключ — 403 с задержкой ~300 мс: грубая
+// помеха перебору. Счётчики попыток не заводились намеренно — они потребовали
+// бы записи в D1 на КАЖДЫЙ запрос, а ключ и без того длинный секрет.
+async function handleAdminLogin(req, env) {
+  if (!env.ADMIN_KEY) return jsonResp({ error: 'admin disabled' }, 403);
+  let data;
+  try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
+  const key = String((data && data.key) || '');
+  if (!key || !timingEq(key, env.ADMIN_KEY)) {
+    await sleep(300);
+    return jsonResp({ error: 'forbidden' }, 403);
+  }
+  const val = await makeSession(env.ADMIN_KEY);
+  return new Response(JSON.stringify({
+    ok: true, expires: new Date(Date.now() + ADMIN_SESSION_MS).toISOString(),
+  }), { status: 200, headers: {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+    'Set-Cookie': sessionCookie(val, Math.round(ADMIN_SESSION_MS / 1000)),
+  } });
+}
+
+// Погасить сессию в этом браузере. Гейт не нужен: операция ничего не открывает.
+function handleAdminLogout() {
+  return new Response(JSON.stringify({ ok: true }), { status: 200, headers: {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+    'Set-Cookie': sessionCookie('', 0),
+  } });
 }
 
 // Страница панели. Без гейта: сама разметка секретов не содержит, ключ вводится
-// в ней и уходит заголовком в /admin/*. HTML вбирается в бандл при сборке.
+// в ней и уходит в /admin/login. HTML вбирается в бандл при сборке.
 function handleAdminPage() {
   return new Response(ADMIN_HTML, {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
@@ -970,7 +1082,7 @@ function deviceRow(url, k, e) {
 // Готовые ссылки по устройствам — отсюда Диана берёт строку для нового телефона.
 // Токен показывается ТОЛЬКО здесь и в /admin/state, и только под ADMIN_KEY.
 async function handleAdminKeys(req, url, env) {
-  const denied = adminGate(req, url, env); if (denied) return denied;
+  const denied = await adminGate(req, url, env); if (denied) return denied;
   const reg = await loadRegistry(env);
   const st = await loadSettings(env);
   const out = [];
@@ -1005,7 +1117,7 @@ function cascadeOf(masterLines, state) {
 // ?dev=kN — устройство, по которому считаются каскад, метрики и личный список;
 // по умолчанию первое привязанное.
 async function handleAdminState(req, url, env) {
-  const denied = adminGate(req, url, env); if (denied) return denied;
+  const denied = await adminGate(req, url, env); if (denied) return denied;
   const reg = await loadRegistry(env);
   const st = await loadSettings(env);
   const c = await kvGetJSON(env, 'sub_cache');
@@ -1057,7 +1169,7 @@ async function handleAdminState(req, url, env) {
 // токена, отвязка. Две последние операции способны отрезать устройство —
 // панель запрашивает подтверждение.
 async function handleAdminDevice(req, url, env) {
-  const denied = adminGate(req, url, env); if (denied) return denied;
+  const denied = await adminGate(req, url, env); if (denied) return denied;
   let data;
   try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
   const key = (data && data.key) || '';
@@ -1082,7 +1194,7 @@ async function handleAdminDevice(req, url, env) {
 
 // Переключатель фазы 2 токенов. Значение живёт в D1, деплой не требуется.
 async function handleAdminSettings(req, url, env) {
-  const denied = adminGate(req, url, env); if (denied) return denied;
+  const denied = await adminGate(req, url, env); if (denied) return denied;
   let data;
   try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
   if (!data || typeof data.token_required !== 'boolean') return jsonResp({ error: 'bad settings' }, 400);
@@ -1094,7 +1206,7 @@ async function handleAdminSettings(req, url, env) {
 
 // Действия панели. Пока одно: обновить подписку немедленно.
 async function handleAdminAction(req, url, env) {
-  const denied = adminGate(req, url, env); if (denied) return denied;
+  const denied = await adminGate(req, url, env); if (denied) return denied;
   let data;
   try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
   const action = String((data && data.action) || '');
@@ -1111,7 +1223,7 @@ async function handleAdminAction(req, url, env) {
 // Личный список RH-RU из панели. Модель та же, что у POST /addrule /delrule:
 // один ключ mylist:<kN> = массив доменов. add=false — удаление.
 async function handleAdminMylist(req, url, env) {
-  const denied = adminGate(req, url, env); if (denied) return denied;
+  const denied = await adminGate(req, url, env); if (denied) return denied;
   let data;
   try { data = await req.json(); } catch (e) { return jsonResp({ error: 'bad json' }, 400); }
   const key = (data && data.key) || '';
@@ -1158,6 +1270,8 @@ export default {
       if (req.method === 'GET' && url.pathname === '/mylist') return await handleMylist(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/status') return await handleStatus(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/admin') return handleAdminPage();
+      if (req.method === 'POST' && url.pathname === '/admin/login') return await handleAdminLogin(req, env);
+      if (req.method === 'POST' && url.pathname === '/admin/logout') return handleAdminLogout();
       if (req.method === 'GET' && url.pathname === '/admin/state') return await handleAdminState(req, url, env);
       if (req.method === 'GET' && url.pathname === '/admin/keys') return await handleAdminKeys(req, url, env);
       if (req.method === 'POST' && url.pathname === '/admin/device') return await handleAdminDevice(req, url, env);
@@ -1187,4 +1301,6 @@ export const __test = {
   cascadeOf, deviceRow, makeToken, ensureTokens, ensureFlags, ensureFreeSpare,
   b64ToUtf8, utf8ToB64, decodeName, fragOf, withFrag, renderNodesBoth,
   loadSettings, saveSettings, tokenGate, FRESH_MS, WORKER_VER, FLAGS,
+  makeSession, verifySession, signSession, readCookie, timingEq,
+  ADMIN_COOKIE, ADMIN_SESSION_MS,
 };
