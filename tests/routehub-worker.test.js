@@ -44,8 +44,8 @@ test('FRESH_MS = 60 минут', () => {
   assert.equal(T.FRESH_MS, 60 * 60 * 1000);
 });
 
-test('версия Worker\'а — v1.9.0', () => {
-  assert.equal(T.WORKER_VER, 'v1.9.0');
+test('версия Worker\'а — v1.9.1', () => {
+  assert.equal(T.WORKER_VER, 'v1.9.1');
 });
 
 test('subParamsFromConf сохраняет хвост параметров подписки', () => {
@@ -315,7 +315,7 @@ test('/admin/state отдаёт подписку, каскад, устройст
   });
   const r = await worker.fetch(req('https://w.invalid/admin/state', { headers: ADM }), env);
   const j = await r.json();
-  assert.equal(j.worker, 'v1.9.0');
+  assert.equal(j.worker, 'v1.9.1');
   assert.equal(j.dev, 'k1');
   assert.equal(j.sub.nodes, 2);
   assert.equal(j.sub.fresh_min, 60);
@@ -420,6 +420,80 @@ test('/admin/action: неизвестное действие отклоняет�
   const env = makeEnv({});
   const r = await worker.fetch(post('https://w.invalid/admin/action', { action: 'удалить всё' }, ADM), env);
   assert.equal(r.status, 400);
+});
+
+// ------------------------------------------------- сессия панели (v1.9.1)
+// Сессия — подписанная cookie, сервер ничего не хранит. Ключ подписи —
+// ADMIN_KEY, поэтому его смена обязана обесценивать выданные сессии.
+function cookieHdr(v) { return { 'Cookie': T.ADMIN_COOKIE + '=' + v }; }
+
+test('/admin/login с верным ключом выдаёт защищённую cookie на 30 суток', async () => {
+  const env = makeEnv({});
+  const r = await worker.fetch(post('https://w.invalid/admin/login', { key: 'ADMIN-TEST-KEY' }), env);
+  assert.equal(r.status, 200);
+  const sc = r.headers.get('Set-Cookie');
+  assert.ok(sc, 'Set-Cookie не выставлен');
+  assert.ok(sc.startsWith(T.ADMIN_COOKIE + '='));
+  assert.match(sc, /HttpOnly/);
+  assert.match(sc, /Secure/);
+  assert.match(sc, /SameSite=Strict/);
+  assert.match(sc, /Path=\/admin/, 'cookie не должна уходить на эндпоинты устройств');
+  assert.match(sc, new RegExp('Max-Age=' + Math.round(T.ADMIN_SESSION_MS / 1000)));
+});
+
+test('/admin/login с чужим ключом — 403 и без cookie', async () => {
+  const env = makeEnv({});
+  const r = await worker.fetch(post('https://w.invalid/admin/login', { key: 'wrong-key' }), env);
+  assert.equal(r.status, 403);
+  assert.equal(r.headers.get('Set-Cookie'), null, 'при отказе cookie выдавать нельзя');
+});
+
+test('сессионная cookie открывает админ-эндпоинты без ключа', async () => {
+  const env = makeEnv({});
+  const val = await T.makeSession(env.ADMIN_KEY);
+  const r = await worker.fetch(req('https://w.invalid/admin/state', { headers: cookieHdr(val) }), env);
+  assert.equal(r.status, 200);
+  const p = await worker.fetch(new Request('https://w.invalid/admin/device', {
+    method: 'POST',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, cookieHdr(val)),
+    body: JSON.stringify({ key: 'k1', flags: { ewma: true } }),
+  }), env);
+  assert.equal(p.status, 200, 'POST-эндпоинты тоже должны пускать по сессии');
+});
+
+test('поддельная и просроченная сессии отвергаются', async () => {
+  const env = makeEnv({});
+  const good = await T.makeSession(env.ADMIN_KEY);
+  const forged = good.slice(0, good.indexOf('.') + 1) + 'A'.repeat(43);
+  assert.equal(await T.verifySession(env.ADMIN_KEY, forged), false, 'подпись не проверена');
+  const expTs = Date.now() - 1000;
+  const expired = expTs + '.' + (await T.signSession(env.ADMIN_KEY, expTs));
+  assert.equal(await T.verifySession(env.ADMIN_KEY, expired), false, 'срок не проверен');
+  assert.equal(await T.verifySession(env.ADMIN_KEY, 'мусор'), false);
+  const r = await worker.fetch(req('https://w.invalid/admin/state', { headers: cookieHdr(forged) }), env);
+  assert.equal(r.status, 403);
+});
+
+test('смена ADMIN_KEY обнуляет ранее выданные сессии', async () => {
+  const env = makeEnv({});
+  const val = await T.makeSession(env.ADMIN_KEY);
+  env.ADMIN_KEY = 'NEW-ADMIN-KEY';
+  const r = await worker.fetch(req('https://w.invalid/admin/state', { headers: cookieHdr(val) }), env);
+  assert.equal(r.status, 403);
+});
+
+test('/admin/logout гасит cookie', async () => {
+  const env = makeEnv({});
+  const r = await worker.fetch(post('https://w.invalid/admin/logout', {}), env);
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('Set-Cookie'), /Max-Age=0/);
+});
+
+test('timingEq: равные строки, разные строки, разная длина', () => {
+  assert.equal(T.timingEq('abc', 'abc'), true);
+  assert.equal(T.timingEq('abc', 'abd'), false);
+  assert.equal(T.timingEq('abc', 'abcd'), false);
+  assert.equal(T.timingEq('abc', null), false);
 });
 
 // ------------------------------------------------------- снятые эндпоинты
