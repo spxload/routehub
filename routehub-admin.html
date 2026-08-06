@@ -53,7 +53,8 @@ td.num,th.num{text-align:right}
 .arrow{align-self:center;color:var(--dim);font-size:11px}
 label.f{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);cursor:pointer}
 label.f input{accent-color:var(--acc)}
-#login{max-width:340px;margin:40px auto}
+#boot{max-width:340px;margin:40px auto;color:var(--dim)}
+#login{max-width:340px;margin:40px auto;display:none}
 #app{display:none}
 .err{color:var(--bad);min-height:16px;font-size:12px}
 .hint{color:var(--dim);font-size:11px;margin-top:6px}
@@ -67,11 +68,18 @@ ul.dom li{display:flex;justify-content:space-between;gap:8px;padding:2px 0;
 </head>
 <body>
 
+<div id="boot" class="card">
+  <h1>RouteHub</h1>
+  <p class="dim" style="font-size:12px">Проверяю сессию…</p>
+</div>
+
 <div id="login" class="card">
   <h1>RouteHub</h1>
-  <p class="dim" style="font-size:12px">Пульт управления. Ключ хранится только в этой
-  вкладке: в адрес не пишется, в localStorage не сохраняется, при перезагрузке
-  страницы вводится заново.</p>
+  <p class="dim" style="font-size:12px">Пульт управления. Ключ уходит на сервер один
+  раз и в браузере не сохраняется: в ответ выдаётся подписанная сессия на 30 суток
+  (cookie HttpOnly, недоступная скриптам страницы). Отозвать её можно кнопкой
+  «Выйти» либо сменой секрета ADMIN_KEY в Cloudflare — она обнуляет все сессии
+  сразу.</p>
   <div class="row">
     <input id="key" type="password" placeholder="ADMIN_KEY" autocomplete="off"
       style="flex:1;min-width:160px">
@@ -142,7 +150,10 @@ ul.dom li{display:flex;justify-content:space-between;gap:8px;padding:2px 0;
 
 <script>
 'use strict';
-var KEY = '';            // живёт только в памяти вкладки
+// Ключ ADMIN_KEY в странице НЕ хранится: он уходит один раз в POST /admin/login,
+// дальше доступ подтверждает cookie rh_adm (HttpOnly, Path=/admin, SameSite=Strict).
+// Скриптам страницы её значение недоступно, отдельного заголовка не требуется —
+// браузер сам прикладывает cookie к запросам того же origin.
 var ST = null;           // последняя сводка /admin/state
 var DEV = '';            // устройство, по которому смотрим метрики и список
 
@@ -150,14 +161,14 @@ var $ = function (id) { return document.getElementById(id); };
 
 function api(path, opts) {
   opts = opts || {};
-  opts.headers = Object.assign({ 'X-Admin-Key': KEY }, opts.headers || {});
+  opts.credentials = 'same-origin';
   if (opts.body != null && typeof opts.body !== 'string') {
-    opts.headers['Content-Type'] = 'application/json';
+    opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
     opts.body = JSON.stringify(opts.body);
   }
   return fetch(path, opts).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (j) {
-      if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+      if (!r.ok) { var e = new Error((j && j.error) || ('HTTP ' + r.status)); e.status = r.status; throw e; }
       return j;
     });
   });
@@ -300,29 +311,48 @@ function load(dev) {
     .catch(function (e) { $('err').textContent = 'Ошибка: ' + e.message; });
 }
 
+function showApp(s) {
+  $('boot').style.display = 'none';
+  $('login').style.display = 'none';
+  $('app').style.display = 'block';
+  render(s);
+}
+function showLogin(msg) {
+  $('boot').style.display = 'none';
+  $('app').style.display = 'none';
+  $('login').style.display = 'block';
+  $('loginErr').textContent = msg || '';
+  $('key').focus();
+}
+
+// Старт: пробуем сводку молча. 200 — сессия жива, экран входа не показываем.
+api('/admin/state').then(showApp).catch(function (e) {
+  showLogin(e.status === 403 ? '' : ('Ошибка: ' + e.message));
+});
+
 // ------------------------------------------------------------------ действия
 $('enter').onclick = function () {
   var k = $('key').value.trim();
   if (!k) return;
-  KEY = k;
-  api('/admin/state').then(function (s) {
-    $('key').value = '';
-    $('login').style.display = 'none';
-    $('app').style.display = 'block';
-    render(s);
-  }).catch(function (e) {
-    KEY = '';
-    $('loginErr').textContent = e.message === 'forbidden' ? 'Ключ не подходит.' : ('Ошибка: ' + e.message);
-  });
+  var b = this; b.disabled = true;
+  api('/admin/login', { method: 'POST', body: { key: k } })
+    .then(function () {
+      $('key').value = '';
+      return api('/admin/state').then(showApp);
+    })
+    .catch(function (e) {
+      $('loginErr').textContent = e.status === 403 ? 'Ключ не подходит.' : ('Ошибка: ' + e.message);
+    })
+    .then(function () { b.disabled = false; });
 };
 $('key').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('enter').click(); });
 
 $('reload').onclick = function () { load(DEV); };
 $('logout').onclick = function () {
-  KEY = ''; ST = null;
-  $('app').style.display = 'none';
-  $('login').style.display = 'block';
-  $('loginErr').textContent = '';
+  ST = null; DEV = '';
+  api('/admin/logout', { method: 'POST', body: {} })
+    .catch(function () {})
+    .then(function () { showLogin('Сессия завершена.'); });
 };
 
 $('refresh').onclick = function () {
