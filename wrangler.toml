@@ -1,33 +1,20 @@
-name = "routehub"
-main = "routehub-worker.js"
+name = "routehub-egern"
+main = "routehub-egern-worker.js"
 compatibility_date = "2026-06-01"
 
-# Worker v1.9.0 (2026-08-05):
-#   * Биндинг RH_KV УБРАН. Миграция KV -> D1 завершена 2026-08-03, обращений к KV
-#     в коде больше нет (сняты /admin/backup, /admin/migrate, /admin/verify).
-#     Сам namespace routehub-kv в аккаунте ОСТАВЛЕН — удаляет Диана; путь отката
-#     до её удаления: вернуть предыдущую версию routehub-worker.js и этого файла.
-#   * Добавлено правило Text для *.html: routehub-admin.html вбирается в бандл
-#     при сборке и импортируется в Worker (import ADMIN_HTML). Панель отдаётся
-#     мгновенно, без обращения к raw GitHub и без его пятиминутного кэша.
-#     Правило действует только на статически импортированные файлы, поэтому
-#     routehub-dash.html (его тянет скрипт на устройстве) в бандл не попадает.
+# СТЕНД EGERN (блок 4, шаг 4.1). Отдельный Worker, отдельная D1.
+#   * Имя Worker'а ДРУГОЕ (routehub-egern) — боевой routehub этой веткой
+#     не затрагивается ни при каких настройках сборки.
+#   * База ДРУГАЯ (routehub-egern-db). Общая недопустима: первое обращение
+#     стенда перепривязало бы nonce боевых устройств (вывод 12 в СТАРТ.md).
+#   * cron не заводится: стенду фоновое обновление подписки не нужно,
+#     а квоты Cloudflare считаются на аккаунт.
+#   * Правило Text для *.html не заводится: админ-панели у стенда пока нет.
 # Секреты Cloudflare (тип Secret, НЕ Text — plaintext-переменные стираются
 # каждым деплоем из этого файла): SUBSCRIPTION_URL, SUB_HWID, ADMIN_KEY.
-# cron — фоновое обновление подписки раз в 2 часа. Он же задаёт верхнюю границу
-# свежести кэша независимо от FRESH_MS (с v1.9.0 — 60 мин).
-
-[triggers]
-crons = ["0 */2 * * *"]
-
-[[rules]]
-type = "Text"
-globs = ["**/*.html"]
+# Заводятся Дианой в карточке ЭТОГО Worker'а; с боевым они не общие.
 
 [[d1_databases]]
 binding = "RH_DB"
-database_name = "routehub-db"
-database_id = "b03b5540-80aa-43e6-9dce-92bd8e221507"
-
-[vars]
-CONFIG_URL = "https://raw.githubusercontent.com/spxload/routehub/main/routehub.conf"
+database_name = "routehub-egern-db"
+database_id = "55ebdd96-f6d4-453a-891a-4662ff5366dd"
