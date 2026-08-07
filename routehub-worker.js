@@ -1,5 +1,18 @@
 // =============================================================
 // routehub-worker.js — Cloudflare Worker (Этап E, личные подписки)
+// VERSION: worker v1.9.2 (2026-08-07) — ТЕГ УЗЛА НЕ ЗАВИСИТ ОТ ЗНАЧКОВ:
+//   ПРИЧИНА: tagOf искал точную подстроку '[VPN]'. Провайдер выпустил
+//   узлы с именем '[🌀 VPN]' (🌀 = прямая зарубежная локация, не обход):
+//   4 шт. (🇩🇪, 🇳🇱, 🇫🇷, 🇵🇱). Они получали тег 'other' и выпадали из AI-тиров,
+//   каскада панели и дашборда; regex конфига \[VPN\] их тоже не ловил.
+//   РЕШЕНИЕ: tagOf смотрит на слово в скобочном теге ('VPN]'), порядок
+//   проверок обход -> игры -> VPN. Парная правка в конфиге (C-draft-39):
+//   все 12 VPN-фильтров — '^(?!.*Обход).*VPN].*<метка сети>'. Обе части
+//   обязательны вместе, иначе Worker и Loon разойдутся в классификации.
+//   Тот же критерий проведён через весь файл: aiBlocks (AI-фильтры тиеров и
+//   AIrest — теперь тоже с '^(?!.*Обход)') и sortMaster (счётчик узлов по
+//   странам считает через tagOf, а не по подстроке).
+//
 // VERSION: worker v1.9.1 (2026-08-06) — СЕССИЯ АДМИН-ПАНЕЛИ:
 //   ПРИЧИНА: ADMIN_KEY жил только в памяти вкладки, поэтому при каждой
 //   перезагрузке страницы его приходилось вводить заново.
@@ -186,7 +199,7 @@ const KEY_RE = /^k\d+$/;
 // деплоя. Константа ниже — значение по умолчанию при отсутствии ключа settings.
 const TOKEN_REQUIRED_DEFAULT = false;
 const SETTINGS_KEY = 'settings';
-const WORKER_VER = 'v1.9.1';
+const WORKER_VER = 'v1.9.2';
 const TOKEN_LEN = 32;
 const TOKEN_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const TOKEN_RE = /^[A-Za-z0-9]{16,64}$/;
@@ -387,10 +400,14 @@ function norm(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 function matchKey(name) { return norm(stripMetric(name)); }
 function flagOf(name) { const m = String(name).match(FLAG_RE); return m ? m[0] : ''; }
 function startFlag(name) { const m = String(name).match(FLAG_START_RE); return m ? m[1] : null; }
+// Тег узла по имени. Провайдер часто меняет значки ВНУТРИ скобок
+// ([VPN] -> [🌀 VPN] и т.п.), поэтому критерий — слово в скобочном теге,
+// а не точная подстрока '[VPN]'. Порядок: обход -> игры -> VPN (обход строго
+// первым: у него скобка тоже может однажды получить слово VPN).
 function tagOf(name) {
   if (name.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) return 'bypass';
-  if (name.indexOf('[VPN]') >= 0) return 'vpn';
   if (name.indexOf('\u0418\u0433\u0440\u044B') >= 0) return 'game';
+  if (name.indexOf('VPN]') >= 0) return 'vpn';
   return 'other';
 }
 function classifyNet(asOrg) {
@@ -444,7 +461,7 @@ function sortMaster(lines) {
   const cnt = {};
   for (const l of lines) {
     const nm = decodeName(fragOf(l));
-    if (nm.indexOf('[VPN]') < 0) continue;
+    if (tagOf(nm) !== 'vpn') continue;
     const fl = startFlag(nm);
     if (fl) cnt[fl] = (cnt[fl] || 0) + 1;
   }
@@ -576,16 +593,16 @@ function aiBlocks(tiers) {
   const fW = [], fC = [], gW = [], gC = [];
   tiers.forEach(function (fl, i) {
     const id = (i + 1 < 10 ? '0' : '') + (i + 1);
-    fW.push('RH-Filter-W-AI' + id + ' = NameRegex, Lastdep, FilterKey = ' + fl + '.*\\[VPN\\].*' + ICON_WIFI);
-    fC.push('RH-Filter-C-AI' + id + ' = NameRegex, Lastdep, FilterKey = ' + fl + '.*\\[VPN\\].*' + ICON_CELL);
+    fW.push('RH-Filter-W-AI' + id + ' = NameRegex, Lastdep, FilterKey = ^(?!.*Обход).*' + fl + '.*VPN].*' + ICON_WIFI);
+    fC.push('RH-Filter-C-AI' + id + ' = NameRegex, Lastdep, FilterKey = ^(?!.*Обход).*' + fl + '.*VPN].*' + ICON_CELL);
     gW.push('RH-Filter-W-AI' + id);
     gC.push('RH-Filter-C-AI' + id);
   });
-  // Запасной фильтр AIrest: исключаем ВЕСЬ СНГ + уже занятые тиеры, иначе
+  // Запасной фильтр AIrest: исключаем обходные, ВЕСЬ СНГ + занятые тиеры, иначе
   // исключённые из тиеров узлы СНГ вернулись бы в AI через AIrest.
-  const exclAlt = REGION_RU.concat(tiers).join('|');
-  fW.push('RH-Filter-W-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*\\[VPN\\].*' + ICON_WIFI);
-  fC.push('RH-Filter-C-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*\\[VPN\\].*' + ICON_CELL);
+  const exclAlt = ['Обход'].concat(REGION_RU, tiers).join('|');
+  fW.push('RH-Filter-W-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*VPN].*' + ICON_WIFI);
+  fC.push('RH-Filter-C-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*VPN].*' + ICON_CELL);
   gW.push('RH-Filter-W-AIrest');
   gC.push('RH-Filter-C-AIrest');
   const filters = fW.join('\n') + '\n' + fC.join('\n');

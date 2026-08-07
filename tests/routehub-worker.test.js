@@ -44,8 +44,35 @@ test('FRESH_MS = 60 минут', () => {
   assert.equal(T.FRESH_MS, 60 * 60 * 1000);
 });
 
-test('версия Worker\'а — v1.9.1', () => {
-  assert.equal(T.WORKER_VER, 'v1.9.1');
+test('версия Worker\'а — v1.9.2', () => {
+  assert.equal(T.WORKER_VER, 'v1.9.2');
+});
+
+// ------------------------------------------------------------------- tagOf
+// Провайдер меняет значки внутри скобочного тега, поэтому критерий — слово
+// в теге, а не точная подстрока '[VPN]'. Порядок: обход -> игры -> VPN.
+test('tagOf: обычный VPN-узел', () => {
+  assert.equal(T.tagOf('[VPN] ' + DE + ' Германия #1'), 'vpn');
+  assert.equal(T.tagOf(DE + ' \u26A1\u2B50 Германия [VPN]'), 'vpn');
+});
+
+test('tagOf: значок внутри скобок не мешает — [🌀 VPN] это vpn', () => {
+  assert.equal(T.tagOf(DE + ' \u26A1\u2B50 Германия [\u{1F300} VPN]'), 'vpn');
+  assert.equal(T.tagOf(NL + ' \u26A1\u2B50 Нидерланды [\u{1F300} VPN] \u00B7 ' + WIFI + '\u2585'), 'vpn');
+});
+
+test('tagOf: игровой узел', () => {
+  assert.equal(T.tagOf('\u{1F1EB}\u{1F1EE} \u{1F579} Финляндия [Игры] #1'), 'game');
+});
+
+test('tagOf: обходной узел — bypass, даже если в имени встретится VPN', () => {
+  assert.equal(T.tagOf(' ' + DE + ' \u{1F64F} Германия [Обход - МТС]'), 'bypass');
+  assert.equal(T.tagOf(DE + ' Германия [Обход - VPN]'), 'bypass');
+});
+
+test('tagOf: посторонние имена — other', () => {
+  assert.equal(T.tagOf(DE + ' Германия #1'), 'other');
+  assert.equal(T.tagOf(''), 'other');
 });
 
 test('subParamsFromConf сохраняет хвост параметров подписки', () => {
@@ -315,7 +342,7 @@ test('/admin/state отдаёт подписку, каскад, устройст
   });
   const r = await worker.fetch(req('https://w.invalid/admin/state', { headers: ADM }), env);
   const j = await r.json();
-  assert.equal(j.worker, 'v1.9.1');
+  assert.equal(j.worker, 'v1.9.2');
   assert.equal(j.dev, 'k1');
   assert.equal(j.sub.nodes, 2);
   assert.equal(j.sub.fresh_min, 60);
