@@ -64,6 +64,13 @@ ul.dom li{display:flex;justify-content:space-between;gap:8px;padding:2px 0;
   break-inside:avoid}
 @media(max-width:560px){.casc{flex-wrap:wrap}.tier{flex:1 1 30%}.arrow{display:none}
   ul.dom{columns:1}}
+#qrbox{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9;
+  display:none;align-items:center;justify-content:center;padding:18px}
+#qrbox.on{display:flex}
+#qrbox .in{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:12px;width:100%;max-width:340px;text-align:center}
+#qrbox .plate{background:#fff;border-radius:6px;padding:6px;margin:8px 0}
+#qrbox .plate svg{display:block;width:100%;height:auto}
 </style>
 </head>
 <body>
@@ -148,8 +155,26 @@ ul.dom li{display:flex;justify-content:space-between;gap:8px;padding:2px 0;
   </div>
 </div>
 
+<div id="qrbox">
+  <div class="in">
+    <h2 id="qrTitle" style="margin:0">QR</h2>
+    <div class="plate" id="qrPlate"></div>
+    <div class="mono" id="qrUrl"></div>
+    <div class="hint">Навести камеру второго телефона, открыть ссылку, скопировать
+      её из адресной строки в поле подписки клиента.</div>
+    <div class="row" style="margin-top:8px;justify-content:center">
+      <button id="qrClose">Закрыть</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
+
+// Ревизия панели. Файл вбирается в бандл Worker'а, поэтому задеплоенный бандл
+// меняется и без правки кода Worker'а; версия Worker'а такие правки не
+// отражает. Поднимать при каждом изменении этого файла.
+var PANEL_REV = 'p2';
 // Ключ ADMIN_KEY в странице НЕ хранится: он уходит один раз в POST /admin/login,
 // дальше доступ подтверждает cookie rh_adm (HttpOnly, Path=/admin, SameSite=Strict).
 // Скриптам страницы её значение недоступно, отдельного заголовка не требуется —
@@ -200,6 +225,288 @@ function copy(text, btn) {
     document.body.removeChild(ta);
   }
 }
+
+// ------------------------------------------------------------------------ QR
+// Кодировщик: байтовый режим, уровень коррекции M, версии 1..10 (до 213 байт).
+// Проверен помодульным совпадением с эталонной реализацией и обратным
+// декодированием на 926 строках; порядок битов поля формата и раскладка
+// выравнивающих узоров подтверждены этой сверкой, «поправлять на глаз» нельзя.
+var QR = (function () {
+  // [EC-слов на блок, блоков группы 1, данных в блоке, блоков группы 2, данных]
+  var ECM = {
+    1: [10, 1, 16, 0, 0], 2: [16, 1, 28, 0, 0], 3: [26, 1, 44, 0, 0],
+    4: [18, 2, 32, 0, 0], 5: [24, 2, 43, 0, 0], 6: [16, 4, 27, 0, 0],
+    7: [18, 4, 31, 0, 0], 8: [22, 2, 38, 2, 39], 9: [22, 3, 36, 2, 37],
+    10: [26, 4, 43, 1, 44]
+  };
+  var ALIGN = {
+    1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30],
+    6: [6, 34], 7: [6, 22, 38], 8: [6, 24, 42], 9: [6, 26, 46], 10: [6, 28, 50]
+  };
+  var REM = { 1: 0, 2: 7, 3: 7, 4: 7, 5: 7, 6: 7, 7: 0, 8: 0, 9: 0, 10: 0 };
+
+  function dataCw(v) { var t = ECM[v]; return t[1] * t[2] + t[3] * t[4]; }
+
+  // поле GF(256), порождающий многочлен 0x11d
+  var EXP = new Array(512), LOG = new Array(256), x = 1, i;
+  for (i = 0; i < 255; i++) { EXP[i] = x; LOG[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11d; }
+  for (i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
+  function gmul(a, b) { return (a === 0 || b === 0) ? 0 : EXP[LOG[a] + LOG[b]]; }
+
+  function genPoly(n) {
+    var g = [1], k, j;
+    for (k = 0; k < n; k++) {
+      var ng = new Array(g.length + 1);
+      for (j = 0; j <= g.length; j++) ng[j] = 0;
+      for (j = 0; j < g.length; j++) {
+        ng[j] ^= gmul(g[j], 1);
+        ng[j + 1] ^= gmul(g[j], EXP[k]);
+      }
+      g = ng;
+    }
+    return g;
+  }
+  function ecBytes(data, n) {
+    var g = genPoly(n), rem = [], k, j;
+    for (k = 0; k < n; k++) rem.push(0);
+    for (k = 0; k < data.length; k++) {
+      var f = data[k] ^ rem[0];
+      rem.shift(); rem.push(0);
+      if (f !== 0) for (j = 0; j < n; j++) rem[j] ^= gmul(g[j + 1], f);
+    }
+    return rem;
+  }
+
+  function bytesOf(text) { return Array.prototype.slice.call(new TextEncoder().encode(text)); }
+  function pickVersion(len) {
+    for (var v = 1; v <= 10; v++) {
+      var cci = v < 10 ? 8 : 16;
+      if (dataCw(v) * 8 >= 4 + cci + len * 8) return v;
+    }
+    return 0;
+  }
+  function codewords(bytes, v) {
+    var bits = [], k;
+    function push(val, n) { for (var b = n - 1; b >= 0; b--) bits.push((val >> b) & 1); }
+    push(4, 4);
+    push(bytes.length, v < 10 ? 8 : 16);
+    for (k = 0; k < bytes.length; k++) push(bytes[k], 8);
+    var cap = dataCw(v) * 8;
+    for (k = 0; k < 4 && bits.length < cap; k++) bits.push(0);
+    while (bits.length % 8) bits.push(0);
+    var cw = [];
+    for (k = 0; k < bits.length; k += 8) {
+      var byte = 0, j;
+      for (j = 0; j < 8; j++) byte = (byte << 1) | bits[k + j];
+      cw.push(byte);
+    }
+    var pads = [0xec, 0x11], p = 0;
+    while (cw.length < dataCw(v)) cw.push(pads[p++ & 1]);
+    return cw;
+  }
+  function interleave(cw, v) {
+    var t = ECM[v], ecn = t[0], blocks = [], ecs = [], pos = 0, a, b;
+    for (a = 0; a < t[1]; a++) { blocks.push(cw.slice(pos, pos + t[2])); pos += t[2]; }
+    for (a = 0; a < t[3]; a++) { blocks.push(cw.slice(pos, pos + t[4])); pos += t[4]; }
+    for (a = 0; a < blocks.length; a++) ecs.push(ecBytes(blocks[a], ecn));
+    var out = [], max = Math.max(t[2], t[4]);
+    for (b = 0; b < max; b++) for (a = 0; a < blocks.length; a++)
+      if (b < blocks[a].length) out.push(blocks[a][b]);
+    for (b = 0; b < ecn; b++) for (a = 0; a < ecs.length; a++) out.push(ecs[a][b]);
+    return out;
+  }
+
+  function newMatrix(size) {
+    var m = [], r, c;
+    for (r = 0; r < size; r++) { m.push([]); for (c = 0; c < size; c++) m[r].push(null); }
+    return m;
+  }
+  function finder(m, r0, c0) {
+    for (var r = -1; r <= 7; r++) for (var c = -1; c <= 7; c++) {
+      var r1 = r0 + r, c1 = c0 + c;
+      if (r1 < 0 || c1 < 0 || r1 >= m.length || c1 >= m.length) continue;
+      var dark = (r >= 0 && r <= 6 && (c === 0 || c === 6)) ||
+                 (c >= 0 && c <= 6 && (r === 0 || r === 6)) ||
+                 (r >= 2 && r <= 4 && c >= 2 && c <= 4);
+      m[r1][c1] = dark ? 1 : 0;
+    }
+  }
+  function placeFunction(m, v) {
+    var size = m.length, a, b, r, c;
+    finder(m, 0, 0); finder(m, 0, size - 7); finder(m, size - 7, 0);
+    for (a = 8; a < size - 8; a++) {
+      var d = a % 2 === 0 ? 1 : 0;
+      if (m[6][a] === null) m[6][a] = d;
+      if (m[a][6] === null) m[a][6] = d;
+    }
+    var al = ALIGN[v], last = al.length - 1;
+    for (a = 0; a < al.length; a++) for (b = 0; b < al.length; b++) {
+      // пропускаются только сочетания, попадающие на поисковые узоры;
+      // пересечение с синхроузором — норма, узор кладётся поверх
+      if ((a === 0 && b === 0) || (a === 0 && b === last) || (a === last && b === 0)) continue;
+      var r0 = al[a], c0 = al[b];
+      for (r = -2; r <= 2; r++) for (c = -2; c <= 2; c++)
+        m[r0 + r][c0 + c] = (Math.max(Math.abs(r), Math.abs(c)) !== 1) ? 1 : 0;
+    }
+    m[size - 8][8] = 1;                       // всегда тёмный модуль
+    for (a = 0; a < 9; a++) {                 // резерв под поле формата
+      if (m[8][a] === null) m[8][a] = 0;
+      if (m[a][8] === null) m[a][8] = 0;
+    }
+    for (a = 0; a < 8; a++) {
+      if (m[8][size - 1 - a] === null) m[8][size - 1 - a] = 0;
+      if (m[size - 1 - a][8] === null) m[size - 1 - a][8] = 0;
+    }
+    if (v >= 7) for (a = 0; a < 6; a++) for (b = 0; b < 3; b++) {
+      m[size - 11 + b][a] = 0; m[a][size - 11 + b] = 0;
+    }
+  }
+  function placeData(m, res, bits) {
+    var size = m.length, idx = 0, up = true, right, a, k;
+    for (right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      for (a = 0; a < size; a++) {
+        var r = up ? size - 1 - a : a;
+        for (k = 0; k < 2; k++) {
+          var c = right - k;
+          if (res[r][c] !== null) continue;
+          m[r][c] = idx < bits.length ? bits[idx] : 0;
+          idx++;
+        }
+      }
+      up = !up;
+    }
+  }
+  function maskFn(n, r, c) {
+    switch (n) {
+      case 0: return (r + c) % 2 === 0;
+      case 1: return r % 2 === 0;
+      case 2: return c % 3 === 0;
+      case 3: return (r + c) % 3 === 0;
+      case 4: return (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0;
+      case 5: return (r * c) % 2 + (r * c) % 3 === 0;
+      case 6: return ((r * c) % 2 + (r * c) % 3) % 2 === 0;
+      default: return ((r + c) % 2 + (r * c) % 3) % 2 === 0;
+    }
+  }
+  function penalty(m) {
+    var size = m.length, p = 0, r, c, a;
+    for (r = 0; r < size; r++) {                        // правило 1 — серии
+      var run = 1;
+      for (c = 1; c < size; c++) {
+        if (m[r][c] === m[r][c - 1]) run++;
+        else { if (run >= 5) p += 3 + (run - 5); run = 1; }
+      }
+      if (run >= 5) p += 3 + (run - 5);
+    }
+    for (c = 0; c < size; c++) {
+      var run2 = 1;
+      for (r = 1; r < size; r++) {
+        if (m[r][c] === m[r - 1][c]) run2++;
+        else { if (run2 >= 5) p += 3 + (run2 - 5); run2 = 1; }
+      }
+      if (run2 >= 5) p += 3 + (run2 - 5);
+    }
+    for (r = 0; r < size - 1; r++) for (c = 0; c < size - 1; c++) {  // правило 2
+      var v = m[r][c];
+      if (v === m[r][c + 1] && v === m[r + 1][c] && v === m[r + 1][c + 1]) p += 3;
+    }
+    // правило 3 — узор 1:1:3:1:1 со светлым полем в четыре модуля. Считается по
+    // истории серий: масштаб любой, за границей символа — зона тишины.
+    function count(h) {
+      var n = h[1];
+      var core = n > 0 && h[2] === n && h[3] === n * 3 && h[4] === n && h[5] === n;
+      return (core && h[0] >= n * 4 && h[6] >= n ? 1 : 0) +
+             (core && h[6] >= n * 4 && h[0] >= n ? 1 : 0);
+    }
+    function add(len, h) { if (h[0] === 0) len += size; h.unshift(len); h.pop(); }
+    function line(get) {
+      var h = [0, 0, 0, 0, 0, 0, 0], color = 0, len = 0, hits = 0, k;
+      for (k = 0; k < size; k++) {
+        if (get(k) === color) len++;
+        else { add(len, h); if (!color) hits += count(h); color = get(k); len = 1; }
+      }
+      if (color) { add(len, h); len = 0; }
+      len += size;
+      add(len, h);
+      return hits + count(h);
+    }
+    for (a = 0; a < size; a++) {
+      (function (i2) {
+        p += 40 * line(function (k) { return m[i2][k]; });
+        p += 40 * line(function (k) { return m[k][i2]; });
+      })(a);
+    }
+    var dark = 0, total = size * size;                  // правило 4 — баланс
+    for (r = 0; r < size; r++) for (c = 0; c < size; c++) dark += m[r][c];
+    p += (Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1) * 10;
+    return p;
+  }
+  function formatBits(mask) {
+    var data = mask, rem = data << 10, k;              // 00 — уровень M
+    for (k = 14; k >= 10; k--) if ((rem >> k) & 1) rem ^= 0x537 << (k - 10);
+    return ((data << 10) | rem) ^ 0x5412;
+  }
+  function versionBits(v) {
+    var rem = v << 12, k;
+    for (k = 17; k >= 12; k--) if ((rem >> k) & 1) rem ^= 0x1f25 << (k - 12);
+    return (v << 12) | rem;
+  }
+  function putFormat(m, mask) {
+    var size = m.length, bits = formatBits(mask), k;
+    function bit(n) { return (bits >> n) & 1; }
+    for (k = 0; k <= 5; k++) m[k][8] = bit(k);
+    m[7][8] = bit(6); m[8][8] = bit(7); m[8][7] = bit(8);
+    for (k = 9; k <= 14; k++) m[8][14 - k] = bit(k);
+    for (k = 0; k <= 7; k++) m[8][size - 1 - k] = bit(k);
+    for (k = 8; k <= 14; k++) m[size - 15 + k][8] = bit(k);
+    m[size - 8][8] = 1;
+  }
+  function putVersion(m, v) {
+    if (v < 7) return;
+    var size = m.length, bits = versionBits(v), k;
+    for (k = 0; k < 18; k++) {
+      var b = (bits >> k) & 1, r = Math.floor(k / 3), c = k % 3;
+      m[size - 11 + c][r] = b;
+      m[r][size - 11 + c] = b;
+    }
+  }
+
+  function matrix(text) {
+    var bytes = bytesOf(text), v = pickVersion(bytes.length);
+    if (!v) throw new Error('ссылка длиннее 213 байт — QR не построить');
+    var cw = interleave(codewords(bytes, v), v), bits = [], k, b;
+    for (k = 0; k < cw.length; k++) for (b = 7; b >= 0; b--) bits.push((cw[k] >> b) & 1);
+    for (k = 0; k < REM[v]; k++) bits.push(0);
+    var size = 17 + 4 * v, res = newMatrix(size);
+    placeFunction(res, v);
+    var best = null, score = Infinity, mask, r, c;
+    for (mask = 0; mask < 8; mask++) {
+      var m = newMatrix(size);
+      placeFunction(m, v);
+      placeData(m, res, bits);
+      for (r = 0; r < size; r++) for (c = 0; c < size; c++)
+        if (res[r][c] === null && maskFn(mask, r, c)) m[r][c] ^= 1;
+      putFormat(m, mask);
+      putVersion(m, v);
+      var s = penalty(m);
+      if (s < score) { score = s; best = m; }
+    }
+    return { version: v, size: size, modules: best };
+  }
+
+  // SVG: тёмные модули на белой подложке, поле тишины — 4 модуля.
+  function svg(text) {
+    var q = matrix(text), n = q.size, qz = 4, w = n + qz * 2, d = [], r, c;
+    for (r = 0; r < n; r++) for (c = 0; c < n; c++)
+      if (q.modules[r][c]) d.push('M' + (c + qz) + ' ' + (r + qz) + 'h1v1h-1z');
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + w + ' ' + w +
+      '" shape-rendering="crispEdges"><rect width="' + w + '" height="' + w +
+      '" fill="#fff"/><path fill="#000" d="' + d.join('') + '"/></svg>';
+  }
+
+  return { svg: svg, matrix: matrix };
+})();
 
 // ------------------------------------------------------------------- отрисовка
 var TIERS = [
@@ -269,6 +576,7 @@ function drawDevices(list) {
       '<div class="row" style="margin-top:6px">' +
       '<button data-copy="' + esc(d.config_url) + '">Ссылка конфига</button>' +
       '<button data-show="' + d.key + '">Показать</button>' +
+      '<button data-qr="' + d.key + '">QR</button>' +
       '<button class="d" data-regen="' + d.key + '">Новый токен</button>' +
       '<button class="d" data-unbind="' + d.key + '">Отвязать</button>' +
       '</div></div>';
@@ -294,8 +602,9 @@ function drawStore(rows) {
 
 function render(s) {
   ST = s; DEV = s.dev || '';
-  $('hdr').textContent = 'worker ' + s.worker + ' · ' + new Date(s.server_now)
-    .toLocaleTimeString('ru-RU') + (s.rkn ? (' · режим ' + s.rkn.mode) : '');
+  $('hdr').textContent = 'worker ' + s.worker + ' · панель ' + PANEL_REV + ' · ' +
+    new Date(s.server_now).toLocaleTimeString('ru-RU') +
+    (s.rkn ? (' · режим ' + s.rkn.mode) : '');
   drawCascade(s.cascade);
   drawSub(s.sub);
   drawDevices(s.devices);
@@ -405,6 +714,21 @@ $('devs').addEventListener('change', function (e) {
     });
 });
 
+function showQr(key, url) {
+  $('qrTitle').textContent = 'Ссылка конфига ' + key;
+  $('qrUrl').textContent = url;
+  try {
+    $('qrPlate').innerHTML = QR.svg(url);
+  } catch (err) {
+    $('qrPlate').innerHTML = '<span class="bad">' + esc(err.message) + '</span>';
+  }
+  $('qrbox').classList.add('on');
+}
+function hideQr() { $('qrbox').classList.remove('on'); }
+$('qrClose').onclick = hideQr;
+$('qrbox').addEventListener('click', function (e) { if (e.target === this) hideQr(); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideQr(); });
+
 $('devs').addEventListener('click', function (e) {
   var t = e.target;
   var pick = t.getAttribute('data-pick');
@@ -415,6 +739,11 @@ $('devs').addEventListener('click', function (e) {
   if (show) {
     var box = t.closest('.card').querySelector('.tok');
     box.textContent = box.textContent ? '' : box.getAttribute('data-url');
+    return;
+  }
+  var qr = t.getAttribute('data-qr');
+  if (qr) {
+    showQr(qr, t.closest('.card').querySelector('.tok').getAttribute('data-url'));
     return;
   }
   var rg = t.getAttribute('data-regen');
