@@ -1,9 +1,12 @@
 // =============================================================
 // routehub-egern-worker.js — Worker стенда Egern (ветка `egern`)
-// VERSION: e0.2.0 (2026-08-07) — ШАГ 4.2: узлы + минимальный профиль.
+// VERSION: e0.2.1 (2026-08-08) — ШАГ 4.2: узлы + минимальный профиль.
 //   Решения и границы объёма — ЭТАП_K_ШАГ_4.2.md (эта же ветка).
 //   Эндпоинты: GET /health, GET /t/<token>/nodes?key=kN,
-//   GET /t/<token>/profile?key=kN (+ &safe=1 — см. ниже).
+//   GET /t/<token>/profile?key=kN (+ &safe=1 — см. ниже),
+//   GET /admin/keys?admin=<ADMIN_KEY> — выдача ссылок устройства.
+//   Параметр назван admin, а не key: key занят идентификатором устройства.
+//   Полноценной панели у стенда нет и на шаге 4.2 не планируется.
 //   Токен обязателен всегда: у стенда фаза 2 включена с самого начала.
 // ЧЕГО ЗДЕСЬ НЕТ (сознательно, шаг 4.4): smart-группы и priorities, ИИ,
 //   спидтест и POST /speed, вердикты, модули, свой DNS, conditional, панель.
@@ -27,7 +30,7 @@
 //   СНЯТОЙ: иначе пуш в main выгружает версии сюда под именем `routehub`.
 // =============================================================
 
-const WORKER_VER = 'e0.2.0';
+const WORKER_VER = 'e0.2.1';
 const KEY_RE = /^k\d+$/;
 const TOKEN_LEN = 32;
 const TOKEN_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -286,6 +289,28 @@ async function handleProfile(url, env, tok) {
   return textResp(head + yamlDoc(buildProfile(base, key, safe)), 200, 'text/yaml');
 }
 
+async function handleAdminKeys(url, env) {
+  const given = url.searchParams.get('admin') || '';
+  const real = env.ADMIN_KEY || '';
+  if (!real) return textResp('ADMIN_KEY не задан (секрет CF)', 503);
+  if (given.length !== real.length || given !== real) {
+    await new Promise(function (r) { setTimeout(r, 300); });   // притормозить перебор
+    return textResp('нет доступа', 403);
+  }
+  const reg = await loadRegistry(env);
+  const out = {};
+  for (const k in reg) {
+    const base = url.origin + '/t/' + reg[k].token;
+    out[k] = {
+      profile: base + '/profile?key=' + k,
+      profile_safe: base + '/profile?key=' + k + '&safe=1',
+      nodes: base + '/nodes?key=' + k,
+      last_profile_ts: reg[k].last_profile_ts || null
+    };
+  }
+  return json({ worker: WORKER_VER, devices: out });
+}
+
 async function handleHealth(env) {
   const out = { worker: WORKER_VER, stand: 'egern', now: new Date().toISOString() };
   try {
@@ -314,6 +339,7 @@ export default {
     }
     try {
       if (request.method === 'GET' && url.pathname === '/health') return await handleHealth(env);
+      if (request.method === 'GET' && url.pathname === '/admin/keys') return await handleAdminKeys(url, env);
       if (request.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env, tok);
       if (request.method === 'GET' && url.pathname === '/profile') return await handleProfile(url, env, tok);
       return json({ error: 'not found', worker: WORKER_VER }, 404);
