@@ -1,63 +1,42 @@
 // =============================================================
 // routehub-egern-worker.js — Worker стенда Egern (ветка `egern`)
-// VERSION: e0.2.4 (2026-08-08) — ШАГ 4.3: вторая диагностическая группа
-//   RH-Проба-DIRECT-2 — разрешающий тест K2 (см. ЭТАП_K_ШАГ_4.3.md, 5.2).
-//   e0.2.3 — первая диагностическая группа RH-Проба-DIRECT.
-//   e0.2.2 — шаг 4.2 (узлы + минимальный профиль), принят на k3 2026-08-08:
-//   5 групп, 52 узла в обычном пуле, 17 в обходе, предупреждений нет.
-//   Решения и границы объёма — ЭТАП_K_ШАГ_4.2.md и ЭТАП_K_ШАГ_4.3.md.
-//   Эндпоинты: GET /health, GET /t/<token>/nodes?key=kN,
-//   GET /t/<token>/profile?key=kN (+ &safe=1 — см. ниже),
-//   GET /admin/keys?admin=<ADMIN_KEY> — выдача ссылок устройства.
-//   Параметр назван admin, а не key: key занят идентификатором устройства.
-//   Полноценной панели у стенда нет и на шаге 4.3 не планируется.
-//   Токен обязателен всегда: у стенда фаза 2 включена с самого начала.
-// ЧЕГО ЗДЕСЬ НЕТ (сознательно, шаг 4.4): smart-группы и priorities, ИИ,
-//   спидтест и POST /speed, вердикты, модули, свой DNS, conditional, панель.
-// ПРО smart: в официальном примере Profile.yaml группы smart НЕТ, её YAML-форма
-//   документацией не подтверждена. Минимальный профиль собран только на
-//   документированных типах (external / fallback). Как только форма smart
-//   подтвердится на устройстве — RH-Пул-Обычные меняется на smart, и туда же
-//   приходят priorities. Из-за этого проверка K5 уезжает на шаг 4.4.
-// ПРО &safe=1: вариант профиля без полей, форму которых подтвердить нечем
-//   (latency_test_url на группе). На 2026-08-08 обычный вариант принят
-//   устройством, то есть форма поля верна; safe сохранён как инструмент
-//   для последующих правок. ВНИМАНИЕ: в safe обе диагностические группы
-//   теряют latency_test_url и становятся неразличимы — K2 проверяется
-//   ТОЛЬКО на обычном варианте профиля.
-// ПРО ДИАГНОСТИЧЕСКИЕ ГРУППЫ (K1/K2): единственные группы с членом
-//   DIRECT. Ни одно правило на них не ссылается — маршрутизация не меняется.
-//   RH-Проба-DIRECT   — контроль, проба по cp.cloudflare.com. На 2026-08-08
-//     член DIRECT получил 32–43 мс, то есть Egern ПРИНИМАЕТ DIRECT внутри
-//     fallback и ТЕСТИРУЕТ его. Какой адрес использован — по величине
-//     задержки не различимо: оба адреса — CDN с близкими точками.
-//   RH-Проба-DIRECT-2 — разрешающий тест: проба по 192.0.2.1 (TEST-NET-1,
-//     RFC 5737) — адрес НЕ маршрутизуется в интернете, недостижим ни
-//     напрямую, ни через любой узел. Исход бинарный: отказ/таймаут у
-//     члена DIRECT → групповой latency_test_url к DIRECT применяется
-//     (модель «слабый DIRECT» переносится); сохранившиеся десятки
-//     миллисекунд → используется direct_latency_test_url (не переносится).
-// НАЙДЕНО НА УСТРОЙСТВЕ (2026-08-08, Egern 2.20.0):
-//   `hijack_dns` — СПИСОК, а не булево: профиль с `hijack_dns: false` отвергнут
-//   с текстом «invalid type: boolean `false`, expected a sequence». Поле убрано
-//   (перехват DNS стенду не нужен). Вывод общего характера: Egern проверяет типы
-//   и падает на ПЕРВОМ несоответствии, поэтому поля за ним остаются
-//   непроверенными — профиль доводится итерациями, по одной ошибке за импорт.
-//   Остальные поля верхнего уровня сверены с официальным примером Profile.yaml.
-//   Списки rule_set (K7) приняты все шесть, включая Shadowrocket-формат
-//   domains_banking.list; фактические политики совпали с ожидаемыми.
-// ВАЖНО: боевой контур (Worker `routehub`, база `routehub-db`) не затрагивается.
-//   Ветка `egern` в `main` не сливается.
-// ИСТОРИЯ СБОРОК:
-//   2026-08-07 — первая сборка проекта routehub-egern прошла до переключения
-//   production-ветки и задеплоила код из `main` (боевой v1.9.2, биндинг на
-//   боевую базу). Признак: /status?key=k1 отвечал «ссылка устарела», то есть
-//   читал token_required из routehub-db. Лечение — production branch = egern
-//   и повторная сборка. Галочку «Builds for non-production branches» держать
-//   СНЯТОЙ: иначе пуш в main выгружает версии сюда под именем `routehub`.
+// VERSION: e0.3.0 (2026-08-08) — ШАГ 4.4 / проверка K4:
+//   выдача schedule-скрипта и приём его отчётов. Спецификация проб —
+//   ЭТАП_K_ШАГ_4.4_K4.md; текст скрипта — routehub-egern-k4.js.
+// ИСТОРИЯ ВЕРСИЙ:
+//   e0.2.2 — шаг 4.2, минимальный профиль. Принят на k3: 5 групп, 52 узла
+//     в обычном пуле, 17 в обходе, предупреждений нет.
+//   e0.2.3 — группа RH-Проба-DIRECT (контроль, проба по cp.cloudflare.com).
+//   e0.2.4 — группа RH-Проба-DIRECT-2 (проба по 192.0.2.1, TEST-NET-1).
+//     Результат на устройстве: 36 мс и таймаут — значит к члену DIRECT
+//     применяется ГРУППОВОЙ latency_test_url, а не direct_latency_test_url.
+//     K2 закрыт: модель «слабый DIRECT» на Egern переносится.
+// ЭНДПОИНТЫ: GET /health; GET /admin/keys?admin=<ADMIN_KEY>;
+//   GET /t/<token>/nodes?key=kN; GET /t/<token>/profile?key=kN (+&safe=1);
+//   GET /t/<token>/script/k4.js?key=kN; POST и GET /t/<token>/probe?key=kN.
+//   Токен обязателен всегда. Параметр admin у ключевого эндпоинта
+//   назван так, потому что key занят идентификатором устройства.
+// ЧЕГО НЕТ (сознательно): smart-группы и priorities (формы smart в официальном
+//   примере Profile.yaml нет, угадывать не стали — с ними ждёт K5),
+//   ИИ-группы, звонки, conditional по SSID, свой DNS, панель стенда.
+// ПРО &safe=1: вариант без latency_test_url на группах. На 2026-08-08 обычный
+//   вариант принят устройством, форма поля верна; safe остаётся инструментом
+//   разделения «неверное поле» / «неверная структура». K2 проверяется только
+//   на обычном варианте.
+// НАЙДЕНО НА УСТРОЙСТВЕ (Egern 2.20.0): `hijack_dns` — СПИСОК, не булево;
+//   Egern падает на ПЕРВОМ несоответствии типа, поэтому новые конструкции
+//   вводятся по одной за импорт. Списки rule_set (K7) приняты все шесть,
+//   включая Shadowrocket-формат domains_banking.list.
+// СБОРКА: Workers Builds не даёт выбрать ветку при создании проекта — первая
+//   сборка шла из `main` и задеплоила боевой код с биндингом на боевую базу.
+//   Production branch = egern; «Builds for non-production branches» держать СНЯТОЙ.
+// Боевой контур (Worker `routehub`, база `routehub-db`) не затрагивается.
+//   Ветка `egern` в `main` НЕ сливается.
 // =============================================================
 
-const WORKER_VER = 'e0.2.4';
+import { K4_SCRIPT, firstNormalNode, subNames } from './routehub-egern-k4.js';
+
+const WORKER_VER = 'e0.3.0';
 const KEY_RE = /^k\d+$/;
 const TOKEN_LEN = 32;
 const TOKEN_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -66,22 +45,20 @@ const PATH_TOKEN_RE = /^\/t\/([A-Za-z0-9]{16,64})(\/.*)?$/;
 const STAND_KEY = 'k3';                       // ключ стенда; k1/k2 живут на боевом
 const FRESH_MS = 60 * 60 * 1000;
 const NODE_PREFIXES = ['vless://', 'vmess://', 'trojan://', 'ss://'];
+const PROBE_KEEP = 20;                        // сколько прогонов хранить
+const PROBE_MAX_BYTES = 64 * 1024;            // предел тела отчёта
 
 // Признак типа узла — слово в скобочном теге, НЕ значок провайдера (вывод 28).
-// Обходные: `[Обход - <оператор>]`. Значка 🙏 в подписке нет, поэтому скелет
-// из ЭТАП_K_EGERN.md 6.2 перенесён с поправкой (см. ЭТАП_K_ШАГ_4.2.md, п. 1.1).
 // Подтверждено на устройстве 2026-08-08: 52 узла в обычном пуле, 17 в обходе.
 const RE_NORMAL = '^(?!.*Обход)';
 const RE_BYPASS = '\\[Обход';
 
 const TEST_URL_PROXY = 'http://cp.cloudflare.com/generate_204';
 const TEST_URL_DIRECT = 'http://www.msftconnecttest.com/connecttest.txt';
-// TEST-NET-1 (RFC 5737): адрес зарезервирован для документации и не
-// маршрутизуется в интернете — недостижим и напрямую, и через узел.
+// TEST-NET-1 (RFC 5737): не маршрутизуется — недостижим и напрямую, и через узел.
 const TEST_URL_UNREACHABLE = 'http://192.0.2.1/generate_204';
 
 // Класс A — анти-VPN: жёсткий DIRECT. Класс B — прочее РФ: RH-RU.
-// Списки те же, что проверены в боевом конфиге C-draft-39.
 // K7 (2026-08-08): все шесть приняты Egern, политики применяются как ожидалось.
 const RAW = 'https://raw.githubusercontent.com/';
 const RULE_SETS = [
@@ -156,8 +133,7 @@ function utf8ToB64(s) {
 }
 
 // --------------------------------------------------------------- подписка
-// Имена узлов НЕ размечаются: ранжирование ушло в группы, разметка отменена
-// журналом решений этапа K. Порядок — как отдал провайдер (сортировок нет).
+// Имена узлов НЕ размечаются (журнал решений этапа K). Порядок — как у провайдера.
 async function fetchUpstream(env) {
   if (!env.SUBSCRIPTION_URL) throw new Error('SUBSCRIPTION_URL не задан (секрет CF)');
   const r = await fetch(env.SUBSCRIPTION_URL, {
@@ -192,9 +168,8 @@ async function getSub(env, force) {
 }
 
 // ------------------------------------------------------------------- YAML
-// Свой сериализатор: структура профиля — только карты, списки и скаляры.
-// Все строки берутся в двойные кавычки с экранированием, поэтому спецсимволы
-// (regex со скобками и обратными слэшами, эмодзи) документ не ломают.
+// Свой сериализатор: в профиле только карты, списки и скаляры. Все строки —
+// в двойных кавычках с экранированием: regex со скобками и эмодзи документ не ломают.
 function yamlStr(s) {
   return '"' + String(s)
     .replace(/\\/g, '\\\\')
@@ -227,7 +202,7 @@ function yamlDoc(obj) {
 }
 
 // ---------------------------------------------------------------- профиль
-function buildProfile(base, key, safe) {
+function buildProfile(base, key, safe, nodeName) {
   const nodesUrl = base + '/nodes?key=' + key;
   const profUrl = base + '/profile?key=' + key + (safe ? '&safe=1' : '');
 
@@ -255,27 +230,43 @@ function buildProfile(base, key, safe) {
     pool('RH-Пул-Обычные', RE_NORMAL, 600),
     // Обход — раз в час (риск №1 раздела 10 ЭТАП_K_EGERN.md).
     pool('RH-Обход', RE_BYPASS, 3600),
-    // Пробник состояния сети: зарубежная точка, а не конкретный домен —
-    // ставка на статус одного домена рушится, когда домен вносят в whitelist.
+    // Пробник состояния сети: зарубежная точка, а не конкретный домен.
     fb('RH-Проба-Обычная', ['RH-Пул-Обычные'], { latency_test_url: TEST_URL_PROXY }),
-    // Класс B: норма — обычный узел, whitelist — обход. DIRECT убран намеренно.
+    // Класс B: норма — обычный узел, whitelist — обход. DIRECT убран намеренно;
+    // после закрытия K2 вопрос о его возврате открыт — решается отдельно.
     fb('RH-RU', ['RH-Проба-Обычная', 'RH-Обход'], { latency_test_url: TEST_URL_PROXY }),
     // Класс C и FINAL.
     fb('RH-Главный', ['RH-Пул-Обычные', 'RH-Обход'], { latency_test_url: TEST_URL_PROXY }),
-    // Диагностика K1/K2 (шаг 4.3). Единственные группы с членом DIRECT;
-    // ни одно правило на них не ссылается, маршрутизация не меняется.
-    // Контроль: достижимый адрес пробы (2026-08-08 дал 32–43 мс у DIRECT).
-    fb('RH-Проба-DIRECT', ['DIRECT', 'RH-Обход'], { latency_test_url: TEST_URL_PROXY }),
-    // Разрешающий тест: адрес недостижим ни напрямую, ни через узел.
-    // Отказ у DIRECT → групповой latency_test_url к нему применяется.
-    fb('RH-Проба-DIRECT-2', ['DIRECT', 'RH-Обход'], { latency_test_url: TEST_URL_UNREACHABLE })
+    // Диагностика K1: единственная группа с членом DIRECT, правилами не используется.
+    // Остаётся до первого реального whitelist. RH-Проба-DIRECT-2 удалена в e0.3.0:
+    // свою задачу (K2) выполнила, а её пробы заведомо падают — это шум.
+    fb('RH-Проба-DIRECT', ['DIRECT', 'RH-Обход'], { latency_test_url: TEST_URL_PROXY })
   ];
 
   const rules = RULE_SETS.map(function (r) {
     return { rule_set: { match: r.url, policy: r.policy, update_interval: 86400 } };
   });
-  // Звонки отдельной группы на шаге 4.2 не получают (ЭТАП_K_ШАГ_4.2.md, 2.4).
   rules.push({ default: { policy: 'RH-Главный' } });
+
+  // Проверка K4. Частота */5 — ВРЕМЕННО, на время проверки (решение Дианы).
+  // Токен в текст скрипта не попадает: адрес приёма идёт через env.
+  // RH_HEAVY=0 — тяжёлая проба P15 (1 МБ) выключена по умолчанию.
+  const scriptings = [{
+    schedule: {
+      name: 'RH-K4-Проба',
+      cron: '*/5 * * * *',
+      script_url: base + '/script/k4.js?key=' + key,
+      update_interval: 300,
+      timeout: 120,
+      env: {
+        RH_POST_URL: base + '/probe?key=' + key,
+        RH_GROUP: 'RH-Пул-Обычные',
+        RH_NODE: nodeName || '',
+        RH_TEST_URL: TEST_URL_PROXY,
+        RH_HEAVY: '0'
+      }
+    }
+  }];
 
   return {
     auto_update: { url: profUrl, interval: 86400 },
@@ -289,7 +280,8 @@ function buildProfile(base, key, safe) {
     proxy_latency_test_url: TEST_URL_PROXY,
     direct_latency_test_url: TEST_URL_DIRECT,
     policy_groups: groups,
-    rules: rules
+    rules: rules,
+    scriptings: scriptings
   };
 }
 
@@ -319,12 +311,48 @@ async function handleProfile(url, env, tok) {
   if (bad) return bad;
   const safe = url.searchParams.get('safe') === '1';
   const base = url.origin + '/t/' + reg[key].token;
+  // Имя узла для пробы P9. Если подписка недоступна — профиль всё равно отдаём,
+  // просто без RH_NODE: скрипт этот случай обрабатывает.
+  let nodeName = '';
+  try { const sub = await getSub(env, false); nodeName = firstNormalNode(sub.text); } catch (e) { }
   reg[key].last_profile_ts = new Date().toISOString();
   try { await kvPutJSON(env, 'devices', reg); } catch (e) { }
   const head = '# RouteHub — профиль стенда Egern, worker ' + WORKER_VER +
     (safe ? ' (safe)' : '') + '\n# Сгенерирован ' + new Date().toISOString() +
     '\n# Вручную в UI ничего не создавать: профиль перезапишет.\n';
-  return textResp(head + yamlDoc(buildProfile(base, key, safe)), 200, 'text/yaml');
+  return textResp(head + yamlDoc(buildProfile(base, key, safe, nodeName)), 200, 'text/yaml');
+}
+
+// Текст скрипта — тоже за токеном: в нём нет секретов, но лишней публичности не нужно.
+async function handleScript(url, env, tok) {
+  const key = url.searchParams.get('key') || '';
+  const reg = await loadRegistry(env);
+  const bad = gate(reg, key, tok);
+  if (bad) return bad;
+  return textResp(K4_SCRIPT, 200, 'application/javascript');
+}
+
+// Приём отчётов скрипта (проба P10) и просмотр накопленного.
+async function handleProbe(request, url, env, tok) {
+  const key = url.searchParams.get('key') || '';
+  const reg = await loadRegistry(env);
+  const bad = gate(reg, key, tok);
+  if (bad) return bad;
+  const dbKey = 'probe:' + key;
+
+  if (request.method === 'GET') {
+    const cur = await kvGetJSON(env, dbKey);
+    return json({ worker: WORKER_VER, key: key, runs: cur ? cur.length : 0, items: cur || [] });
+  }
+
+  const body = await request.text();
+  if (body.length > PROBE_MAX_BYTES) return textResp('отчёт слишком велик', 413);
+  let rep;
+  try { rep = JSON.parse(body); } catch (e) { return textResp('не JSON', 400); }
+  const list = (await kvGetJSON(env, dbKey)) || [];
+  list.unshift({ got: new Date().toISOString(), report: rep });
+  await kvPutJSON(env, dbKey, list.slice(0, PROBE_KEEP));
+  return json({ ok: true, stored: Math.min(list.length, PROBE_KEEP) });
 }
 
 async function handleAdminKeys(url, env) {
@@ -343,6 +371,8 @@ async function handleAdminKeys(url, env) {
       profile: base + '/profile?key=' + k,
       profile_safe: base + '/profile?key=' + k + '&safe=1',
       nodes: base + '/nodes?key=' + k,
+      script: base + '/script/k4.js?key=' + k,
+      probe: base + '/probe?key=' + k,
       last_profile_ts: reg[k].last_profile_ts || null
     };
   }
@@ -358,6 +388,14 @@ async function handleHealth(env) {
     const c = await kvGetJSON(env, 'sub_cache');
     out.sub_nodes = c ? c.n : 0;
     out.sub_age_min = c ? Math.round((Date.now() - c.ts) / 60000) : null;
+    if (c && c.text) {
+      const names = subNames(c.text);
+      out.sub_named = names.length;
+      out.probe_node = firstNormalNode(c.text) || null;
+    }
+    const p = await kvGetJSON(env, 'probe:' + STAND_KEY);
+    out.probe_runs = p ? p.length : 0;
+    out.probe_last = p && p[0] ? p[0].got : null;
   } catch (e) {
     out.db = 'error';
     out.db_error = String(e && e.message || e);
@@ -375,11 +413,16 @@ export default {
       const qt = url.searchParams.get('token') || '';
       if (TOKEN_RE.test(qt)) tok = qt;
     }
+    const m = request.method;
     try {
-      if (request.method === 'GET' && url.pathname === '/health') return await handleHealth(env);
-      if (request.method === 'GET' && url.pathname === '/admin/keys') return await handleAdminKeys(url, env);
-      if (request.method === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env, tok);
-      if (request.method === 'GET' && url.pathname === '/profile') return await handleProfile(url, env, tok);
+      if (m === 'GET' && url.pathname === '/health') return await handleHealth(env);
+      if (m === 'GET' && url.pathname === '/admin/keys') return await handleAdminKeys(url, env);
+      if (m === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env, tok);
+      if (m === 'GET' && url.pathname === '/profile') return await handleProfile(url, env, tok);
+      if (m === 'GET' && url.pathname === '/script/k4.js') return await handleScript(url, env, tok);
+      if ((m === 'GET' || m === 'POST') && url.pathname === '/probe') {
+        return await handleProbe(request, url, env, tok);
+      }
       return json({ error: 'not found', worker: WORKER_VER }, 404);
     } catch (err) {
       return textResp('error: ' + (err && err.message ? err.message : 'unknown'), 500);
