@@ -1,6 +1,6 @@
 // =============================================================
 // routehub-egern-worker.js — Worker стенда Egern (ветка `egern`)
-// VERSION: e0.2.1 (2026-08-08) — ШАГ 4.2: узлы + минимальный профиль.
+// VERSION: e0.2.2 (2026-08-08) — ШАГ 4.2: узлы + минимальный профиль.
 //   Решения и границы объёма — ЭТАП_K_ШАГ_4.2.md (эта же ветка).
 //   Эндпоинты: GET /health, GET /t/<token>/nodes?key=kN,
 //   GET /t/<token>/profile?key=kN (+ &safe=1 — см. ниже),
@@ -19,6 +19,13 @@
 //   (latency_test_url на группе). Нужен для деления пополам, если Egern
 //   откажется принимать основной профиль: сначала пробуем обычный, при отказе —
 //   safe. Так отличается «неверное поле» от «неверная структура».
+// НАЙДЕНО НА УСТРОЙСТВЕ (2026-08-08, Egern 2.20.0):
+//   `hijack_dns` — СПИСОК, а не булево: профиль с `hijack_dns: false` отвергнут
+//   с текстом «invalid type: boolean `false`, expected a sequence». Поле убрано
+//   (перехват DNS стенду не нужен). Вывод общего характера: Egern проверяет типы
+//   и падает на ПЕРВОМ несоответствии, поэтому поля за ним остаются
+//   непроверенными — профиль доводится итерациями, по одной ошибке за импорт.
+//   Остальные поля верхнего уровня сверены с официальным примером Profile.yaml.
 // ВАЖНО: боевой контур (Worker `routehub`, база `routehub-db`) не затрагивается.
 //   Ветка `egern` в `main` не сливается.
 // ИСТОРИЯ СБОРОК:
@@ -30,7 +37,7 @@
 //   СНЯТОЙ: иначе пуш в main выгружает версии сюда под именем `routehub`.
 // =============================================================
 
-const WORKER_VER = 'e0.2.1';
+const WORKER_VER = 'e0.2.2';
 const KEY_RE = /^k\d+$/;
 const TOKEN_LEN = 32;
 const TOKEN_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -245,7 +252,6 @@ function buildProfile(base, key, safe) {
     close_connections_on_policy_change: true,
     bypass_tunnel_proxy: ['*.local', '192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12'],
     real_ip_domains: ['*.apple.com', '*.icloud.com', '*.push.apple.com'],
-    hijack_dns: false,
     include_all_networks: false,
     compat_route: false,
     proxy_latency_test_url: TEST_URL_PROXY,
