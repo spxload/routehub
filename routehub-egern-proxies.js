@@ -1,18 +1,28 @@
 // =============================================================
 // routehub-egern-proxies.js — разбор vless:// в форму proxies профиля Egern.
-// Зачем: проверка k4-2 показала, что ctx.http принимает в policy только
-//   имена ГРУПП и DIRECT; имя узла из подписки даёт 404 от самого Egern.
-//   Гипотеза ПОДТВЕРЖДЕНА на k4-8 (шаги T2/T3, 2026-08-09): узел, объявленный
-//   в proxies, адресуется по имени — три явных узла дали три разных выхода.
-// Форма полей — по официальной документации /docs/configuration/proxies:
-//   vless: name, server, port, user_id, flow, tfo, udp_relay, transport,
-//          block_quic, prev_hop, ip_version.
-//   transport: { tls: { sni }, reality: { public_key, short_id },
-//                ws: { path, headers: { Host } } }.
-//   fingerprint (fp в ссылке) в документации НЕ описан — не переносим.
+// Зачем: узел, ОБЪЯВЛЕННЫЙ в proxies, адресуется из скрипта по имени —
+//   подтверждено на k4-8 (шаги T2/T3, 2026-08-09): три явных узла дали три
+//   разных выхода. От этого зависит поузловой спидтест при миграции.
+//
+// TRANSPORT — РАЗМЕЧЕННОЕ ОБЪЕДИНЕНИЕ, РОВНО ОДИН КЛЮЧ (грабли 2026-08-09).
+//   Egern: "proxies[N].vless.transport: invalid value: map, expected map with
+//   a single key". Допустимые ключи: http1 | http2 | tls | wss | ws | grpc.
+//   • WebSocket ПОВЕРХ TLS — это wss, а НЕ ws + tls:
+//       transport: wss: { path, headers: { Host }, sni, skip_tls_verify }
+//   • голый ws — WebSocket БЕЗ TLS: transport: ws: { path, headers: { Host } }
+//   • reality вкладывается ВНУТРЬ tls, а не рядом с ним:
+//       transport: tls: { sni, reality: { public_key, short_id } }
+//   • grpc: { service_name, sni } — TLS применяется всегда.
+//   Прежний код клал tls и ws (и tls с reality) рядом — профиль отвергался
+//   на ПЕРВОМ таком узле. Источник: /docs/configuration/proxies, раздел
+//   "Vmess Transport".
+//
+// fingerprint (fp в ссылке) в документации ОПИСАН только как
+//   fingerprint_sha256 — отпечаток сертификата, это НЕ маскировка uTLS из
+//   ссылки. Не переносим.
 // Имена объявленных узлов НЕ совпадают с именами из подписки (префикс
-//   RH-Явный-N): документация говорит, что узлы подписки дедуплицируются
-//   ПО ИМЕНИ — совпадение сделало бы результат проверки неоднозначным.
+//   RH-Явный-N): узлы подписки дедуплицируются ПО ИМЕНИ, совпадение сделало
+//   бы результат проверки неоднозначным.
 // =============================================================
 
 function qs(search) {
@@ -28,6 +38,45 @@ function qs(search) {
     out[k.toLowerCase()] = v;
   });
   return out;
+}
+
+// Сборка transport по параметрам ссылки. ВСЕГДА возвращает объект с ОДНИМ
+// ключом либо null (когда транспорт по умолчанию — голый TCP без TLS).
+function buildTransport(params, server) {
+  const type = (params.type || 'tcp').toLowerCase();
+  const sec = (params.security || '').toLowerCase();
+  const sni = params.sni || params.host || '';
+  const hostHdr = params.host || sni || '';
+  const tlsLike = (sec === 'tls' || sec === 'reality');
+
+  if (type === 'ws') {
+    const w = { path: params.path || '/' };
+    if (hostHdr) w.headers = { Host: hostHdr };
+    if (!tlsLike) return { ws: w };          // WebSocket без TLS
+    if (sni) w.sni = sni;
+    return { wss: w };                       // WebSocket поверх TLS
+  }
+
+  if (type === 'grpc') {
+    const g = {};
+    if (params.servicename) g.service_name = params.servicename;
+    if (sni) g.sni = sni;
+    return { grpc: g };                      // TLS внутри grpc всегда
+  }
+
+  if (sec === 'reality') {
+    const tls = {};
+    if (sni) tls.sni = sni;
+    const reality = {};
+    if (params.pbk) reality.public_key = params.pbk;
+    if (params.sid) reality.short_id = params.sid;
+    tls.reality = reality;                   // reality ВНУТРИ tls
+    return { tls: tls };
+  }
+
+  if (sec === 'tls') return { tls: { sni: sni || server } };
+
+  return null;
 }
 
 // Разбор одной строки vless://uuid@host:port?params#name.
@@ -58,36 +107,26 @@ export function parseVless(line, forcedName) {
   const node = { name: forcedName || label || (server + ':' + port), server: server, port: port, user_id: uuid };
   if (params.flow === 'xtls-rprx-vision') node.flow = 'xtls-rprx-vision';
 
-  const transport = {};
-  const sec = (params.security || '').toLowerCase();
-  const sni = params.sni || params.host || '';
-  if (sec === 'reality') {
-    if (sni) transport.tls = { sni: sni };
-    const reality = {};
-    if (params.pbk) reality.public_key = params.pbk;
-    if (params.sid) reality.short_id = params.sid;
-    transport.reality = reality;
-  } else if (sec === 'tls') {
-    transport.tls = { sni: sni || server };
-  }
+  const transport = buildTransport(params, server);
+  if (transport) node.transport = transport;
+
   const type = (params.type || 'tcp').toLowerCase();
-  if (type === 'ws') {
-    const ws = { path: params.path || '/' };
-    const h = params.host || sni;
-    if (h) ws.headers = { Host: h };
-    transport.ws = ws;
-  }
-  if (Object.keys(transport).length) node.transport = transport;
+  const sec = (params.security || '').toLowerCase();
   // Служебные поля для отчётности; в YAML не попадают.
-  return { node: node, meta: { label: label, type: type, security: sec || 'none' } };
+  return {
+    node: node,
+    meta: {
+      label: label, type: type, security: sec || 'none',
+      transport: transport ? Object.keys(transport)[0] : 'raw'
+    }
+  };
 }
 
 // Первые N ОБЫЧНЫХ узлов, разобранных в форму proxies.
 // ФАКТ (2026-08-09, сверено с sub_cache): ОБЫЧНЫХ ws-узлов в подписке НЕТ —
 //   все 17 ws являются обходными. Поэтому отбор всегда даёт tcp-узлы, и
-//   разбор ws-транспорта этой функцией НЕ проверяется. Прежний комментарий
-//   «по возможности берётся хотя бы один ws-узел» вводил в заблуждение.
-//   Проверка ws вынесена в bypassWsNode() — см. ниже.
+//   разбор ws-транспорта этой функцией НЕ проверяется. Проверка ws вынесена
+//   в bypassWsNode() — см. ниже.
 export function explicitNodes(text, limit) {
   const max = limit || 3;
   const lines = String(text || '').split('\n');
