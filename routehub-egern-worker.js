@@ -1,12 +1,19 @@
 // =============================================================
 // routehub-egern-worker.js — Worker стенда Egern (ветка `egern`)
-// VERSION: e0.4.0 (2026-08-08) — ОБЪЯВЛЕННЫЕ УЗЛЫ В proxies.
-//   Гипотеза: узел, объявленный в proxies, становится адресуемой политикой
-//   для ctx.http, в отличие от узла из подписки. От этого зависит спидтест.
+// VERSION: e0.5.0 (2026-08-09) — ws-узел в proxies + скрипт k4-9.
+//   Обычных ws-узлов в подписке НЕТ (все 17 ws обходные), поэтому разбор
+//   ws-транспорта проверяется одним обходным узлом RH-Явный-WS. Через него
+//   допускается РОВНО ОДИН запрос (шаг W4): трафик обходных узлов платный.
+//   Узел кладётся в select-группу RH-Явные — у select нет interval, значит
+//   фонового теста задержки по расписанию не будет.
 // ИСТОРИЯ: e0.2.2 минимальный профиль (принят: 52/17 узла, 5 групп);
 //   e0.2.3/e0.2.4 диагностика K2 — член DIRECT в fallback тестируется ГРУППОВЫМ
 //   latency_test_url (36 мс и таймаут на 192.0.2.1) ⇒ модель «слабый DIRECT»
-//   переносится; e0.3.0 schedule-скрипт и приём отчётов (K4 закрыт).
+//   переносится; e0.3.0 schedule-скрипт и приём отчётов (K4 закрыт);
+//   e0.4.0 объявленные узлы в proxies.
+// РЕЗУЛЬТАТ e0.4.0 + k4-8 (2026-08-09): ctx.http с policy = имя узла из
+//   proxies АДРЕСУЕТ ИМЕННО ЭТОТ УЗЕЛ (три явных узла — три разных выхода)
+//   ⇒ поузловой спидтест на Egern реализуем. Открытый вопрос №1 закрыт.
 // ЭНДПОИНТЫ: GET /health; GET /admin/keys?admin=<ADMIN_KEY>;
 //   GET /t/<token>/nodes?key=kN; GET /t/<token>/profile?key=kN (+&safe=1);
 //   GET /t/<token>/script/k4.js?key=kN; POST и GET /t/<token>/probe?key=kN.
@@ -15,8 +22,10 @@
 //   • hijack_dns — СПИСОК, не булево; Egern падает на ПЕРВОМ несоответствии
 //     — новые конструкции вводить по одной за импорт.
 //   • rule_set принимает списки формата Shadowrocket (K7 закрыт).
-//   • policy в ctx.http принимает имена групп и DIRECT; имя узла подписки,
-//     несуществующее имя и REJECT — 404 от самого Egern.
+//   • policy в ctx.http принимает имена групп, DIRECT и имена узлов из
+//     proxies; имя узла ПОДПИСКИ, несуществующее имя и REJECT — 404.
+//   • cron в профиле и cron на устройстве расходятся, если правили в UI:
+//     фактическое значение видно в __context.cronexp отчёта пробы.
 //   • ИЗ ДОКУМЕНТАЦИИ: urls и filter — ОБЩИЕ поля пяти базовых типов,
 //     то есть smart/fallback могут тянуть подписку без external. Перевод пула
 //     на smart + priorities — следующий шаг (вместе с K5).
@@ -25,9 +34,9 @@
 // =============================================================
 
 import { K4_SCRIPT, K4_REV, firstNormalNode, subNames } from './routehub-egern-k4.js';
-import { explicitNodes } from './routehub-egern-proxies.js';
+import { explicitNodes, bypassWsNode } from './routehub-egern-proxies.js';
 
-const WORKER_VER = 'e0.4.0';
+const WORKER_VER = 'e0.5.0';
 const KEY_RE = /^k\d+$/;
 const TOKEN_LEN = 32;
 const TOKEN_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -38,7 +47,8 @@ const FRESH_MS = 60 * 60 * 1000;
 const NODE_PREFIXES = ['vless://', 'vmess://', 'trojan://', 'ss://'];
 const PROBE_KEEP = 20;
 const PROBE_MAX_BYTES = 64 * 1024;
-const EXPLICIT_N = 3;                         // сколько узлов объявляем явно
+const EXPLICIT_N = 3;                         // сколько ОБЫЧНЫХ узлов объявляем явно
+const WS_NODE_NAME = 'RH-Явный-WS';           // один обходной ws — проверка разбора ws
 
 // Признак типа узла — слово в скобочном теге, НЕ значок провайдера (вывод 28).
 const RE_NORMAL = '^(?!.*Обход)';
@@ -186,12 +196,14 @@ function yamlDoc(obj) {
 }
 
 // ---------------------------------------------------------------- профиль
-// explicit — массив из explicitNodes(): [{ node, meta }]
+// explicit — массив из explicitNodes() плюс, при наличии, один ws-узел
+// из bypassWsNode(): [{ node, meta }]
 function buildProfile(base, key, safe, nodeName, explicit) {
   const nodesUrl = base + '/nodes?key=' + key;
   const profUrl = base + '/profile?key=' + key + (safe ? '&safe=1' : '');
   const ex = explicit || [];
   const exNames = ex.map(function (e) { return e.node.name; });
+  const normalNames = exNames.filter(function (n) { return n !== WS_NODE_NAME; });
 
   function pool(name, filter, interval) {
     return {
@@ -218,7 +230,9 @@ function buildProfile(base, key, safe, nodeName, explicit) {
     fb('RH-Проба-DIRECT', ['DIRECT', 'RH-Обход'], { latency_test_url: TEST_URL_PROXY })
   ];
   // Группа из явно объявленных узлов — чтобы они были видны в UI и проверялись
-  // штатным тестом задержки. Маршрутизацией не используется.
+  // штатным тестом задержки. Маршрутизацией не используется. Тип select выбран
+  // намеренно: у него нет interval, то есть фонового опроса членов не будет
+  // (в группе есть обходной ws-узел с платным трафиком).
   if (exNames.length) {
     const g = { name: 'RH-Явные', policies: exNames };
     if (!safe) g.latency_test_url = TEST_URL_PROXY;
@@ -241,7 +255,7 @@ function buildProfile(base, key, safe, nodeName, explicit) {
         RH_POST_URL: base + '/probe?key=' + key,
         RH_GROUP: 'RH-Пул-Обычные',
         RH_NODE: nodeName || '',
-        RH_NODE2: exNames[0] || '',        // явно объявленный узел — главная проверка
+        RH_NODE2: normalNames[0] || '',    // явно объявленный узел
         RH_GROUP2: exNames.length ? 'RH-Явные' : '',
         RH_TEST_URL: TEST_URL_PROXY,
         RH_HEAVY: '0'
@@ -267,6 +281,14 @@ function buildProfile(base, key, safe, nodeName, explicit) {
   out.rules = rules;
   out.scriptings = scriptings;
   return out;
+}
+
+// Полный набор явных узлов: обычные + один обходной ws (если найден).
+function collectExplicit(text) {
+  const list = explicitNodes(text, EXPLICIT_N);
+  const ws = bypassWsNode(text, WS_NODE_NAME);
+  if (ws) list.push(ws);
+  return list;
 }
 
 // ------------------------------------------------------------- обработчики
@@ -299,7 +321,7 @@ async function handleProfile(url, env, tok) {
   try {
     const sub = await getSub(env, false);
     nodeName = firstNormalNode(sub.text);
-    explicit = explicitNodes(sub.text, EXPLICIT_N);
+    explicit = collectExplicit(sub.text);
   } catch (e) { }
   reg[key].last_profile_ts = new Date().toISOString();
   try { await kvPutJSON(env, 'devices', reg); } catch (e) { }
@@ -380,7 +402,7 @@ async function handleHealth(env) {
     if (c && c.text) {
       out.sub_named = subNames(c.text).length;
       out.probe_node = firstNormalNode(c.text) || null;
-      out.explicit = explicitNodes(c.text, EXPLICIT_N).map(function (e) {
+      out.explicit = collectExplicit(c.text).map(function (e) {
         return { name: e.meta.name, label: e.meta.label, type: e.meta.type, security: e.meta.security };
       });
     }
@@ -421,4 +443,6 @@ export default {
   }
 };
 
-export const __test = { buildProfile, yamlDoc, yamlStr, RE_NORMAL, RE_BYPASS, WORKER_VER };
+export const __test = { buildProfile, yamlDoc, yamlStr, collectExplicit, RE_NORMAL, RE_BYPASS, WORKER_VER };
+
+// ХВОСТОВОЙ СТРАЖ — строка без перевода в конце файла; мусор после неё —

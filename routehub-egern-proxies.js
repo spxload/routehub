@@ -2,8 +2,8 @@
 // routehub-egern-proxies.js — разбор vless:// в форму proxies профиля Egern.
 // Зачем: проверка k4-2 показала, что ctx.http принимает в policy только
 //   имена ГРУПП и DIRECT; имя узла из подписки даёт 404 от самого Egern.
-//   Гипотеза: узел, ОБЪЯВЛЕННЫЙ в proxies, имеет глобально уникальное имя
-//   и становится адресуемой политикой. От этого зависит весь спидтест.
+//   Гипотеза ПОДТВЕРЖДЕНА на k4-8 (шаги T2/T3, 2026-08-09): узел, объявленный
+//   в proxies, адресуется по имени — три явных узла дали три разных выхода.
 // Форма полей — по официальной документации /docs/configuration/proxies:
 //   vless: name, server, port, user_id, flow, tfo, udp_relay, transport,
 //          block_quic, prev_hop, ip_version.
@@ -82,29 +82,52 @@ export function parseVless(line, forcedName) {
   return { node: node, meta: { label: label, type: type, security: sec || 'none' } };
 }
 
-// Первые N ОБЫЧНЫХ узлов, разобранных в форму proxies. По возможности
-// берётся хотя бы один ws-узел: в подписке 52 tcp и 17 ws, и транспорты
-// надо проверить оба. Обходные исключены — трафик платный.
+// Первые N ОБЫЧНЫХ узлов, разобранных в форму proxies.
+// ФАКТ (2026-08-09, сверено с sub_cache): ОБЫЧНЫХ ws-узлов в подписке НЕТ —
+//   все 17 ws являются обходными. Поэтому отбор всегда даёт tcp-узлы, и
+//   разбор ws-транспорта этой функцией НЕ проверяется. Прежний комментарий
+//   «по возможности берётся хотя бы один ws-узел» вводил в заблуждение.
+//   Проверка ws вынесена в bypassWsNode() — см. ниже.
 export function explicitNodes(text, limit) {
   const max = limit || 3;
   const lines = String(text || '').split('\n');
-  const tcp = [], ws = [];
-  for (let i = 0; i < lines.length; i++) {
+  const out = [];
+  for (let i = 0; i < lines.length && out.length < max; i++) {
     const l = lines[i].trim();
     if (l.indexOf('vless://') !== 0) continue;
     const p = parseVless(l);
     if (!p) continue;
     if (/Обход/.test(p.meta.label)) continue;
-    (p.meta.type === 'ws' ? ws : tcp).push(p);
-  }
-  const picked = [];
-  if (ws.length) picked.push(ws[0]);
-  for (let i = 0; i < tcp.length && picked.length < max; i++) picked.push(tcp[i]);
-  const out = [];
-  for (let i = 0; i < picked.length && i < max; i++) {
-    const name = 'RH-Явный-' + (i + 1);
-    const n = Object.assign({}, picked[i].node, { name: name });
-    out.push({ node: n, meta: Object.assign({ name: name }, picked[i].meta) });
+    const name = 'RH-Явный-' + (out.length + 1);
+    out.push({
+      node: Object.assign({}, p.node, { name: name }),
+      meta: Object.assign({ name: name }, p.meta)
+    });
   }
   return out;
 }
+
+// ОДИН обходной ws-узел — единственный способ проверить разбор ws-транспорта,
+// поскольку обычных ws-узлов в подписке нет. Трафик обходных узлов ПЛАТНЫЙ,
+// поэтому через него допускается РОВНО ОДИН запрос generate_204 (шаг W4
+// ревизии k4-9), и узел кладётся в select-группу: у select нет interval,
+// то есть фонового теста задержки по расписанию не будет.
+export function bypassWsNode(text, forcedName) {
+  const name = forcedName || 'RH-Явный-WS';
+  const lines = String(text || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (l.indexOf('vless://') !== 0) continue;
+    const p = parseVless(l);
+    if (!p) continue;
+    if (!/Обход/.test(p.meta.label)) continue;
+    if (p.meta.type !== 'ws') continue;
+    return {
+      node: Object.assign({}, p.node, { name: name }),
+      meta: Object.assign({ name: name }, p.meta)
+    };
+  }
+  return null;
+}
+
+// ХВОСТОВОЙ СТРАЖ — строка без перевода в конце файла; мусор после неё —
