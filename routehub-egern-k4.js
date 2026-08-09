@@ -1,33 +1,28 @@
 // =============================================================
 // routehub-egern-k4.js — диагностический schedule-скрипт (проверка K4 и шире).
-// K4_REV: k4-5 (2026-08-09) — НЕДОКУМЕНТИРОВАННЫЙ СЛОЙ СОВМЕСТИМОСТИ.
-//   Ревизия ведётся отдельно от версии Worker'а; rev уходит в отчёт.
+// K4_REV: k4-6 (2026-08-09) — РЕШАЮЩАЯ ПРОВЕРКА АДРЕСАЦИИ ПО ИМЕНИ УЗЛА.
 //
-// ИТОГИ k4-4 (Egern 2.20.0, k3, 2026-08-09) — основание для этой ревизии:
-//   • УЗЕЛ ИЗ proxies АДРЕСУЕМ: policy "RH-Явный-1" → 204, выход 111.88.96.83.
-//     Имя узла из подписки → 404. policyDescriptor → 400. ⇒ поузловой спидтест
-//     возможен только через явное объявление узлов.
-//   • В globalThis есть НЕОПИСАННЫЙ слой Loon/Surge/QuanX: $httpClient,
-//     $persistentStore, $notification, $utils, $network, $script, $environment,
-//     $done, $cronexp. ЭТО И ПРОВЕРЯЕТ k4-5.
-//   • Окружение — полный WebKit: WebSocket, XMLHttpRequest, localStorage,
-//     indexedDB, ReadableStream, Blob, structuredClone, performance, navigator.
-//   • ГЛОБАЛЬНЫЙ fetch ИДЁТ МИМО ТУННЕЛЯ (выход 5.227.10.120 против
-//     111.88.96.83 у ctx.http) — политикам не подчиняется.
-//   • crypto: только getRandomValues (ни subtle, ни randomUUID).
-//   • Локального API Egern нет ни на одном из семи пробованных портов.
-//   • ctx.storage: get/set/getJSON/setJSON/delete — перечисления ключей нет.
+// ИТОГИ k4-5 (Egern 2.20.0, k3, 2026-08-09):
+//   • СЛОЙ СОВМЕСТИМОСТИ ЖИВОЙ И ЭТО SURGE: $environment =
+//     { system: iOS, surge-build: 3010, surge-version: 5.8.3, language: ru-KZ }.
+//   • $httpClient: get/post/put/patch/delete/head/options/request.
+//   • $persistentStore.read/write — ХРАНИЛИЩЕ ОБЩЕЕ с ctx.storage
+//     (проверено крест-накрест в обе стороны).
+//   • $utils.geoip('8.8.8.8') = US, ipasn 15169, ipaso GOOGLE — ПОЛНЕЕ штатной
+//     ctx.lookupIP, которая даёт PK и пустые asn/organization. Брать $utils.
+//   • $network — то же, что ctx.device, в форме Surge. $script.type = 'cron'.
+//   • $config ОТСУТСТВУЕТ ⇒ переключения политики из скрипта нет нигде.
+//   • localStorage работает; navigator — iOS 18.7 / WebKit 605.1.15.
+//   • WebSocket к echo.websocket.events — error (хост мог быть недоступен).
+//   • НЕ ДОКАЗАНО: учитывается ли { node: "имя" } в $httpClient — все варианты
+//     дали 204, но и вызов без параметров тоже. Различить можно только
+//     по АДРЕСУ ВЫХОДА — это главная проба k4-6 (L13).
 //
-// ЗАЧЕМ ЭТО ВАЖНО: в Loon $httpClient.get({node:"имя"}) адресует УЗЕЛ по имени,
-//   а $config.setSelectPolicy переключает группу. Если слой совместимости живой,
-//   это обход двух главных ограничений штатного API.
-//
-// В ТЕКСТЕ СКРИПТА НЕЛЬЗЯ: обратные кавычки, ${...} и ЛЮБЫЕ обратные
-//   слэши (шаблонная строка съедает слэш и тихо ломает регулярки).
+// В ТЕКСТЕ СКРИПТА НЕЛЬЗЯ: обратные кавычки, ${...} и ЛЮБЫЕ обратные слэши.
 // ОГРАНИЧЕНИЕ: ни одна проба НЕ идёт через RH-Обход — трафик платный.
 // =============================================================
 
-export const K4_REV = 'k4-5';
+export const K4_REV = 'k4-6';
 
 export function subNames(text) {
   const out = [];
@@ -56,7 +51,7 @@ export function firstNormalNode(text) {
 
 export const K4_SCRIPT = `export default async function (ctx) {
   const t0 = Date.now();
-  const R = { rev: 'k4-5', ok: [], fail: {} };
+  const R = { rev: 'k4-6', ok: [], fail: {} };
   const run = async (k, fn) => {
     try { R[k] = await fn(); R.ok.push(k); }
     catch (e) { R.fail[k] = String((e && e.message) || e); }
@@ -68,140 +63,118 @@ export const K4_SCRIPT = `export default async function (ctx) {
   const NODE = env.RH_NODE || '';
   const NODE2 = env.RH_NODE2 || '';
   const G = globalThis;
-  const names = (o) => {
-    const s = new Set();
-    let cur = o;
-    for (let d = 0; d < 3 && cur && cur !== Object.prototype; d++) {
-      try { Object.getOwnPropertyNames(cur).forEach(n => s.add(n)); } catch (e) { }
-      cur = Object.getPrototypeOf(cur);
-    }
-    return Array.from(s).filter(n => n !== 'constructor' && n !== 'toString' &&
-      n !== 'apply' && n !== 'arguments' && n !== 'bind' && n !== 'call' &&
-      n !== 'caller' && n !== 'length' && n !== 'name' && n !== 'prototype').sort();
+
+  // Колбечный $httpClient → промис со своим таймаутом: без него зависший
+  // вызов съел бы весь прогон.
+  const hc = (opts, ms) => new Promise((res) => {
+    const h = G.$httpClient;
+    if (!h || typeof h.get !== 'function') return res({ r: 'нет $httpClient' });
+    let done = false;
+    const timer = setTimeout(() => { if (!done) { done = true; res({ r: 'timeout' }); } }, ms || 9000);
+    try {
+      h.get(opts, (err, resp, body) => {
+        if (done) return;
+        done = true; clearTimeout(timer);
+        res({ err: err ? String(err) : null,
+              status: resp ? (resp.status || resp.statusCode) : null,
+              body: body ? String(body) : '' });
+      });
+    } catch (e) { if (!done) { done = true; clearTimeout(timer); res({ r: 'throw:' + e.message }); } }
+  });
+  const parseTrace = (txt) => {
+    const ip = String(txt || '').match(/ip=([0-9a-fA-F:.]+)/);
+    const loc = String(txt || '').match(/loc=([A-Z][A-Z])/);
+    const colo = String(txt || '').match(/colo=([A-Z][A-Z][A-Z])/);
+    return { ip: ip ? ip[1] : null, loc: loc ? loc[1] : null, colo: colo ? colo[1] : null };
   };
 
-  // === СЛОЙ СОВМЕСТИМОСТИ — что это такое и что умеет
-  await run('L1_surface', async () => {
-    const list = ['$httpClient', '$persistentStore', '$notification', '$utils',
-                  '$network', '$script', '$environment', '$done', '$cronexp',
-                  '$config', '$argument', '$task', '$prefs', '$option', '$input',
-                  '$surge', '$loon', '$rocket', '$axios', '$app'];
+  // === L13: ГЛАВНОЕ. Различаются ли ТОЧКИ ВЫХОДА при разных параметрах.
+  // Если ip у plain, by_node и by_explicit одинаковы — параметр node ИГНОРИРУЕТСЯ.
+  // Если различаются — адресация по имени узла работает, и поузловой
+  // спидтест возможен БЕЗ объявления узлов в proxies.
+  await run('L13_exit', async () => {
     const out = {};
-    list.forEach(n => {
-      const v = G[n];
-      out[n] = (v === undefined) ? 'undefined'
-             : (typeof v === 'object' || typeof v === 'function') ? names(v) : typeof v;
-    });
-    return out;
-  });
-  await run('L2_env_val', async () => {
-    const e = G.$environment;
-    return e ? (typeof e === 'object' ? JSON.parse(JSON.stringify(e)) : String(e)) : 'undefined';
-  });
-  await run('L3_network', async () => {
-    const n = G.$network;
-    return n ? (typeof n === 'object' ? JSON.parse(JSON.stringify(n)) : String(n)) : 'undefined';
-  });
-  await run('L4_script_obj', async () => {
-    const s = G.$script;
-    return s ? (typeof s === 'object' ? JSON.parse(JSON.stringify(s)) : String(s)) : 'undefined';
-  });
-  await run('L5_utils', async () => {
-    const u = G.$utils;
-    if (!u) return 'undefined';
-    const out = { methods: names(u) };
-    try { out.geoip = u.geoip ? u.geoip('8.8.8.8') : 'no method'; } catch (e) { out.geoip = 'err'; }
-    try { out.ipasn = u.ipasn ? u.ipasn('8.8.8.8') : 'no method'; } catch (e) { out.ipasn = 'err'; }
-    try { out.ipaso = u.ipaso ? u.ipaso('8.8.8.8') : 'no method'; } catch (e) { out.ipaso = 'err'; }
-    return out;
-  });
-  await run('L6_store', async () => {
-    const p = G.$persistentStore;
-    if (!p) return 'undefined';
-    const out = { methods: names(p) };
-    try { out.write = p.write ? p.write('rh-compat', 'rh_probe_compat') : 'no method'; } catch (e) { out.write = 'err:' + e.message; }
-    try { out.read = p.read ? p.read('rh_probe_compat') : 'no method'; } catch (e) { out.read = 'err:' + e.message; }
-    // Общее ли хранилище с ctx.storage?
-    try { ctx.storage.set('rh_probe_ctxside', 'from-ctx'); } catch (e) { }
-    try { out.cross_read = p.read ? p.read('rh_probe_ctxside') : null; } catch (e) { out.cross_read = 'err'; }
-    try { out.ctx_sees_compat = ctx.storage.get('rh_probe_compat'); } catch (e) { out.ctx_sees_compat = 'err'; }
-    return out;
-  });
-  // ГЛАВНАЯ ПРОБА СЛОЯ: адресация УЗЛА по имени, как в Loon.
-  await run('L7_httpclient', async () => {
-    const h = G.$httpClient;
-    if (!h || typeof h.get !== 'function') return 'undefined';
-    const call = (opts) => new Promise((res) => {
-      let done = false;
-      const timer = setTimeout(() => { if (!done) { done = true; res({ r: 'timeout' }); } }, 9000);
-      try {
-        h.get(opts, (err, resp, body) => {
-          if (done) return;
-          done = true; clearTimeout(timer);
-          res({ err: err ? String(err) : null,
-                status: resp ? (resp.status || resp.statusCode) : null,
-                len: body ? String(body).length : 0 });
-        });
-      } catch (e) { if (!done) { done = true; clearTimeout(timer); res({ r: 'throw:' + e.message }); } }
-    });
-    const out = {};
-    out.plain = await call({ url: U204 });
-    out.by_node = NODE ? await call({ url: U204, node: NODE }) : 'нет RH_NODE';
-    out.by_explicit = NODE2 ? await call({ url: U204, node: NODE2 }) : 'нет RH_NODE2';
-    out.by_policy = await call({ url: U204, policy: GROUP });
-    // Куда выходит по умолчанию — в туннель или мимо, как fetch?
-    const tr = await call({ url: TRACE });
-    out.trace_len = tr.len || 0;
-    return out;
-  });
-  await run('L8_notify', async () => {
-    const n = G.$notification;
-    return n ? names(n) : 'undefined';
-  });
-  await run('L9_config', async () => {
-    const c = G.$config;
-    if (!c) return 'undefined';
-    const out = { methods: names(c) };
-    try { out.getConfig = typeof c.getConfig === 'function' ? JSON.parse(JSON.stringify(c.getConfig())) : 'no method'; }
-    catch (e) { out.getConfig = 'err:' + e.message; }
+    const one = async (label, opts) => {
+      const r = await hc(Object.assign({ url: TRACE }, opts));
+      out[label] = r.body ? Object.assign({ status: r.status }, parseTrace(r.body))
+                          : { status: r.status || null, err: r.err || r.r || null };
+    };
+    await one('plain', {});
+    if (NODE) await one('node_sub', { node: NODE });
+    if (NODE2) await one('node_explicit', { node: NODE2 });
+    await one('policy_group', { policy: GROUP });
+    await one('policy_direct', { policy: 'DIRECT' });
+    // Контроль: то же через штатный ctx.http
+    try {
+      const r = await ctx.http.get(TRACE, { policy: NODE2 || GROUP, timeout: 9000 });
+      out.ctx_explicit = Object.assign({ status: r.status }, parseTrace(await r.text()));
+    } catch (e) { out.ctx_explicit = 'err:' + ((e && e.message) || e); }
+    try {
+      const r = await ctx.http.get(TRACE, { policy: 'DIRECT', timeout: 9000 });
+      out.ctx_direct = Object.assign({ status: r.status }, parseTrace(await r.text()));
+    } catch (e) { out.ctx_direct = 'err:' + ((e && e.message) || e); }
     return out;
   });
 
-  // === ОКРУЖЕНИЕ WEBKIT — что из этого реально работает
-  await run('L10_localstorage', async () => {
-    if (typeof localStorage === 'undefined') return 'нет';
-    const prev = localStorage.getItem('rh_ls');
-    localStorage.setItem('rh_ls', String(Date.now()));
-    return { prev: prev, now: localStorage.getItem('rh_ls'), len: localStorage.length };
-  });
-  await run('L11_ws', async () => {
-    if (typeof WebSocket !== 'function') return 'нет';
-    return await new Promise((res) => {
+  // === L14: WebSocket — второй хост, чтобы отличить «нет поддержки» от
+  // «этот сервер недоступен». От этого зависит дашборд реального времени.
+  await run('L14_ws', async () => {
+    if (typeof WebSocket !== 'function') return 'нет WebSocket';
+    const test = (url) => new Promise((res) => {
       let done = false;
       const fin = (v) => { if (!done) { done = true; res(v); } };
-      const timer = setTimeout(() => fin({ r: 'timeout' }), 8000);
+      const timer = setTimeout(() => fin('timeout'), 7000);
       try {
-        const ws = new WebSocket('wss://echo.websocket.events');
-        ws.onopen = () => { try { ws.send('rh'); } catch (e) { } };
-        ws.onmessage = (ev) => { clearTimeout(timer); try { ws.close(); } catch (e) { } fin({ r: 'ok', got: String(ev.data).slice(0, 40) }); };
-        ws.onerror = () => { clearTimeout(timer); fin({ r: 'error' }); };
-      } catch (e) { clearTimeout(timer); fin({ r: 'throw:' + e.message }); }
+        const ws = new WebSocket(url);
+        ws.onopen = () => { try { ws.send('rh'); } catch (e) { } fin('open'); };
+        ws.onmessage = () => { clearTimeout(timer); try { ws.close(); } catch (e) { } fin('echo'); };
+        ws.onerror = () => { clearTimeout(timer); fin('error'); };
+      } catch (e) { clearTimeout(timer); fin('throw:' + e.message); }
+    });
+    return {
+      postman: await test('wss://ws.postman-echo.com/raw'),
+      events: await test('wss://echo.websocket.events')
+    };
+  });
+
+  // === L15: персистентность localStorage между прогонами
+  await run('L15_ls', async () => {
+    if (typeof localStorage === 'undefined') return 'нет';
+    const prev = localStorage.getItem('rh_ls');
+    const n = Number(localStorage.getItem('rh_ls_n') || '0') + 1;
+    localStorage.setItem('rh_ls', String(Date.now()));
+    localStorage.setItem('rh_ls_n', String(n));
+    return { prev_was: prev, runs: n, len: localStorage.length };
+  });
+
+  // === L17: $httpClient.request — единый вход с методом
+  await run('L17_request', async () => {
+    const h = G.$httpClient;
+    if (!h || typeof h.request !== 'function') return 'нет request';
+    return await new Promise((res) => {
+      let done = false;
+      const timer = setTimeout(() => { if (!done) { done = true; res('timeout'); } }, 9000);
+      try {
+        h.request({ method: 'GET', url: U204 }, (err, resp) => {
+          if (done) return;
+          done = true; clearTimeout(timer);
+          res({ err: err ? String(err) : null, status: resp ? (resp.status || resp.statusCode) : null });
+        });
+      } catch (e) { if (!done) { done = true; clearTimeout(timer); res('throw:' + e.message); } }
     });
   });
-  await run('L12_navigator', async () => ({
-    ua: typeof navigator !== 'undefined' ? String(navigator.userAgent || '').slice(0, 120) : 'нет',
-    perf: typeof performance !== 'undefined' ? typeof performance.now : 'нет',
-    idb: typeof indexedDB
-  }));
 
-  // === ШТАТНОЕ: контрольные точки
-  const probe = async (url, opt) => {
-    const o = Object.assign({ timeout: 8000 }, opt || {});
-    const t = Date.now();
-    const r = await ctx.http.get(url, o);
-    return { status: r.status, ms: Date.now() - t };
-  };
-  await run('P9f_explicit', async () => NODE2 ? await probe(U204, { policy: NODE2 }) : 'нет RH_NODE2');
+  // === L18: гео выхода через $utils (полная база) вместо ctx.lookupIP
+  await run('L18_geo_exit', async () => {
+    const u = G.$utils;
+    const r = await ctx.http.get(TRACE, { policy: NODE2 || GROUP, timeout: 9000 });
+    const t = parseTrace(await r.text());
+    if (!u || !t.ip) return t;
+    return { ip: t.ip, cf_loc: t.loc, colo: t.colo,
+             utils_geo: u.geoip(t.ip), utils_asn: u.ipasn(t.ip), utils_aso: u.ipaso(t.ip),
+             ctx_lookup: ctx.lookupIP(t.ip) };
+  });
+
   await run('P30_mitm', async () => ({
     hits: ctx.storage.get('rh_mitm_hits'), last: ctx.storage.get('rh_mitm_last')
   }));
