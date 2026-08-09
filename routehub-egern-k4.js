@@ -1,14 +1,12 @@
-// =============================================================
 // routehub-egern-k4.js — диагностика Egern. K4_REV: k4-7 (2026-08-09).
-// СХЕМА ИЗМЕНЕНА: шаги идут ПО ОДНОМУ ЗА ПРОГОН, курсор — в хранилище.
+// СХЕМА: шаги идут ПО ОДНОМУ ЗА ПРОГОН, курсор — в хранилище.
 // ПРИЧИНА: на k4-6 прогон упал с UNHANDLED PROMISE REJECTION внутри самого
 //   Egern: "n is not a function (In 'n(e,void 0,void 0)', 'n' is undefined)"
-//   @ http://egern-js/ — то есть прослойка совместимости вызвала колбек,
-//   которого у неё нет. Такое падение НЕ ловится try/catch и убивает
-//   весь прогон — значит, опасные формы вызова надо изолировать по прогонам.
+//   @ http://egern-js/ — прослойка совместимости вызвала колбек, которого
+//   у неё нет. Такое падение НЕ ловится try/catch и убивает весь прогон —
+//   значит, опасные формы вызова надо изолировать по прогонам.
 // КУРСОР СДВИГАЕТСЯ ДО выполнения шага: упавший шаг останется со статусом
-//   'НАЧАТ И НЕ ЗАВЕРШЁН = РОНЯЕТ ПРОГОН', а перебор пойдёт дальше.
-// Состояние копится в хранилище и целиком уходит на Worker каждый прогон.
+//   'НАЧАТ И НЕ ЗАВЕРШЁН', а перебор пойдёт дальше.
 // Сброс перебора — env.RH_RESET = любое новое значение.
 //
 // УЖЕ УСТАНОВЛЕНО (k4-1..k4-5):
@@ -22,7 +20,6 @@
 //
 // В ТЕКСТЕ СКРИПТА НЕЛЬЗЯ: обратные кавычки, ${...} и ЛЮБЫЕ обратные слэши.
 // ОГРАНИЧЕНИЕ: ни одна проба НЕ идёт через RH-Обход — трафик платный.
-// =============================================================
 
 export const K4_REV = 'k4-7';
 
@@ -69,7 +66,6 @@ export const K4_SCRIPT = `export default async function (ctx) {
     const colo = s.match(/colo=([A-Z][A-Z][A-Z])/);
     return { ip: ip ? ip[1] : null, loc: loc ? loc[1] : null, colo: colo ? colo[1] : null };
   };
-  // Колбечный Surge-API → промис со своим таймаутом.
   const cb = (fn, arg, ms) => new Promise((res) => {
     let done = false;
     const fin = (v) => { if (!done) { done = true; res(v); } };
@@ -93,7 +89,6 @@ export const K4_SCRIPT = `export default async function (ctx) {
     return Array.from(s).filter(n => ['constructor','toString','apply','arguments','bind','call','caller','length','name','prototype'].indexOf(n) < 0).sort();
   };
 
-  // ---- шаги перебора: каждый выполняется в ОТДЕЛЬНОМ прогоне
   const steps = [
     ['S1_scan_globals', async () => {
       const list = ['$httpAPI','$surge','$trigger','$intercept','$wifi','$storage','$mock',
@@ -113,7 +108,6 @@ export const K4_SCRIPT = `export default async function (ctx) {
     ['S2_httpapi_probe', async () => {
       const a = G.$httpAPI;
       if (typeof a !== 'function') return 'нет $httpAPI (typeof ' + (typeof a) + ')';
-      // Surge: $httpAPI(method, path, body, callback). Запрос только на чтение.
       return await new Promise((res) => {
         let done = false;
         const fin = (v) => { if (!done) { done = true; res(v); } };
@@ -205,7 +199,6 @@ export const K4_SCRIPT = `export default async function (ctx) {
     })]
   ];
 
-  // ---- состояние перебора
   let st = null;
   try { st = ctx.storage.getJSON(STATE); } catch (e) { }
   if (!st || st.rev !== 'k4-7' || (env.RH_RESET && st.reset !== env.RH_RESET)) {
@@ -213,13 +206,10 @@ export const K4_SCRIPT = `export default async function (ctx) {
   }
   const total = steps.length;
   const idx = st.cursor;
-  const finished = idx >= total;
   let ranNow = null;
 
-  if (!finished) {
+  if (idx < total) {
     const nameOfStep = steps[idx][0];
-    // КУРСОР СДВИГАЕТСЯ ДО выполнения: если шаг уронит прогон,
-    // следующий прогон пойдёт дальше, а метка останется уликой.
     st.cursor = idx + 1;
     st.results[nameOfStep] = 'НАЧАТ И НЕ ЗАВЕРШЁН — шаг роняет прогон';
     try { ctx.storage.setJSON(STATE, st); } catch (e) { }
