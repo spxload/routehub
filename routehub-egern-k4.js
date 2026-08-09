@@ -1,24 +1,37 @@
-// routehub-egern-k4.js — диагностика Egern. K4_REV: k4-9 (2026-08-09).
+// routehub-egern-k4.js — диагностика Egern. K4_REV: k4-10 (2026-08-09).
 // СХЕМА: шаги ПО ОДНОМУ ЗА ПРОГОН, курсор в хранилище, сдвиг ДО выполнения.
 //   Упавший шаг остаётся со статусом 'НАЧАТ И НЕ ЗАВЕРШЁН'.
 //   ТРЕБОВАНИЕ: интервал cron должен превышать самый долгий шаг, иначе
 //   следующий прогон подхватит курсор и затрёт результат (наблюдалось на
 //   k4-8 при cron '* * * * *': шаг T3 длился 10,86 с). Штатный cron — */5.
+// НОВОЕ В k4-10: после КАЖДОГО шага шлётся уведомление $notification.post —
+//   при ручном запуске из UI Egern иначе не видно ни прогресса, ни итога.
+//   Уведомление отправляется ПОСЛЕ записи состояния: даже если оно упадёт,
+//   результат шага уже сохранён.
 //
-// ИТОГИ k4-8 (Egern 2.20.0, k3, 2026-08-09) — ГЛАВНЫЙ ВОПРОС ЗАКРЫТ:
-//   • ctx.http с policy = имя узла из proxies АДРЕСУЕТ ИМЕННО ЭТОТ УЗЕЛ:
-//     RH-Явный-1 → 111.88.96.83 (RU), RH-Явный-3 → 85.93.10.78 (DE),
-//     группа → 111.88.96.82, DIRECT → 5.227.10.120. Повтор (T3) устойчив.
-//   • Поузловой спидтест реализуем: 256 КБ дали 9,5 и 2,8 Мбит/с (T6).
-//   • RH-Явный-2 стабильно отдаёт HTTP 400 на www.cloudflare.com/cdn-cgi/trace,
-//     НО тот же узел успешно качает с speed.cloudflare.com ⇒ отказ привязан
-//     к паре «узел + хост». Причина — шаг W1 этой ревизии.
-//   • __context.baseUrl = http://localhost:13991/js ⇒ у Egern есть ЛОКАЛЬНЫЙ
-//     HTTP-сервер. Ранее перебирались 9090/8080/6152/6170/7890/1082/8888 —
-//     этот порт не проверялся. Шаг W3. От него зависит вывод 44 (нет
-//     управления политиками из скрипта).
-//   • sessionStorage НЕ переживает прогон (T5), localStorage переживает.
+// ИТОГИ k4-9 (Egern 2.20.0, k3, 2026-08-09):
+//   • АДРЕСАЦИЯ УЗЛА ИЗ proxies ПОДТВЕРЖДЕНА ТРЕТЬИМ СПОСОБОМ: ifconfig.me
+//     через RH-Явный-1/2/3 и DIRECT дал ЧЕТЫРЕ разных выхода —
+//     111.88.96.83 / 5.129.249.122 / 85.93.10.78 / 5.227.10.120.
+//   • ПРИЧИНА HTTP 400 — НЕ УЗЕЛ, А ХОСТ. Через RH-Явный-2 отвечают
+//     speed.cloudflare.com и ifconfig.me (200), но cp.cloudflare.com и
+//     www.cloudflare.com дают 400 — и по HTTP, и по HTTPS. Cloudflare
+//     отшивает выходной IP 5.129.249.122 на части своих хостов.
+//     СЛЕДСТВИЕ ЗА ПРЕДЕЛАМИ СТЕНДА: cp.cloudflare.com/generate_204 —
+//     наш latency_test_url и боевой proxy-test-url; на таких узлах живой
+//     и быстрый узел выглядит мёртвым. Подбор замены — шаг V3.
+//   • ПОРТ 13991 ОТВЕЧАЕТ: 127.0.0.1:13991 через DIRECT дал 404 (ответ
+//     живого сервера), без policy — 400 (запрос уходит в туннель).
+//     Перебор путей — шаг V2.
+//   • Шаг W4 (ws) НЕУБЕДИТЕЛЕН: взят тот же cp.cloudflare.com, получен тот
+//     же 400 — отличить неверный разбор ws от отказа хоста нельзя.
+//     Повтор на другом URL — шаг V1.
+//   • Скорости 256 КБ: n1 8,3 / n2 7,4 / n3 (DE) 1,2 Мбит/с. У n2 разброс
+//     между прогонами (2,8 → 7,4) ⇒ одиночный замер шумный, нужна медиана.
 //
+// ИТОГИ k4-8: ctx.http с policy = имя узла из proxies адресует именно этот
+//   узел; поузловой спидтест реализуем; sessionStorage не переживает прогон,
+//   localStorage переживает; __context.baseUrl = http://localhost:13991/js.
 // ИТОГИ k4-7: $httpClient ИГНОРИРУЕТ node и policy; $httpClient.request
 //   РОНЯЕТ прогон — НЕ ВЫЗЫВАТЬ; $httpAPI нет; WebSocket работает;
 //   $utils.geoip для узлового IP даёт мусор — страна ТОЛЬКО из имени узла.
@@ -26,9 +39,9 @@
 // В ТЕКСТЕ СКРИПТА НЕЛЬЗЯ: обратные кавычки, ${...} и ЛЮБЫЕ обратные слэши.
 // ФАЙЛ ЗАКАНЧИВАЕТСЯ СТРОЧНЫМ КОММЕНТАРИЕМ БЕЗ ПЕРЕВОДА СТРОКИ — защита от мусора.
 // ОГРАНИЧЕНИЕ ПО ТРАФИКУ: через обходной узел (RH-Явный-WS) идёт РОВНО ОДИН
-//   запрос generate_204 в шаге W4 — трафик обходных узлов платный.
+//   запрос в шаге V1 — трафик обходных узлов платный.
 
-export const K4_REV = 'k4-9';
+export const K4_REV = 'k4-10';
 
 export function subNames(text) {
   const out = [];
@@ -58,15 +71,13 @@ export function firstNormalNode(text) {
 export const K4_SCRIPT = `export default async function (ctx) {
   const t0 = Date.now();
   const env = ctx.env || {};
-  const STATE = 'rh_scan9';
-  const REV = 'k4-9';
+  const STATE = 'rh_scan10';
+  const REV = 'k4-10';
   const EX1 = 'RH-Явный-1';
   const EX2 = 'RH-Явный-2';
-  const EX3 = 'RH-Явный-3';
   const EXW = 'RH-Явный-WS';
 
-  // Один запрос через заданную политику. Тело обрезается: в отчёт идёт
-  // только признак, а не содержимое страницы.
+  // Одиночный запрос через заданную политику. Пустая policy — без указания.
   const via = async (url, policy, ms, cut) => {
     try {
       const opt = { timeout: ms || 9000 };
@@ -78,50 +89,47 @@ export const K4_SCRIPT = `export default async function (ctx) {
     } catch (e) { return 'err:' + ((e && e.message) || e); }
   };
 
+  // Уведомление: единственный способ увидеть прогресс при ручном запуске.
+  const notify = (title, text) => {
+    try {
+      if (typeof $notification !== 'undefined' && $notification && $notification.post) {
+        $notification.post(title, '', text);
+      }
+    } catch (e) { }
+  };
+
   const steps = [
-    // W1: ГЛАВНОЕ — от чего зависит отказ RH-Явный-2: от узла или от хоста.
-    ['W1_n2_urls', async () => ({
-      plain_204: await via('http://cp.cloudflare.com/generate_204', EX2),
-      https_204: await via('https://cp.cloudflare.com/generate_204', EX2),
-      trace: await via('https://www.cloudflare.com/cdn-cgi/trace', EX2),
-      speed_1k: await via('https://speed.cloudflare.com/__down?bytes=1024', EX2, 15000, 20),
-      control_n1_trace: await via('https://www.cloudflare.com/cdn-cgi/trace', EX1)
-    })],
-    // W2: выходной IP трёх узлов через НЕ-Cloudflare источник —
-    // третий независимый способ подтвердить поузловую адресацию.
-    ['W2_ip_alt', async () => ({
-      n1: await via('https://ifconfig.me/ip', EX1, 9000, 60),
-      n2: await via('https://ifconfig.me/ip', EX2, 9000, 60),
-      n3: await via('https://ifconfig.me/ip', EX3, 9000, 60),
-      direct: await via('https://ifconfig.me/ip', 'DIRECT', 9000, 60)
-    })],
-    // W3: локальный HTTP-сервер Egern (порт из __context.baseUrl).
-    // Шаг вынесен отдельно: обращение к локальному адресу может уронить прогон.
-    ['W3_local_13991', async () => ({
-      root: await via('http://127.0.0.1:13991/', '', 3000, 200),
-      js: await via('http://127.0.0.1:13991/js', '', 3000, 200),
-      root_direct: await via('http://127.0.0.1:13991/', 'DIRECT', 3000, 200),
-      by_name: await via('http://localhost:13991/', '', 3000, 200)
-    })],
-    // W4: разбор ws-транспорта. РОВНО ОДИН запрос — узел обходной, трафик платный.
-    ['W4_ws_once', async () => ({
+    // V1: ws-транспорт. РОВНО ОДИН запрос, узел обходной — трафик платный.
+    // URL не из Cloudflare: на k4-9 именно хост Cloudflare давал ложный 400.
+    ['V1_ws_ip', async () => ({
       note: 'один запрос, обходной узел',
-      r: await via('http://cp.cloudflare.com/generate_204', EXW, 9000, 20)
+      ip: await via('https://ifconfig.me/ip', EXW, 12000, 60)
     })],
-    // W5: замер 256 КБ через три обычных узла подряд — устойчивость привязки
-    // и прообраз персонального спидтеста.
-    ['W5_speed3', async () => {
-      const one = async (policy) => {
-        const t = Date.now();
-        try {
-          const r = await ctx.http.get('https://speed.cloudflare.com/__down?bytes=262144',
-                                       { policy: policy, timeout: 30000 });
-          const b = await r.arrayBuffer();
-          const ms = Math.max(1, Date.now() - t);
-          return { bytes: b.byteLength, ms: ms, mbps: Math.round(b.byteLength * 8 / ms / 100) / 10 };
-        } catch (e) { return 'err:' + ((e && e.message) || e); }
-      };
-      return { n1: await one(EX1), n2: await one(EX2), n3: await one(EX3) };
+    // V2: локальный сервер Egern. Через DIRECT — иначе запрос уходит в туннель.
+    ['V2_local_paths', async () => {
+      const paths = ['/', '/js', '/js/', '/api', '/v1', '/config', '/policies', '/status', '/version'];
+      const out = {};
+      for (let i = 0; i < paths.length; i++) {
+        out[paths[i]] = await via('http://127.0.0.1:13991' + paths[i], 'DIRECT', 3000, 200);
+      }
+      return out;
+    }],
+    // V3: подбор тест-URL, отвечающего со ВСЕХ узлов. RH-Явный-2 — заведомо
+    // проблемный для Cloudflare; RH-Явный-1 идёт контролем.
+    ['V3_test_urls', async () => {
+      const urls = [
+        'http://cp.cloudflare.com/generate_204',
+        'http://www.msftconnecttest.com/connecttest.txt',
+        'http://www.gstatic.com/generate_204',
+        'http://captive.apple.com/hotspot-detect.html',
+        'https://ifconfig.me/ip'
+      ];
+      const n2 = {}, n1 = {};
+      for (let i = 0; i < urls.length; i++) {
+        n2[urls[i]] = await via(urls[i], EX2, 9000, 40);
+        n1[urls[i]] = await via(urls[i], EX1, 9000, 40);
+      }
+      return { n2: n2, n1: n1 };
     }]
   ];
 
@@ -140,9 +148,20 @@ export const K4_SCRIPT = `export default async function (ctx) {
     st.results[nm] = 'НАЧАТ И НЕ ЗАВЕРШЁН — шаг роняет прогон';
     try { ctx.storage.setJSON(STATE, st); } catch (e) { }
     ranNow = nm;
-    try { st.results[nm] = await steps[idx][1](); }
-    catch (e) { st.results[nm] = 'ошибка: ' + String((e && e.message) || e); }
+    let okText = '';
+    try {
+      st.results[nm] = await steps[idx][1]();
+      okText = 'готово';
+    } catch (e) {
+      st.results[nm] = 'ошибка: ' + String((e && e.message) || e);
+      okText = 'ОШИБКА';
+    }
     try { ctx.storage.setJSON(STATE, st); } catch (e) { }
+    const left = total - st.cursor;
+    notify(REV + ': шаг ' + st.cursor + ' из ' + total,
+           nm + ' — ' + okText + (left > 0 ? '. Осталось шагов: ' + left + ', запусти ещё раз' : '. ПЕРЕБОР ЗАВЕРШЁН, забирай отчёт'));
+  } else {
+    notify(REV + ': перебор уже завершён', 'Все ' + total + ' шагов пройдены. Отчёт на стенде.');
   }
 
   const R = { rev: REV, step: ranNow, cursor: st.cursor, total: total,
