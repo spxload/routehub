@@ -1,29 +1,29 @@
-// routehub-egern-k4.js — диагностика Egern. K4_REV: k4-7 (2026-08-09).
-// СХЕМА: шаги идут ПО ОДНОМУ ЗА ПРОГОН, курсор — в хранилище.
-// ПРИЧИНА: на k4-6 прогон упал с UNHANDLED PROMISE REJECTION внутри самого
-//   Egern: n is not a function (In n(e,void 0,void 0), n is undefined) @ egern-js
-//   — прослойка совместимости вызвала колбек, которого у неё нет.
-//   Падение НЕ ловится try/catch и убивает весь прогон ⇒ опасные формы
-//   вызова изолированы по прогонам.
-// КУРСОР СДВИГАЕТСЯ ДО выполнения шага: упавший шаг останется со статусом
-//   'НАЧАТ И НЕ ЗАВЕРШЁН', а перебор пойдёт дальше.
-// Сброс перебора — env.RH_RESET = любое новое значение.
+// routehub-egern-k4.js — диагностика Egern. K4_REV: k4-8 (2026-08-09).
+// СХЕМА: шаги ПО ОДНОМУ ЗА ПРОГОН, курсор в хранилище, сдвиг ДО выполнения.
+//   Упавший шаг остаётся со статусом 'НАЧАТ И НЕ ЗАВЕРШЁН'.
 //
-// УЖЕ УСТАНОВЛЕНО (k4-1..k4-5):
-//   • Слой совместимости — SURGE: $environment = { system: iOS,
-//     surge-build: 3010, surge-version: 5.8.3 }.
-//   • $persistentStore и ctx.storage — ОДНО хранилище.
-//   • $utils.geoip/ipasn/ipaso работают и ПОЛНЕЕ ctx.lookupIP.
-//   • $config нет ⇒ переключения политики штатно нет (остаётся $httpAPI — шаг S2).
-//   • Узел из proxies адресуем через ctx.http (204); имя из подписки — 404.
-//   • Глобальный fetch идёт МИМО туннеля.
+// ИТОГИ k4-7 (Egern 2.20.0, k3, 2026-08-09):
+//   • $httpClient ИГНОРИРУЕТ и node, и policy: все варианты дали один выход
+//     111.88.96.83, тот же, что у обычных правил. Совместимость поверхностная.
+//   • $httpClient.request РОНЯЕТ прогон (шаг S8 не завершён) — НЕ ВЫЗЫВАТЬ.
+//   • $httpAPI нет ⇒ управления политиками из скрипта нет никаким путём.
+//   • WebSocket РАБОТАЕТ (ws.postman-echo.com — echo) ⇒ реальное время возможно.
+//   • localStorage персистентен; $utils.ungzip работает; $notification.post работает.
+//   • $utils.geoip для узлового IP дал PK/null — та же дыра, что у ctx.lookupIP.
+//     Страна — ТОЛЬКО из имени узла (вывод 4 в СТАРТ.md).
+//   • В globalThis есть НЕОПИСАННЫЕ Egern, __context, _tickTimers, а также window,
+//     document, location, sessionStorage, indexedDB, EventSource, Worker — шаг T1.
+//
+// ГЛАВНЫЙ ОТКРЫТЫЙ ВОПРОС (шаг T2): адресуем ли узел через ctx.http.
+//   В k4-7 явный узел и группа дали ОДИН IP — но группа могла выбрать именно его.
+//   Различает только сравнение ТРЁХ РАЗНЫХ явных узлов между собой.
+//   Имена детерминированы (RH-Явный-1..3), правка Worker'а не нужна.
 //
 // В ТЕКСТЕ СКРИПТА НЕЛЬЗЯ: обратные кавычки, ${...} и ЛЮБЫЕ обратные слэши.
-// ФАЙЛ ЗАКАНЧИВАЕТСЯ СТРОЧНЫМ КОММЕНТАРИЕМ БЕЗ ПЕРЕВОДА СТРОКИ — защита
-//   от мусора, дописанного в хвост при коммите (он попадёт в комментарий).
+// ФАЙЛ ЗАКАНЧИВАЕТСЯ СТРОЧНЫМ КОММЕНТАРИЕМ БЕЗ ПЕРЕВОДА СТРОКИ — защита от мусора.
 // ОГРАНИЧЕНИЕ: ни одна проба НЕ идёт через RH-Обход — трафик платный.
 
-export const K4_REV = 'k4-7';
+export const K4_REV = 'k4-8';
 
 export function subNames(text) {
   const out = [];
@@ -54,33 +54,22 @@ export const K4_SCRIPT = `export default async function (ctx) {
   const t0 = Date.now();
   const env = ctx.env || {};
   const G = globalThis;
-  const U204 = env.RH_TEST_URL || 'http://cp.cloudflare.com/generate_204';
   const TRACE = 'https://www.cloudflare.com/cdn-cgi/trace';
   const GROUP = env.RH_GROUP || 'RH-Пул-Обычные';
-  const NODE = env.RH_NODE || '';
-  const NODE2 = env.RH_NODE2 || '';
-  const STATE = 'rh_scan';
+  const STATE = 'rh_scan8';
 
   const parseTrace = (txt) => {
     const s = String(txt || '');
     const ip = s.match(/ip=([0-9a-fA-F:.]+)/);
     const loc = s.match(/loc=([A-Z][A-Z])/);
-    const colo = s.match(/colo=([A-Z][A-Z][A-Z])/);
-    return { ip: ip ? ip[1] : null, loc: loc ? loc[1] : null, colo: colo ? colo[1] : null };
+    return { ip: ip ? ip[1] : null, loc: loc ? loc[1] : null };
   };
-  const cb = (fn, arg, ms) => new Promise((res) => {
-    let done = false;
-    const fin = (v) => { if (!done) { done = true; res(v); } };
-    const timer = setTimeout(() => fin({ r: 'timeout' }), ms || 9000);
+  const exitVia = async (policy) => {
     try {
-      fn(arg, function (a, b, c) {
-        clearTimeout(timer);
-        fin({ err: a ? String(a) : null,
-              status: b ? (b.status || b.statusCode || null) : null,
-              body: c ? String(c).slice(0, 400) : '' });
-      });
-    } catch (e) { clearTimeout(timer); fin({ r: 'throw:' + ((e && e.message) || e) }); }
-  });
+      const r = await ctx.http.get(TRACE, { policy: policy, timeout: 9000 });
+      return Object.assign({ st: r.status }, parseTrace(await r.text()));
+    } catch (e) { return 'err:' + ((e && e.message) || e); }
+  };
   const names = (o) => {
     const s = new Set();
     let cur = o;
@@ -90,138 +79,104 @@ export const K4_SCRIPT = `export default async function (ctx) {
     }
     return Array.from(s).filter(n => ['constructor','toString','apply','arguments','bind','call','caller','length','name','prototype'].indexOf(n) < 0).sort();
   };
+  const safeVal = (v, depth) => {
+    const t = typeof v;
+    if (v === null || t === 'undefined') return String(v);
+    if (t === 'string' || t === 'number' || t === 'boolean') return v;
+    if (t === 'function') return 'function';
+    if (depth <= 0) return '[object]';
+    const out = {};
+    names(v).slice(0, 40).forEach(k => {
+      try { out[k] = safeVal(v[k], depth - 1); } catch (e) { out[k] = 'err'; }
+    });
+    return out;
+  };
 
   const steps = [
-    ['S1_scan_globals', async () => {
-      const list = ['$httpAPI','$surge','$trigger','$intercept','$wifi','$storage','$mock',
-                    '$done','$config','$argument','$task','$prefs','$option','$input',
-                    '$loon','$rocket','$axios','$app','$exit','$log','$resource',
-                    '$substore','$response','$request','$notification','$utils','$network',
-                    '$script','$environment','$httpClient','$persistentStore','$cronexp',
-                    '$chavy','$nobyda','$eval','$msg','$openURL','$copy','$browser'];
+    // T1: неописанные объекты самого Egern
+    ['T1_egern_obj', async () => ({
+      Egern_type: typeof G.Egern,
+      Egern: typeof G.Egern !== 'undefined' ? safeVal(G.Egern, 2) : '-',
+      __context_type: typeof G.__context,
+      __context: typeof G.__context !== 'undefined' ? safeVal(G.__context, 2) : '-',
+      tickTimers: typeof G._tickTimers
+    })],
+    // T2: ГЛАВНОЕ — разные ли выходы у трёх ЯВНЫХ узлов
+    ['T2_explicit_diff', async () => ({
+      n1: await exitVia('RH-Явный-1'),
+      n2: await exitVia('RH-Явный-2'),
+      n3: await exitVia('RH-Явный-3'),
+      group: await exitVia(GROUP),
+      direct: await exitVia('DIRECT')
+    })],
+    // T3: повтор того же через паузу — устойчиво ли распределение
+    ['T3_explicit_repeat', async () => {
+      await new Promise(r => setTimeout(r, 1500));
+      return { n1: await exitVia('RH-Явный-1'), n2: await exitVia('RH-Явный-2') };
+    }],
+    // T4: среда WebKit — что реально живое
+    ['T4_dom', async () => {
       const out = {};
-      list.forEach(n => {
-        const v = G[n];
-        out[n] = (v === undefined) ? '-' :
-          (typeof v === 'object' || typeof v === 'function') ? names(v) : typeof v;
-      });
+      try { out.location = typeof location !== 'undefined' ? String(location.href).slice(0, 120) : '-'; } catch (e) { out.location = 'err'; }
+      try { out.document = typeof document !== 'undefined' ? (document.title === undefined ? 'no title' : String(document.title)) : '-'; } catch (e) { out.document = 'err'; }
+      try { out.origin = typeof origin !== 'undefined' ? String(origin) : '-'; } catch (e) { out.origin = 'err'; }
+      out.session = typeof sessionStorage;
+      out.idb = typeof indexedDB;
+      out.worker = typeof Worker;
+      out.eventsource = typeof EventSource;
+      out.rtc = typeof RTCPeerConnection;
+      out.opendb = typeof openDatabase;
       return out;
     }],
-    ['S2_httpapi_probe', async () => {
-      const a = G.$httpAPI;
-      if (typeof a !== 'function') return 'нет $httpAPI (typeof ' + (typeof a) + ')';
-      return await new Promise((res) => {
-        let done = false;
-        const fin = (v) => { if (!done) { done = true; res(v); } };
-        const timer = setTimeout(() => fin('timeout'), 8000);
-        try { a('GET', 'v1/policy_groups', null, (r) => { clearTimeout(timer); fin(JSON.parse(JSON.stringify(r || null))); }); }
-        catch (e) { clearTimeout(timer); fin('throw:' + ((e && e.message) || e)); }
-      });
+    // T5: sessionStorage — переживает ли прогоны (в отличие от localStorage)
+    ['T5_session', async () => {
+      if (typeof sessionStorage === 'undefined') return 'нет';
+      const prev = sessionStorage.getItem('rh_ss');
+      sessionStorage.setItem('rh_ss', String(Date.now()));
+      return { prev_was: prev, len: sessionStorage.length };
     }],
-    ['S3_hc_string', async () => await cb((a, c) => G.$httpClient.get(a, c), U204)],
-    ['S4_hc_object', async () => await cb((a, c) => G.$httpClient.get(a, c), { url: TRACE })],
-    ['S5_hc_node_sub', async () => {
-      if (!NODE) return 'нет RH_NODE';
-      const r = await cb((a, c) => G.$httpClient.get(a, c), { url: TRACE, node: NODE });
-      return r.body ? Object.assign({ status: r.status }, parseTrace(r.body)) : r;
-    }],
-    ['S6_hc_node_explicit', async () => {
-      if (!NODE2) return 'нет RH_NODE2';
-      const r = await cb((a, c) => G.$httpClient.get(a, c), { url: TRACE, node: NODE2 });
-      return r.body ? Object.assign({ status: r.status }, parseTrace(r.body)) : r;
-    }],
-    ['S7_hc_policy', async () => {
-      const r = await cb((a, c) => G.$httpClient.get(a, c), { url: TRACE, policy: GROUP });
-      return r.body ? Object.assign({ status: r.status }, parseTrace(r.body)) : r;
-    }],
-    ['S8_hc_request', async () => {
-      if (typeof G.$httpClient.request !== 'function') return 'нет request';
-      return await cb((a, c) => G.$httpClient.request(a, c), { method: 'GET', url: U204 });
-    }],
-    ['S9_ctx_exits', async () => {
+    // T6: два параллельных замера через РАЗНЫЕ узлы — прообраз спидтеста.
+    // По 256 КБ на узел, только обычные узлы.
+    ['T6_speed_pair', async () => {
       const one = async (policy) => {
+        const t = Date.now();
         try {
-          const r = await ctx.http.get(TRACE, { policy: policy, timeout: 9000 });
-          return Object.assign({ status: r.status }, parseTrace(await r.text()));
+          const r = await ctx.http.get('https://speed.cloudflare.com/__down?bytes=262144',
+                                       { policy: policy, timeout: 30000 });
+          const b = await r.arrayBuffer();
+          const ms = Math.max(1, Date.now() - t);
+          return { bytes: b.byteLength, ms: ms, mbps: Math.round(b.byteLength * 8 / ms / 100) / 10 };
         } catch (e) { return 'err:' + ((e && e.message) || e); }
       };
-      return { explicit: NODE2 ? await one(NODE2) : '-', group: await one(GROUP), direct: await one('DIRECT') };
+      return { n1: await one('RH-Явный-1'), n2: await one('RH-Явный-2') };
     }],
-    ['S10_geo_compare', async () => {
-      const r = await ctx.http.get(TRACE, { policy: NODE2 || GROUP, timeout: 9000 });
-      const t = parseTrace(await r.text());
-      const u = G.$utils;
-      if (!t.ip) return t;
-      return { ip: t.ip, cf_loc: t.loc, colo: t.colo,
-               utils: u ? { geo: u.geoip(t.ip), asn: u.ipasn(t.ip), aso: u.ipaso(t.ip) } : '-',
-               ctx_lookup: ctx.lookupIP(t.ip) };
-    }],
-    ['S11_ws', async () => {
-      if (typeof WebSocket !== 'function') return 'нет WebSocket';
-      const test = (url) => new Promise((res) => {
-        let done = false;
-        const fin = (v) => { if (!done) { done = true; res(v); } };
-        const timer = setTimeout(() => fin('timeout'), 7000);
-        try {
-          const ws = new WebSocket(url);
-          ws.onopen = () => { try { ws.send('rh'); } catch (e) { } };
-          ws.onmessage = () => { clearTimeout(timer); try { ws.close(); } catch (e) { } fin('echo'); };
-          ws.onerror = () => { clearTimeout(timer); fin('error'); };
-        } catch (e) { clearTimeout(timer); fin('throw:' + ((e && e.message) || e)); }
-      });
-      return { postman: await test('wss://ws.postman-echo.com/raw'),
-               events: await test('wss://echo.websocket.events') };
-    }],
-    ['S12_localstorage', async () => {
-      if (typeof localStorage === 'undefined') return 'нет';
-      const prev = localStorage.getItem('rh_ls');
-      const n = Number(localStorage.getItem('rh_ls_n') || '0') + 1;
-      localStorage.setItem('rh_ls', String(Date.now()));
-      localStorage.setItem('rh_ls_n', String(n));
-      return { prev_was: prev, runs: n, len: localStorage.length };
-    }],
-    ['S13_utils_ungzip', async () => {
-      const u = G.$utils;
-      if (!u || typeof u.ungzip !== 'function') return 'нет ungzip';
-      const src = new TextEncoder().encode('RouteHub '.repeat(32));
-      const gz = await ctx.compress.gzip(src);
-      const back = u.ungzip(gz);
-      return { gz_len: gz && gz.length, back_type: typeof back,
-               back_len: back && (back.length || back.byteLength) || null };
-    }],
-    ['S14_notify', async () => {
-      const n = G.$notification;
-      if (!n || typeof n.post !== 'function') return 'нет $notification.post';
-      n.post('RouteHub', 'перебор Surge-API', 'шаг S14');
-      return 'вызвано';
-    }],
-    ['S15_widget_ctx', async () => ({
-      widgetFamily: typeof ctx.widgetFamily, script_type: G.$script ? G.$script.type : '-',
-      cron: ctx.cron || null, respond: typeof ctx.respond, abort: typeof ctx.abort
+    // T7: следы перехвата (заполнит будущий http_request-скрипт)
+    ['T7_mitm', async () => ({
+      hits: ctx.storage.get('rh_mitm_hits'), last: ctx.storage.get('rh_mitm_last')
     })]
   ];
 
   let st = null;
   try { st = ctx.storage.getJSON(STATE); } catch (e) { }
-  if (!st || st.rev !== 'k4-7' || (env.RH_RESET && st.reset !== env.RH_RESET)) {
-    st = { rev: 'k4-7', reset: env.RH_RESET || '', cursor: 0, results: {} };
+  if (!st || st.rev !== 'k4-8' || (env.RH_RESET && st.reset !== env.RH_RESET)) {
+    st = { rev: 'k4-8', reset: env.RH_RESET || '', cursor: 0, results: {} };
   }
   const total = steps.length;
   const idx = st.cursor;
   let ranNow = null;
 
   if (idx < total) {
-    const nameOfStep = steps[idx][0];
+    const nm = steps[idx][0];
     st.cursor = idx + 1;
-    st.results[nameOfStep] = 'НАЧАТ И НЕ ЗАВЕРШЁН — шаг роняет прогон';
+    st.results[nm] = 'НАЧАТ И НЕ ЗАВЕРШЁН — шаг роняет прогон';
     try { ctx.storage.setJSON(STATE, st); } catch (e) { }
-    ranNow = nameOfStep;
-    try { st.results[nameOfStep] = await steps[idx][1](); }
-    catch (e) { st.results[nameOfStep] = 'ошибка: ' + String((e && e.message) || e); }
+    ranNow = nm;
+    try { st.results[nm] = await steps[idx][1](); }
+    catch (e) { st.results[nm] = 'ошибка: ' + String((e && e.message) || e); }
     try { ctx.storage.setJSON(STATE, st); } catch (e) { }
   }
 
-  const R = { rev: 'k4-7', step: ranNow, cursor: st.cursor, total: total,
+  const R = { rev: 'k4-8', step: ranNow, cursor: st.cursor, total: total,
               done: st.cursor >= total, results: st.results,
               total_ms: Date.now() - t0, ts: new Date().toISOString() };
   try {
@@ -231,8 +186,8 @@ export const K4_SCRIPT = `export default async function (ctx) {
       });
     }
   } catch (e) { }
-  return { rh: 'k4-7', step: ranNow, cursor: st.cursor, total: total };
+  return { rh: 'k4-8', step: ranNow, cursor: st.cursor, total: total };
 }
 `;
 
-// ХВОСТОВОЙ СТРАЖ: строка без перевода в конце файла. Мусор после неё — 
+// ХВОСТОВОЙ СТРАЖ — строка без перевода в конце файла; мусор после неё — 
