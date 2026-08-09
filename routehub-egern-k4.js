@@ -16,7 +16,7 @@
 //     surge-build: 3010, surge-version: 5.8.3 }.
 //   • $persistentStore и ctx.storage — ОДНО хранилище.
 //   • $utils.geoip/ipasn/ipaso работают и ПОЛНЕЕ ctx.lookupIP.
-//   • $config нет ⇒ переключения политики штатно нет (остаётся $httpAPI — шаг 3).
+//   • $config нет ⇒ переключения политики штатно нет (остаётся $httpAPI — шаг S2).
 //   • Узел из proxies адресуем через ctx.http (204); имя из подписки — 404.
 //   • Глобальный fetch идёт МИМО туннеля.
 //
