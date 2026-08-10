@@ -1,33 +1,43 @@
 // =============================================================
-// routehub-probe-loon.js — ЧИТАЮЩАЯ диагностика Loon. REV: L2 (2026-08-10).
+// routehub-probe-loon.js — ЧИТАЮЩАЯ диагностика Loon. REV: L3 (2026-08-10).
 //
-// ЗАЧЕМ. По Egern пройдено пятнадцать ревизий, и сплошная опись globalThis
-//   показала то, чего не найти перебором по списку известных имён. По Loon
-//   такой описи НЕ ДЕЛАЛОСЬ НИ РАЗУ — искали только то, что знали из
-//   документации. Проверяем, нет ли в боевом клиенте механизмов, мимо которых
-//   мы прошли: журнала запросов (вывод 8 гласит «Loon не умеет логировать»),
-//   локального управляющего порта, недокументированных методов $config.
+// ИТОГИ L2 — Loon оказался БОГАЧЕ Egern:
+//   • $config имеет ВОСЕМЬ методов, а не три: getConfig, getPolicy,
+//     getSelectedPolicy, getSubPolicies, getSubPolicys, setPluginEnable,
+//     setRunningModel, setScriptEnable, setSelectPolicy.
+//     setPluginEnable и setScriptEnable — ВОЗМОЖНОСТЬ, КОТОРОЙ НЕТ В EGERN:
+//     скрипт может включать и гасить плагины и другие скрипты.
+//   • $persistentStore умеет remove; $utils — ungzipTest.
+//   • $environment, $network, $task, $prefs ОТСУТСТВУЮТ (в Egern они есть
+//     из Surge-прослойки — здесь прослойки нет).
+//   • НЕДОКУМЕНТИРОВАННЫЕ глобалы: captureLog, $loon, $argument,
+//     __LOONGetData__, __LOONSendData__, __LOONRequestBody__,
+//     __LOONResponseBody__, __LOONBase64BinaryTool, __LNbase64ToUint8Array.
+//     captureLog по названию — про журналирование (наш вывод 8: «Loon не
+//     умеет логировать незагрузившиеся домены»). Ни один не описан.
+//   • ПОРТ 6152 ОТВЕЧАЕТ, но по TLS: ошибка рукопожатия вместо таймаута,
+//     как на остальных девяти портах. Стучаться надо по https.
+//   • WebSocket ЕСТЬ (function), indexedDB есть, движок WebKit iOS 18.7,
+//     часовой пояс Europe/Moscow. Дашборд реального времени возможен и
+//     в боевом клиенте — ограничение вывода 7 снимается.
+//     localStorage ОТСУТСТВУЕТ (в Egern был), crypto.subtle отсутствует.
+//   • getConfig() вернул объект с числовыми ключами 0..39 — это МАССИВ,
+//     а не структура с policy_groups. Формат разбирается шагом S3.
 //
-// БЕЗОПАСНОСТЬ. Скрипт ТОЛЬКО ЧИТАЕТ: НЕ вызывает $config.setSelectPolicy,
-//   НЕ меняет группы, НЕ пишет ничего, кроме собственного состояния в
-//   $persistentStore под ключом rh_probe_l1. Боевая маршрутизация не
-//   затрагивается. Запуск вручную, generic-скриптом.
+// БЕЗОПАСНОСТЬ. Скрипт ТОЛЬКО ЧИТАЕТ. Методы setSelectPolicy, setPluginEnable,
+//   setScriptEnable и setRunningModel НЕ ВЫЗЫВАЮТСЯ НИГДЕ — они меняют живую
+//   конфигурацию. Запись — только собственное состояние в $persistentStore
+//   под ключом rh_probe_l1.
 //
-// АДРЕС ДЛЯ ОТЧЁТА берётся из argument строки [Script] — чтобы токен стенда
-//   не попадал в публичный репозиторий. Без него скрипт тоже работает: итог
-//   приходит пушем, полный отчёт остаётся в $persistentStore.
-//
-// СХЕМА ПРОГОНА (перенесена из Egern-ревизий): все шаги за один запуск;
-//   ошибка шага пишется в отчёт и перебор идёт дальше; шаг, уронивший прогон,
-//   при следующем запуске заносится в чёрный список и пропускается навсегда;
-//   бюджет 60 с — недоделанное выполнится следующим запуском.
+// ДОСТАВКА ОТЧЁТА: весь отчёт кладётся В БУФЕР ОБМЕНА через уведомление
+//   (attach clipboard) — на L2 отправка по сети не сработала. Дополнительно
+//   пробуется POST, если задан argument.
 // =============================================================
 
-const REV = 'L2';
+const REV = 'L3';
 const STATE = 'rh_probe_l1';
 const BUDGET = 60000;
 
-// Адрес /probe стендового Worker'а передаётся через argument строки [Script].
 const POST_URL = (function () {
   try { if (typeof $argument !== 'undefined' && $argument) return String($argument).trim(); }
   catch (e) { }
@@ -36,10 +46,6 @@ const POST_URL = (function () {
 
 const t0 = Date.now();
 
-function notify(title, text) {
-  try { if (typeof $notification !== 'undefined' && $notification.post) $notification.post(title, '', text); }
-  catch (e) { }
-}
 function readState() {
   try { const raw = $persistentStore.read(STATE); if (raw) return JSON.parse(raw); } catch (e) { }
   return null;
@@ -48,7 +54,6 @@ function writeState(o) {
   try { $persistentStore.write(JSON.stringify(o), STATE); } catch (e) { }
 }
 
-// Опись объекта вместе с прототипами: имена и типы значений.
 function describe(obj, limit) {
   const out = {};
   let seen = 0;
@@ -66,7 +71,8 @@ function describe(obj, limit) {
       const n = names[i];
       if (n === 'constructor' || n.indexOf('__') === 0) continue;
       if (['hasOwnProperty', 'isPrototypeOf', 'propertyIsEnumerable',
-           'toLocaleString', 'toString', 'valueOf'].indexOf(n) >= 0) continue;
+           'toLocaleString', 'toString', 'valueOf', 'apply', 'bind', 'call',
+           'caller', 'length', 'prototype'].indexOf(n) >= 0) continue;
       let t = 'нет';
       try { t = typeof obj[n]; } catch (e) { t = 'недоступно'; }
       if (t === 'undefined') continue;
@@ -89,9 +95,9 @@ function get(url, opt, ms) {
         if (done.fired) return;
         done.fired = true;
         clearTimeout(timer);
-        if (err) { resolve('err:' + String(err).slice(0, 80)); return; }
+        if (err) { resolve('err:' + String(err).slice(0, 90)); return; }
         const r = { st: resp ? resp.status : null };
-        if (body) r.body = String(body).slice(0, 120);
+        if (body) r.body = String(body).slice(0, 150);
         resolve(r);
       });
     } catch (e) {
@@ -101,124 +107,135 @@ function get(url, opt, ms) {
 }
 
 const steps = [
-  // S1: СПЛОШНАЯ опись globalThis. Главный шаг — по Loon впервые.
-  ['S1_scan_full', async function () {
-    const all = [];
-    try { Object.getOwnPropertyNames(globalThis).forEach(function (n) { all.push(n); }); } catch (e) { }
-    const interesting = [];
-    for (let i = 0; i < all.length; i++) {
-      const n = all[i];
-      const c = n.charAt(0);
-      if (c >= 'A' && c <= 'Z' && n.length > 3) continue;
-      if (n.indexOf('on') === 0 && n.length > 4) continue;
-      interesting.push(n);
-    }
-    const kw = all.filter(function (n) {
-      const l = n.toLowerCase();
-      return l.indexOf('loon') >= 0 || l.indexOf('policy') >= 0 || l.indexOf('proxy') >= 0 ||
-             l.indexOf('config') >= 0 || l.indexOf('surge') >= 0 || l.indexOf('log') >= 0;
-    });
-    return { total: all.length, interesting: interesting.join(','), by_keyword: kw.join(',') };
-  }],
-
-  // S2: описи известных объектов по прототипам — методы сверх документации.
-  ['S2_objects', async function () {
-    const o = {};
-    const names = ['$config', '$httpClient', '$persistentStore', '$utils', '$notification',
-                   '$environment', '$script', '$network', '$task', '$prefs', '$done'];
+  // S1: недокументированные глобалы Loon. Главный шаг ревизии.
+  // captureLog по названию — про журналирование запросов.
+  ['S1_hidden_globals', async function () {
+    const out = {};
+    const names = ['captureLog', '$loon', '$argument', '$script', '$done',
+                   '__LOONGetData__', '__LOONSendData__', '__LOONBase64BinaryTool',
+                   '__LOONRequestBody__', '__LOONResponseBody__', '__lnUniqueId',
+                   '__LNbase64ToUint8Array', '__LNuint8ArrayToBase64'];
     for (let i = 0; i < names.length; i++) {
-      let v = null;
-      try { v = eval(names[i]); } catch (e) { v = null; }
-      o[names[i]] = (v === null || typeof v === 'undefined') ? 'отсутствует' : describe(v, 40);
+      let v;
+      try { v = eval(names[i]); } catch (e) { v = undefined; }
+      if (typeof v === 'undefined') { out[names[i]] = 'отсутствует'; continue; }
+      const rec = { type: typeof v };
+      if (typeof v === 'function') {
+        try { rec.arity = v.length; } catch (e) { }
+        try { rec.src = String(v).slice(0, 200); } catch (e) { }
+      } else if (typeof v === 'object' && v !== null) {
+        rec.keys = describe(v, 30);
+        try { rec.json = JSON.stringify(v).slice(0, 300); } catch (e) { }
+      } else {
+        try { rec.value = String(v).slice(0, 200); } catch (e) { }
+      }
+      out[names[i]] = rec;
     }
-    return o;
+    return out;
   }],
 
-  // S3: что отдаёт $config.getConfig(). ТОЛЬКО ЧТЕНИЕ, секреты не выводятся.
-  ['S3_getconfig', async function () {
+  // S2: разбор getConfig(). На L2 вернулся объект с числовыми ключами 0..39 —
+  // значит это массив. Смотрим, что в элементах.
+  ['S2_getconfig_shape', async function () {
     if (typeof $config === 'undefined' || !$config.getConfig) return 'нет $config.getConfig';
-    let c = null;
+    let c;
     try { c = $config.getConfig(); } catch (e) { return 'ошибка: ' + String((e && e.message) || e); }
     if (!c) return 'вернул пусто';
-    const out = { keys: Object.keys(c).slice(0, 40) };
-    try { out.ssid = c.ssid || null; } catch (e) { }
-    try { out.running_model = c.running_model; } catch (e) { }
+    const out = { type: typeof c, isArray: Array.isArray(c) };
+    try { out.length = c.length; } catch (e) { }
     try {
-      if (c.policy_groups) {
-        out.groups_count = c.policy_groups.length;
-        out.groups = c.policy_groups.slice(0, 12).map(function (g) {
-          return { name: g.name, type: g.type, select: g.select || g.selected || null,
-                   members: g.policies ? g.policies.length : null };
-        });
+      const first = [];
+      for (let i = 0; i < 6 && i < (c.length || 0); i++) {
+        const el = c[i];
+        first.push(typeof el === 'object' && el !== null
+          ? { keys: Object.keys(el).slice(0, 12), sample: JSON.stringify(el).slice(0, 220) }
+          : String(el).slice(0, 120));
       }
-    } catch (e) { out.groups_error = String((e && e.message) || e); }
+      out.first_elements = first;
+    } catch (e) { out.elements_error = String((e && e.message) || e); }
+    try { out.top_keys = Object.keys(c).filter(function (k) { return !/^[0-9]+$/.test(k); }).slice(0, 20); } catch (e) { }
     return out;
   }],
 
-  // S4: локальные порты — есть ли управляющий интерфейс, как HTTP API у Surge.
-  ['S4_local_ports', async function () {
-    const ports = [6152, 6170, 9090, 8080, 1080, 7890, 8888, 13991, 6153, 9091];
+  // S3: читающие методы $config — что именно они отдают.
+  // ЗАПИСЬ НЕ ВЫЗЫВАЕТСЯ.
+  ['S3_config_readers', async function () {
     const out = {};
-    for (let i = 0; i < ports.length; i++) {
-      out[ports[i]] = await get('http://127.0.0.1:' + ports[i] + '/', null, 1500);
-    }
-    return out;
-  }],
-
-  // S5: пути Surge HTTP API вслепую на самом вероятном порту.
-  // /v1/requests/recent — это журнал запросов, наша давняя боль.
-  ['S5_api_paths', async function () {
-    const paths = ['/v1/policies', '/v1/policy_groups', '/v1/policy_groups/select',
-                   '/v1/requests/recent', '/v1/traffic', '/v1/events', '/v1/log',
-                   '/v1/profiles/current', '/api/v1/log', '/logs'];
-    const out = {};
-    for (let i = 0; i < paths.length; i++) {
-      out[paths[i]] = await get('http://127.0.0.1:6152' + paths[i], null, 1200);
-    }
-    return out;
-  }],
-
-  // S6: среда исполнения. В Egern оказался полный WebKit с рабочим WebSocket —
-  // если здесь так же, дашборд реального времени возможен и без миграции.
-  ['S6_environment', async function () {
-    const has = function (n) { try { return typeof eval(n); } catch (e) { return 'нет'; } };
-    const out = {
-      websocket: has('WebSocket'), localStorage: has('localStorage'),
-      indexedDB: has('indexedDB'), fetch: has('fetch'), crypto: has('crypto'),
-      wasm: has('WebAssembly'), worker: has('Worker'), xhr: has('XMLHttpRequest'),
-      document: has('document'), navigator: has('navigator')
+    const call = function (name, args) {
+      try {
+        if (!$config[name]) return 'нет метода';
+        const v = $config[name].apply($config, args || []);
+        if (v === undefined) return 'undefined';
+        if (typeof v === 'object' && v !== null) {
+          return { type: Array.isArray(v) ? 'array' : 'object',
+                   length: v.length, json: JSON.stringify(v).slice(0, 400) };
+        }
+        return { type: typeof v, value: String(v).slice(0, 200) };
+      } catch (e) { return 'ошибка: ' + String((e && e.message) || e).slice(0, 120); }
     };
-    try { out.subtle = (typeof crypto !== 'undefined' && crypto.subtle) ? 'есть' : 'ОТСУТСТВУЕТ'; } catch (e) { }
-    try { out.ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? String(navigator.userAgent).slice(0, 80) : null; } catch (e) { }
-    try { out.env = JSON.stringify($environment).slice(0, 200); } catch (e) { }
-    try { out.tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { }
+    out.getPolicy_noargs = call('getPolicy');
+    out.getSelectedPolicy_noargs = call('getSelectedPolicy');
+    out.getSubPolicies_noargs = call('getSubPolicies');
+    out.getSubPolicys_noargs = call('getSubPolicys');
+    // С именем боевой группы — только чтение выбранного члена.
+    out.getSelectedPolicy_main = call('getSelectedPolicy', ['RH-Главный']);
+    out.getSubPolicies_main = call('getSubPolicies', ['RH-Главный']);
+    out.getPolicy_main = call('getPolicy', ['RH-Главный']);
     return out;
   }],
 
-  // S7: маршрутизация через конкретный узел, сравнение с прямым выходом.
-  ['S7_node_routing', async function () {
+  // S4: порт 6152 отвечает по TLS. Стучимся по https и проверяем соседей.
+  ['S4_tls_ports', async function () {
+    const out = {};
+    const paths = ['/', '/v1/policies', '/v1/policy_groups', '/v1/requests/recent', '/v1/log'];
+    for (let i = 0; i < paths.length; i++) {
+      out['https_6152' + paths[i]] = await get('https://127.0.0.1:6152' + paths[i], null, 1500);
+    }
+    out.https_localhost = await get('https://localhost:6152/', null, 1500);
+    out.https_6153 = await get('https://127.0.0.1:6153/', null, 1500);
+    return out;
+  }],
+
+  // S5: WebSocket в боевом клиенте. Если работает — дашборд реального
+  // времени возможен без миграции на Egern.
+  ['S5_websocket', async function () {
+    if (typeof WebSocket === 'undefined') return 'нет WebSocket';
+    return await new Promise(function (resolve) {
+      let ws = null, settled = false;
+      const finish = function (v) { if (!settled) { settled = true; try { if (ws) ws.close(); } catch (e) { } resolve(v); } };
+      const timer = setTimeout(function () { finish('таймаут 8 с'); }, 8000);
+      try {
+        ws = new WebSocket('wss://ws.postman-echo.com/raw');
+        ws.onopen = function () { try { ws.send('rh-loon-ping'); } catch (e) { } };
+        ws.onmessage = function (ev) { clearTimeout(timer); finish({ echo: String(ev.data).slice(0, 40) }); };
+        ws.onerror = function () { clearTimeout(timer); finish('ошибка соединения'); };
+      } catch (e) { clearTimeout(timer); finish('исключение: ' + String((e && e.message) || e)); }
+    });
+  }],
+
+  // S6: маршрутизация через конкретный узел. Имя берётся из аргумента
+  // RH_NODE, если задан, иначе из состава боевой группы через getSubPolicies.
+  ['S6_node_routing', async function () {
     const U = 'https://api.ipify.org';
     const out = { plain: await get(U, null, 6000) };
+    let nodeName = null;
     try {
-      if (typeof $config !== 'undefined' && $config.getConfig) {
-        const c = $config.getConfig();
-        let nodeName = null;
-        if (c && c.policy_groups) {
-          for (let i = 0; i < c.policy_groups.length && !nodeName; i++) {
-            const g = c.policy_groups[i];
-            if (g && g.policies && g.policies.length) {
-              for (let k = 0; k < g.policies.length; k++) {
-                const p = g.policies[k];
-                const nm = typeof p === 'string' ? p : (p && p.name);
-                if (nm && nm.indexOf('Обход') < 0 && nm !== 'DIRECT' && nm !== 'REJECT') { nodeName = nm; break; }
-              }
-            }
+      if ($config.getSubPolicies) {
+        const subs = $config.getSubPolicies('RH-Главный');
+        if (subs && subs.length) {
+          for (let i = 0; i < subs.length && !nodeName; i++) {
+            const s = subs[i];
+            const nm = typeof s === 'string' ? s : (s && (s.name || s.policy));
+            if (nm && nm.indexOf('Обход') < 0 && nm !== 'DIRECT' && nm !== 'REJECT') nodeName = nm;
           }
         }
-        out.node_tried = nodeName;
-        if (nodeName) out.via_node = await get(U, { node: nodeName }, 8000);
       }
-    } catch (e) { out.error = String((e && e.message) || e); }
+    } catch (e) { out.pick_error = String((e && e.message) || e).slice(0, 100); }
+    out.node_tried = nodeName;
+    if (nodeName) {
+      out.via_node = await get(U, { node: nodeName }, 8000);
+      out.via_policy = await get(U, { policy: nodeName }, 8000);
+    }
     return out;
   }]
 ];
@@ -257,17 +274,24 @@ const steps = [
               done: done, errors: errs, left: left, dead: Object.keys(st.dead),
               results: st.results, total_ms: Date.now() - t0,
               ts: new Date().toISOString() };
+  const body = JSON.stringify(R);
 
-  notify('Loon-проба ' + REV + ': прогон ' + st.runs,
-         'Готово ' + done + ' из ' + steps.length +
-         (left ? '. Не хватило времени на ' + left + ' — запусти ещё раз'
-               : '. ПЕРЕБОР ЗАВЕРШЁН') +
-         (POST_URL ? '' : '. Адрес отчёта не задан — данные только в хранилище'));
+  // Главный путь доставки — буфер обмена: на L2 отправка по сети не прошла.
+  try {
+    $notification.post('Loon-проба ' + REV + ': прогон ' + st.runs,
+                       'Отчёт скопирован — вставь в чат',
+                       'Готово ' + done + ' из ' + steps.length +
+                       (left ? '. Осталось ' + left + ' — запусти ещё раз' : '. ЗАВЕРШЕНО') +
+                       '. Байт: ' + body.length,
+                       { 'clipboard': body });
+  } catch (e) {
+    try { $notification.post('Loon-проба ' + REV, '', 'Готово ' + done + ' из ' + steps.length); } catch (e2) { }
+  }
 
   if (POST_URL) {
     try {
       $httpClient.post({ url: POST_URL, headers: { 'Content-Type': 'application/json' },
-                         body: JSON.stringify(R) }, function () { $done({}); });
+                         body: body }, function () { $done({}); });
       return;
     } catch (e) { }
   }
