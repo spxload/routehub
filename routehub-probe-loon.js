@@ -1,41 +1,38 @@
 // =============================================================
-// routehub-probe-loon.js — ЧИТАЮЩАЯ диагностика Loon. REV: L1 (2026-08-10).
+// routehub-probe-loon.js — ЧИТАЮЩАЯ диагностика Loon. REV: L2 (2026-08-10).
 //
-// ЗАЧЕМ. По Egern мы прошли пятнадцать ревизий и выяснили, что сплошная опись
-//   globalThis находит то, чего не найти перебором по списку известных имён.
-//   По Loon такой описи НЕ ДЕЛАЛОСЬ НИ РАЗУ — мы искали только то, что знали
-//   из документации. Возможно, в боевом клиенте есть механизмы, мимо которых
-//   мы прошли: журнал запросов (вывод 8 говорит «Loon не умеет логировать»),
-//   локальный управляющий порт, недокументированные методы $config.
+// ЗАЧЕМ. По Egern пройдено пятнадцать ревизий, и сплошная опись globalThis
+//   показала то, чего не найти перебором по списку известных имён. По Loon
+//   такой описи НЕ ДЕЛАЛОСЬ НИ РАЗУ — искали только то, что знали из
+//   документации. Проверяем, нет ли в боевом клиенте механизмов, мимо которых
+//   мы прошли: журнала запросов (вывод 8 гласит «Loon не умеет логировать»),
+//   локального управляющего порта, недокументированных методов $config.
 //
-// БЕЗОПАСНОСТЬ — ГЛАВНОЕ. Скрипт ТОЛЬКО ЧИТАЕТ. Он НЕ вызывает
-//   $config.setSelectPolicy, НЕ меняет группы, НЕ пишет ничего, кроме
-//   собственного состояния в $persistentStore под ключом rh_probe_l1.
-//   Боевая маршрутизация не затрагивается. Запуск — вручную, generic-скриптом.
+// БЕЗОПАСНОСТЬ. Скрипт ТОЛЬКО ЧИТАЕТ: НЕ вызывает $config.setSelectPolicy,
+//   НЕ меняет группы, НЕ пишет ничего, кроме собственного состояния в
+//   $persistentStore под ключом rh_probe_l1. Боевая маршрутизация не
+//   затрагивается. Запуск вручную, generic-скриптом.
 //
-// КАК ПОСТАВИТЬ (Диана):
-//   1. Вписать ниже POST_URL — адрес /probe СТЕНДОВОГО Worker'а с токеном
-//      (боевой Worker таких отчётов не принимает, и трогать его не нужно).
-//      Без него скрипт всё равно отработает: итог придёт пушем, а полный
-//      отчёт ляжет в $persistentStore под ключом rh_probe_l1.
-//   2. В routehub.conf, раздел [Script], добавить строку generic-скрипта
-//      и запускать вручную из интерфейса Loon.
+// АДРЕС ДЛЯ ОТЧЁТА берётся из argument строки [Script] — чтобы токен стенда
+//   не попадал в публичный репозиторий. Без него скрипт тоже работает: итог
+//   приходит пушем, полный отчёт остаётся в $persistentStore.
 //
-// СХЕМА ПРОГОНА (перенесена из Egern-ревизий, оправдала себя):
-//   • все шаги за один запуск подряд; ошибка шага пишется в отчёт, перебор
-//     продолжается;
-//   • имя выполняемого шага лежит в состоянии: если шаг уронит прогон целиком,
-//     следующий запуск занесёт его в чёрный список и пропустит навсегда;
-//   • бюджет времени 60 с — недоделанное выполнится следующим запуском,
-//     готовое не повторяется.
+// СХЕМА ПРОГОНА (перенесена из Egern-ревизий): все шаги за один запуск;
+//   ошибка шага пишется в отчёт и перебор идёт дальше; шаг, уронивший прогон,
+//   при следующем запуске заносится в чёрный список и пропускается навсегда;
+//   бюджет 60 с — недоделанное выполнится следующим запуском.
 // =============================================================
 
-const REV = 'L1';
+const REV = 'L2';
 const STATE = 'rh_probe_l1';
 const BUDGET = 60000;
 
-// ВПИСАТЬ АДРЕС СТЕНДА, иначе отчёт останется только в хранилище и пуше:
-const POST_URL = '';
+// Адрес /probe стендового Worker'а передаётся через argument строки [Script].
+const POST_URL = (function () {
+  try { if (typeof $argument !== 'undefined' && $argument) return String($argument).trim(); }
+  catch (e) { }
+  return '';
+})();
 
 const t0 = Date.now();
 
@@ -43,12 +40,8 @@ function notify(title, text) {
   try { if (typeof $notification !== 'undefined' && $notification.post) $notification.post(title, '', text); }
   catch (e) { }
 }
-
 function readState() {
-  try {
-    const raw = $persistentStore.read(STATE);
-    if (raw) return JSON.parse(raw);
-  } catch (e) { }
+  try { const raw = $persistentStore.read(STATE); if (raw) return JSON.parse(raw); } catch (e) { }
   return null;
 }
 function writeState(o) {
@@ -84,7 +77,6 @@ function describe(obj, limit) {
   return out;
 }
 
-// Запрос через $httpClient с обещанием вместо колбэка.
 function get(url, opt, ms) {
   return new Promise(function (resolve) {
     const done = { fired: false };
@@ -109,8 +101,7 @@ function get(url, opt, ms) {
 }
 
 const steps = [
-  // L1: СПЛОШНАЯ опись globalThis. Главный шаг: именно так в Egern стало
-  // видно, что недокументированного нет. По Loon это делается впервые.
+  // S1: СПЛОШНАЯ опись globalThis. Главный шаг — по Loon впервые.
   ['S1_scan_full', async function () {
     const all = [];
     try { Object.getOwnPropertyNames(globalThis).forEach(function (n) { all.push(n); }); } catch (e) { }
@@ -130,9 +121,7 @@ const steps = [
     return { total: all.length, interesting: interesting.join(','), by_keyword: kw.join(',') };
   }],
 
-  // L2: опись известных объектов по прототипам — вдруг есть методы сверх
-  // документации. Особый интерес: $config (что там ещё, кроме getConfig
-  // и setSelectPolicy) и $utils.
+  // S2: описи известных объектов по прототипам — методы сверх документации.
   ['S2_objects', async function () {
     const o = {};
     const names = ['$config', '$httpClient', '$persistentStore', '$utils', '$notification',
@@ -145,8 +134,7 @@ const steps = [
     return o;
   }],
 
-  // L3: что отдаёт $config.getConfig(). ТОЛЬКО ЧТЕНИЕ. Секреты не выводим:
-  // берём имена ключей верхнего уровня, число групп и текущий выбор.
+  // S3: что отдаёт $config.getConfig(). ТОЛЬКО ЧТЕНИЕ, секреты не выводятся.
   ['S3_getconfig', async function () {
     if (typeof $config === 'undefined' || !$config.getConfig) return 'нет $config.getConfig';
     let c = null;
@@ -167,8 +155,7 @@ const steps = [
     return out;
   }],
 
-  // L4: локальные порты. У Loon может быть управляющий интерфейс, как HTTP API
-  // у Surge. В Egern такой перебор дал только раздачу скриптов.
+  // S4: локальные порты — есть ли управляющий интерфейс, как HTTP API у Surge.
   ['S4_local_ports', async function () {
     const ports = [6152, 6170, 9090, 8080, 1080, 7890, 8888, 13991, 6153, 9091];
     const out = {};
@@ -178,8 +165,8 @@ const steps = [
     return out;
   }],
 
-  // L5: пути Surge HTTP API на портах, которые ответили. Проверяем вслепую
-  // на самом вероятном порту Surge.
+  // S5: пути Surge HTTP API вслепую на самом вероятном порту.
+  // /v1/requests/recent — это журнал запросов, наша давняя боль.
   ['S5_api_paths', async function () {
     const paths = ['/v1/policies', '/v1/policy_groups', '/v1/policy_groups/select',
                    '/v1/requests/recent', '/v1/traffic', '/v1/events', '/v1/log',
@@ -191,22 +178,15 @@ const steps = [
     return out;
   }],
 
-  // L6: среда исполнения. В Egern оказался полный WebKit — проверяем, что
-  // здесь. Наличие WebSocket означало бы возможность дашборда в реальном
-  // времени и в боевом клиенте.
+  // S6: среда исполнения. В Egern оказался полный WebKit с рабочим WebSocket —
+  // если здесь так же, дашборд реального времени возможен и без миграции.
   ['S6_environment', async function () {
     const has = function (n) { try { return typeof eval(n); } catch (e) { return 'нет'; } };
     const out = {
-      websocket: has('WebSocket'),
-      localStorage: has('localStorage'),
-      indexedDB: has('indexedDB'),
-      fetch: has('fetch'),
-      crypto: has('crypto'),
-      wasm: has('WebAssembly'),
-      worker: has('Worker'),
-      xhr: has('XMLHttpRequest'),
-      document: has('document'),
-      navigator: has('navigator')
+      websocket: has('WebSocket'), localStorage: has('localStorage'),
+      indexedDB: has('indexedDB'), fetch: has('fetch'), crypto: has('crypto'),
+      wasm: has('WebAssembly'), worker: has('Worker'), xhr: has('XMLHttpRequest'),
+      document: has('document'), navigator: has('navigator')
     };
     try { out.subtle = (typeof crypto !== 'undefined' && crypto.subtle) ? 'есть' : 'ОТСУТСТВУЕТ'; } catch (e) { }
     try { out.ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? String(navigator.userAgent).slice(0, 80) : null; } catch (e) { }
@@ -215,9 +195,7 @@ const steps = [
     return out;
   }],
 
-  // L7: маршрутизация запроса через конкретный узел. В Loon параметр node
-  // документирован и, по прежним диагностикам, работает — здесь это
-  // подтверждается на текущей версии и сравнивается с прямым выходом.
+  // S7: маршрутизация через конкретный узел, сравнение с прямым выходом.
   ['S7_node_routing', async function () {
     const U = 'https://api.ipify.org';
     const out = { plain: await get(U, null, 6000) };
@@ -282,7 +260,9 @@ const steps = [
 
   notify('Loon-проба ' + REV + ': прогон ' + st.runs,
          'Готово ' + done + ' из ' + steps.length +
-         (left ? '. Не хватило времени на ' + left + ' — запусти ещё раз' : '. ПЕРЕБОР ЗАВЕРШЁН'));
+         (left ? '. Не хватило времени на ' + left + ' — запусти ещё раз'
+               : '. ПЕРЕБОР ЗАВЕРШЁН') +
+         (POST_URL ? '' : '. Адрес отчёта не задан — данные только в хранилище'));
 
   if (POST_URL) {
     try {
