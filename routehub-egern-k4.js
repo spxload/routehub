@@ -1,41 +1,43 @@
-// routehub-egern-k4.js — диагностика Egern. K4_REV: k4-13 (2026-08-09).
+// routehub-egern-k4.js — диагностика Egern. K4_REV: k4-14 (2026-08-10).
 //
-// ЗАДАЧА РЕВИЗИИ: подобрать тест-адреса под ВСЕ наши задачи, пока блокировок
-//   нет. Проверяется 16 кандидатов через четыре разных выхода, по три повтора,
-//   с медианой задержки и долей успехов. Плюс отдельно источники выходного IP
-//   и источники данных для спидтеста.
-//   ПОЧЕМУ СЕЙЧАС: под whitelist проверить будет уже нечем — нужен эталон,
-//   снятый в нормальном режиме, чтобы потом было с чем сравнивать.
+// ЗАДАЧА: подобрать МАЯКИ для детектора whitelist РКН и выяснить причину
+//   ошибок 400 на ровном месте. Снимается эталон в нормальном режиме — под
+//   блокировкой сравнивать будет уже не с чем.
 //
-// СХЕМА: все шаги за один прогон подряд, НО с бюджетом времени.
-//   • timeout скрипта в профиле — 120 с; если бюджет (100 с) исчерпан, прогон
-//     останавливается и оставшиеся шаги выполнятся при следующем запуске —
-//     уже выполненные не повторяются (результат лежит в хранилище).
-//   • обычная ошибка шага пишется в отчёт, перебор идёт дальше;
-//   • шаг, убивший прогон целиком, при следующем запуске заносится в dead и
-//     пропускается навсегда (падение внутри прослойки try/catch не ловит).
-//   • внутри шага URL, не ответивший с первого раза, больше не повторяется —
-//     иначе мёртвый адрес съедал бы бюджет втрое.
+// ЛОГИКА ДЕТЕКТОРА (план, раздел F): под whitelist ИНОСТРАННЫЕ адреса
+//   перестают отвечать НАПРЯМУЮ, а российские продолжают. Значит маяки —
+//   иностранные, опрашиваемые через DIRECT; российские нужны контролем,
+//   чтобы отличить whitelist от банального отсутствия интернета.
+//   Решение принимается по большинству: молчат 4 из 5 — считаем whitelist.
 //
-// ИТОГИ k4-12 (2026-08-09):
-//   • Порты 13991..13994 — один обработчик, только /js; запись 404;
-//     заголовков Server и WWW-Authenticate нет. Локальный сервер раздаёт
-//     только тела скриптов.
-//   • Egern.arguments = копия наших же env из профиля.
-//   • ctx.ssh ЖИВ: отказ 'ssh session shut down', ловится try/catch.
-//   • Опись ctx по прототипам совпала с документацией дословно.
-//   • URL-схема НЕ перезаписывает существующую группу — отказ «имя занято».
-//   • ЗАМЕР СКОРОСТИ: первый прогон каждого узла систематически занижен
-//     (8,8 против 17,8 Мбит/с) — считать медиану БЕЗ первого замера.
-// ИТОГИ k4-11: сплошная опись globalThis (959 имён) — недокументированного
-//   нет; policyDescriptor во всех формах 400; Surge и Clash API отсутствуют.
-//   ⇒ управление политиками из скрипта невозможно, доказано.
+// ИТОГИ k4-13 (2026-08-09/10, эталон снят до блокировок):
+//   • ГОДНЫЕ ТЕСТ-АДРЕСА (3/3, код 204, пустое тело, через все четыре выхода):
+//     connectivitycheck.gstatic.com (57/64/98/74 мс) — РОВНЕЕ ВСЕХ, выбран;
+//     wifi.vivo.com.cn, clients3.google.com, www.gstatic.com, cp.cloudflare.com.
+//   • ОТСЕЯНЫ: edge-http.microsoft.com — 502 напрямую и с DE-узла;
+//     qualcomm.cn — 403 через RU-узел; firefox и gnome — вдвое медленнее.
+//   • ya.ru, mail.ru, icanhazip дали 400 ЧЕРЕЗ ВСЕ ВЫХОДЫ, включая прямой.
+//     Это не блокировка, а неспособность клиента обработать ответ — вероятно
+//     редирект с http на https. Причина выясняется шагом M3.
+//   • gosuslugi.ru: 200 напрямую, СБОЙ через любой прокси. Подтверждает
+//     вывод 3 (РФ-whitelist домены обязаны идти жёстким DIRECT).
+//   • ИСТОЧНИКИ ВЫХОДНОГО IP: ipify, ipinfo, icanhazip и Cloudflare согласны
+//     (111.88.96.82), а ifconfig.me дал 139.100.196.194 — НЕНАДЁЖЕН, не брать.
+//   • ИСТОЧНИК ДЛЯ СПИДТЕСТА: speed.cloudflare.com ЗАНИЖАЕТ ВДЕСЯТЕРО
+//     (2,1 Мбит/с против 22,7 у proof.ovh.net на том же узле в тот же момент).
+//     ⇒ ВСЕ прежние замеры скорости (k4-8, k4-9, k4-12) НЕДОСТОВЕРНЫ.
+//     Для спидтеста брать proof.ovh.net и отбрасывать первый замер (8,1 → 22,7).
+//     ash-speed.hetzner.com — сбой 400.
+//
+// СХЕМА: все шаги за один прогон, бюджет 100 с; недоделанное выполняется
+//   следующим запуском, готовое не повторяется; шаг, убивший прогон, заносится
+//   в чёрный список и пропускается навсегда.
 //
 // В ТЕКСТЕ СКРИПТА НЕЛЬЗЯ: обратные кавычки, ${...} и ЛЮБЫЕ обратные слэши.
 // ФАЙЛ ЗАКАНЧИВАЕТСЯ СТРОЧНЫМ КОММЕНТАРИЕМ БЕЗ ПЕРЕВОДА СТРОКИ.
-// ТРАФИК: обходные узлы не задействованы. Обычных — около 1 МБ на шаг Z6.
+// ТРАФИК: обходные узлы не задействованы; тела ответов не скачиваются целиком.
 
-export const K4_REV = 'k4-13';
+export const K4_REV = 'k4-14';
 
 export function subNames(text) {
   const out = [];
@@ -66,30 +68,42 @@ export const K4_SCRIPT = `export default async function (ctx) {
   const t0 = Date.now();
   const BUDGET = 100000;
   const env = ctx.env || {};
-  const STATE = 'rh_scan13';
-  const REV = 'k4-13';
-  const GRP = env.RH_GROUP || 'RH-Пул-Обычные';
+  const STATE = 'rh_scan14';
+  const REV = 'k4-14';
 
-  // Кандидаты в тест-адреса. Назначение: 204 — идеал для latency_test_url
-  // (пустое тело, минимальный трафик); ok — годен, но с телом; рф — маяк
-  // для детектора whitelist (должен работать БЕЗ прокси).
-  const URLS = [
-    ['cloudflare', 'http://cp.cloudflare.com/generate_204'],
-    ['gstatic', 'http://www.gstatic.com/generate_204'],
+  // Кандидаты в МАЯКИ: иностранные, отвечающие быстро и без тела.
+  // Под whitelist должны замолчать все разом — это и есть признак.
+  const FOREIGN = [
     ['gstatic_cc', 'http://connectivitycheck.gstatic.com/generate_204'],
+    ['vivo', 'http://wifi.vivo.com.cn/generate_204'],
     ['google_c3', 'http://clients3.google.com/generate_204'],
+    ['cloudflare', 'http://cp.cloudflare.com/generate_204'],
     ['apple', 'http://captive.apple.com/hotspot-detect.html'],
     ['msft', 'http://www.msftconnecttest.com/connecttest.txt'],
-    ['msft_edge', 'http://edge-http.microsoft.com/captiveportal/generate_204'],
     ['firefox', 'http://detectportal.firefox.com/success.txt'],
-    ['gnome', 'http://nmcheck.gnome.org/check_network_status.txt'],
-    ['vivo', 'http://wifi.vivo.com.cn/generate_204'],
-    ['qualcomm', 'http://www.qualcomm.cn/generate_204'],
-    ['icanhazip', 'http://ipv4.icanhazip.com'],
-    ['cf_trace_https', 'https://1.1.1.1/cdn-cgi/trace'],
-    ['ya_ru', 'http://ya.ru'],
-    ['mailru', 'http://mail.ru'],
-    ['gosuslugi', 'https://www.gosuslugi.ru']
+    ['cf_trace', 'https://1.1.1.1/cdn-cgi/trace'],
+    ['ipify', 'https://api.ipify.org'],
+    ['ipinfo', 'https://ipinfo.io/ip'],
+    ['example', 'http://example.com'],
+    ['github', 'https://github.com'],
+    ['wikipedia', 'https://www.wikipedia.org'],
+    ['duckduckgo', 'https://duckduckgo.com']
+  ];
+
+  // Российские: контроль живости интернета. Под whitelist продолжают работать.
+  const RUSSIAN = [
+    ['ya_https', 'https://ya.ru'],
+    ['yandex_https', 'https://yandex.ru'],
+    ['mailru_https', 'https://mail.ru'],
+    ['vk', 'https://vk.com'],
+    ['dzen', 'https://dzen.ru'],
+    ['gosuslugi', 'https://www.gosuslugi.ru'],
+    ['cbr', 'https://www.cbr.ru'],
+    ['nalog', 'https://www.nalog.gov.ru'],
+    ['mos', 'https://www.mos.ru'],
+    ['ozon', 'https://www.ozon.ru'],
+    ['wb', 'https://www.wildberries.ru'],
+    ['rutube', 'https://rutube.ru']
   ];
 
   const notify = (title, text) => {
@@ -104,16 +118,14 @@ export const K4_SCRIPT = `export default async function (ctx) {
 
   const median = (arr) => {
     const a = arr.filter(v => v !== null).sort((x, y) => x - y);
-    if (!a.length) return null;
-    return a[Math.floor(a.length / 2)];
+    return a.length ? a[Math.floor(a.length / 2)] : null;
   };
 
-  // Три повтора одного адреса через одну политику. Если первый заход провален,
-  // повторы не делаются — мёртвый адрес не должен съедать бюджет времени.
-  const measure = async (url, policy) => {
+  const measure = async (url, policy, tries) => {
     const times = [];
-    let status = null, note = null, bytes = null;
-    for (let k = 0; k < 3; k++) {
+    let status = null, note = null, len = null;
+    const n = tries || 3;
+    for (let k = 0; k < n; k++) {
       const t = Date.now();
       try {
         const o = { timeout: 3000 };
@@ -121,92 +133,60 @@ export const K4_SCRIPT = `export default async function (ctx) {
         const r = await ctx.http.get(url, o);
         times.push(Date.now() - t);
         status = r.status;
-        if (bytes === null) {
-          try { bytes = String(await r.text() || '').length; } catch (e) { bytes = -1; }
-        }
+        if (len === null) { try { len = String(await r.text() || '').length; } catch (e) { len = -1; } }
       } catch (e) {
-        note = String((e && e.message) || e).slice(0, 60);
+        note = String((e && e.message) || e).slice(0, 50);
         times.push(null);
         break;
       }
     }
     const ok = times.filter(v => v !== null).length;
-    const res = { ok: ok + '/3', ms: median(times) };
+    const res = { ok: ok + '/' + n, ms: median(times) };
     if (status !== null) res.st = status;
-    if (bytes !== null) res.len = bytes;
+    if (len !== null) res.len = len;
     if (note) res.err = note;
     return res;
   };
 
-  const sweep = async (policy) => {
+  const sweep = async (list, policy, tries) => {
     const out = {};
-    for (let i = 0; i < URLS.length; i++) {
-      out[URLS[i][0]] = await measure(URLS[i][1], policy);
-    }
+    for (let i = 0; i < list.length; i++) out[list[i][0]] = await measure(list[i][1], policy, tries);
     return out;
   };
 
   const steps = [
-    // Z1: прямой выход. Отсюда берутся кандидаты в internet-test-url и в
-    // маяки детектора whitelist — они обязаны работать БЕЗ прокси.
-    ['Z1_direct', async () => await sweep('DIRECT')],
-    // Z2: российский узел. Главный кандидат в latency_test_url обязан
-    // отвечать именно отсюда — РФ-узлов в пуле большинство.
-    ['Z2_node_ru', async () => await sweep('RH-Явный-1')],
-    // Z3: немецкий узел — контроль, что адрес не привязан к стране выхода.
-    ['Z3_node_de', async () => await sweep('RH-Явный-3')],
-    // Z4: через группу — так адрес будет использоваться в бою.
-    ['Z4_group', async () => await sweep(GRP)],
-    // Z5: источники выходного IP. Нужны для диагностики и для детектора
-    // подмены; проверяем, какие доступны через узел и напрямую.
-    ['Z5_ip_sources', async () => {
-      const src = [
-        ['ifconfig', 'https://ifconfig.me/ip'],
-        ['ipify', 'https://api.ipify.org'],
-        ['ipinfo', 'https://ipinfo.io/ip'],
-        ['icanhazip', 'https://ipv4.icanhazip.com'],
-        ['cf_trace', 'https://www.cloudflare.com/cdn-cgi/trace']
+    // M1: кандидаты в маяки, прямой выход. Главный шаг ревизии.
+    ['M1_foreign_direct', async () => await sweep(FOREIGN, 'DIRECT')],
+    // M2: российские, прямой выход — контроль живости интернета.
+    ['M2_russian_direct', async () => await sweep(RUSSIAN, 'DIRECT', 2)],
+    // M3: причина ошибок 400. Проверяются режимы редиректа и схема https.
+    ['M3_redirect_cause', async () => {
+      const cases = [
+        ['ya_http_default', 'http://ya.ru', {}],
+        ['ya_http_follow', 'http://ya.ru', { redirect: 'follow' }],
+        ['ya_http_manual', 'http://ya.ru', { redirect: 'manual' }],
+        ['ya_https', 'https://ya.ru', {}],
+        ['mailru_http_manual', 'http://mail.ru', { redirect: 'manual' }],
+        ['icanhaz_http_manual', 'http://ipv4.icanhazip.com', { redirect: 'manual' }],
+        ['icanhaz_https', 'https://ipv4.icanhazip.com', {}]
       ];
       const out = {};
-      for (let i = 0; i < src.length; i++) {
-        const via = async (pol) => {
-          try {
-            const r = await ctx.http.get(src[i][1], { policy: pol, timeout: 5000 });
-            const b = String(await r.text() || '').trim().slice(0, 60);
-            return { st: r.status, body: b };
-          } catch (e) { return 'err:' + String((e && e.message) || e).slice(0, 50); }
-        };
-        out[src[i][0]] = { node: await via('RH-Явный-1'), direct: await via('DIRECT') };
+      for (let i = 0; i < cases.length; i++) {
+        const o = Object.assign({ policy: 'DIRECT', timeout: 4000 }, cases[i][2]);
+        try {
+          const r = await ctx.http.get(cases[i][1], o);
+          let loc = null;
+          try { loc = r.headers && r.headers.get ? r.headers.get('location') : null; } catch (e) { }
+          const res = { st: r.status };
+          if (loc) res.location = String(loc).slice(0, 60);
+          out[cases[i][0]] = res;
+        } catch (e) { out[cases[i][0]] = 'err:' + String((e && e.message) || e).slice(0, 60); }
       }
       return out;
     }],
-    // Z6: источники данных для спидтеста. По 128 КБ, два повтора, первый
-    // замер отбрасывается (см. итоги k4-12).
-    ['Z6_speed_sources', async () => {
-      const src = [
-        ['cloudflare', 'https://speed.cloudflare.com/__down?bytes=131072'],
-        ['hetzner', 'https://ash-speed.hetzner.com/100MB.bin'],
-        ['ovh', 'https://proof.ovh.net/files/1Mb.dat']
-      ];
-      const out = {};
-      for (let i = 0; i < src.length; i++) {
-        const runs = [];
-        for (let k = 0; k < 3; k++) {
-          const t = Date.now();
-          try {
-            const r = await ctx.http.get(src[i][1], { policy: 'RH-Явный-1', timeout: 20000 });
-            const b = await r.arrayBuffer();
-            const ms = Math.max(1, Date.now() - t);
-            runs.push({ bytes: b.byteLength, ms: ms, mbps: Math.round(b.byteLength * 8 / ms / 100) / 10 });
-          } catch (e) { runs.push('err:' + String((e && e.message) || e).slice(0, 50)); break; }
-        }
-        const good = runs.filter(v => v && v.mbps).map(v => v.mbps);
-        // Первый замер отбрасываем: в него входит установление соединения.
-        const tail = good.slice(1);
-        out[src[i][0]] = { runs: runs, median_no_first: median(tail) };
-      }
-      return out;
-    }]
+    // M4: те же маяки через российский узел — пригодятся, если понадобится
+    // отличать «нет интернета» от «нет прокси».
+    ['M4_foreign_via_node', async () => await sweep(FOREIGN, 'RH-Явный-1', 2)]
   ];
 
   let st = null;
@@ -230,7 +210,7 @@ export const K4_SCRIPT = `export default async function (ctx) {
   for (let i = 0; i < steps.length; i++) {
     const nm = steps[i][0];
     if (st.dead[nm]) continue;
-    if (st.results[nm] !== undefined) continue;      // уже сделан в прошлый раз
+    if (st.results[nm] !== undefined) continue;
     if (Date.now() - t0 > BUDGET) { left++; continue; }
     st.inflight = nm;
     try { ctx.storage.setJSON(STATE, st); } catch (e) { }
@@ -247,7 +227,7 @@ export const K4_SCRIPT = `export default async function (ctx) {
               total_ms: Date.now() - t0, ts: new Date().toISOString() };
 
   notify(REV + ': прогон ' + st.runs,
-         'Готово шагов ' + done + ' из ' + steps.length +
+         'Готово ' + done + ' из ' + steps.length +
          (left ? '. Не хватило времени на ' + left + ' — запусти ещё раз' : '. ПЕРЕБОР ЗАВЕРШЁН'));
 
   try {
