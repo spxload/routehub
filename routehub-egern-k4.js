@@ -1,49 +1,41 @@
-// routehub-egern-k4.js — диагностика Egern. K4_REV: k4-12 (2026-08-09).
+// routehub-egern-k4.js — диагностика Egern. K4_REV: k4-13 (2026-08-09).
 //
-// СХЕМА (введена в k4-11, оправдала себя): все шаги за ОДИН прогон подряд.
-//   Обычная ошибка шага пишется в отчёт, перебор продолжается. Падение внутри
-//   прослойки Egern try/catch не ловит и убивает прогон — на этот случай имя
-//   выполняемого шага лежит в state.inflight; следующий прогон видит его,
-//   заносит шаг в state.dead, пишет 'РОНЯЕТ ПРОГОН' и навсегда пропускает.
-//   Смертельный шаг стоит ОДНОГО лишнего запуска, а не запуска на каждый шаг.
-//   Поэтому в ревизию складывается сразу весь остаток проверок.
+// ЗАДАЧА РЕВИЗИИ: подобрать тест-адреса под ВСЕ наши задачи, пока блокировок
+//   нет. Проверяется 16 кандидатов через четыре разных выхода, по три повтора,
+//   с медианой задержки и долей успехов. Плюс отдельно источники выходного IP
+//   и источники данных для спидтеста.
+//   ПОЧЕМУ СЕЙЧАС: под whitelist проверить будет уже нечем — нужен эталон,
+//   снятый в нормальном режиме, чтобы потом было с чем сравнивать.
 //
-// ИТОГИ k4-11 (2026-08-09) — две ветки поиска закрыты, одна открылась:
-//   • СПЛОШНАЯ опись globalThis: 959 имён, нестандартных ровно девять —
-//     $httpClient, $persistentStore, $utils, $network, $script, $notification,
-//     $environment, $done, $cronexp (плюс __context и _tickTimers). Поиск по
-//     словам policy/proxy/config/surge/egern дал только сам Egern и штатный
-//     JS-Proxy. Опись ctx совпала с документацией дословно.
-//     ⇒ УПРАВЛЕНИЕ ПОЛИТИКАМИ ИЗ СКРИПТА НЕВОЗМОЖНО — доказано, а не
-//     «по имеющимся сведениям». Ветка закрыта.
-//   • policyDescriptor: все шесть форматов дали 400. Гипотеза «400 против 404
-//     значит параметр распознан» ОПРОВЕРГНУТА: 400 приходит и на локальный
-//     запрос без DIRECT, и на узел с неудобным для Cloudflare выходом ⇒ это
-//     универсальная ошибка «не смог выполнить». Ветка закрыта.
-//   • Пути Surge HTTP API (16 штук) и Clash (7 штук) на 13991 — все 404.
-//   • НАХОДКА: соседние порты. 13990 и 13995 — ошибка соединения, а
-//     13992, 13993, 13994 ОТВЕЧАЮТ 404, то есть слушают. Нигде не описаны.
-//     Их разбор — шаг Y1 этой ревизии.
+// СХЕМА: все шаги за один прогон подряд, НО с бюджетом времени.
+//   • timeout скрипта в профиле — 120 с; если бюджет (100 с) исчерпан, прогон
+//     останавливается и оставшиеся шаги выполнятся при следующем запуске —
+//     уже выполненные не повторяются (результат лежит в хранилище).
+//   • обычная ошибка шага пишется в отчёт, перебор идёт дальше;
+//   • шаг, убивший прогон целиком, при следующем запуске заносится в dead и
+//     пропускается навсегда (падение внутри прослойки try/catch не ловит).
+//   • внутри шага URL, не ответивший с первого раза, больше не повторяется —
+//     иначе мёртвый адрес съедал бы бюджет втрое.
 //
-// ЧТО ПРОВЕРЯЕТ k4-12 (весь оставшийся запас гипотез разом):
-//   Y1 — 14 путей на портах 13991..13994 + заголовки ответа (по Server и
-//        WWW-Authenticate видно, что за сервер и нужен ли ключ).
-//   Y2 — методы POST/PUT/DELETE: вдруг чтение закрыто, а запись открыта.
-//   Y3 — Egern.arguments, единственное неописанное поле объекта Egern.
-//   Y4 — ctx.ssh.connect к заведомо мёртвому адресу: жив ли механизм и как падает.
-//   Y5 — по три замера 256 КБ на каждый явный узел: медиана вместо шумного
-//        одиночного замера (на k4-8/k4-9 один узел дал 2,8 и 7,4 Мбит/с).
-//   Y6 — ctx.notify с действием по тапу на egern:/policy_groups/new с именем
-//        СУЩЕСТВУЮЩЕЙ группы: перезаписывает схема группу или создаёт дубль.
-//        Тап делает Диана; результат виден в приложении, не в отчёте.
-//   Y7 — опись ctx.ssh / ctx.http / ctx.storage / ctx.compress / ctx.device
-//        по прототипам: нет ли методов сверх документации.
+// ИТОГИ k4-12 (2026-08-09):
+//   • Порты 13991..13994 — один обработчик, только /js; запись 404;
+//     заголовков Server и WWW-Authenticate нет. Локальный сервер раздаёт
+//     только тела скриптов.
+//   • Egern.arguments = копия наших же env из профиля.
+//   • ctx.ssh ЖИВ: отказ 'ssh session shut down', ловится try/catch.
+//   • Опись ctx по прототипам совпала с документацией дословно.
+//   • URL-схема НЕ перезаписывает существующую группу — отказ «имя занято».
+//   • ЗАМЕР СКОРОСТИ: первый прогон каждого узла систематически занижен
+//     (8,8 против 17,8 Мбит/с) — считать медиану БЕЗ первого замера.
+// ИТОГИ k4-11: сплошная опись globalThis (959 имён) — недокументированного
+//   нет; policyDescriptor во всех формах 400; Surge и Clash API отсутствуют.
+//   ⇒ управление политиками из скрипта невозможно, доказано.
 //
 // В ТЕКСТЕ СКРИПТА НЕЛЬЗЯ: обратные кавычки, ${...} и ЛЮБЫЕ обратные слэши.
-// ФАЙЛ ЗАКАНЧИВАЕТСЯ СТРОЧНЫМ КОММЕНТАРИЕМ БЕЗ ПЕРЕВОДА СТРОКИ — защита от мусора.
-// ТРАФИК: обходные узлы не задействованы; обычных уходит ~2,3 МБ на шаг Y5.
+// ФАЙЛ ЗАКАНЧИВАЕТСЯ СТРОЧНЫМ КОММЕНТАРИЕМ БЕЗ ПЕРЕВОДА СТРОКИ.
+// ТРАФИК: обходные узлы не задействованы. Обычных — около 1 МБ на шаг Z6.
 
-export const K4_REV = 'k4-12';
+export const K4_REV = 'k4-13';
 
 export function subNames(text) {
   const out = [];
@@ -72,184 +64,149 @@ export function firstNormalNode(text) {
 
 export const K4_SCRIPT = `export default async function (ctx) {
   const t0 = Date.now();
+  const BUDGET = 100000;
   const env = ctx.env || {};
-  const STATE = 'rh_scan12';
-  const REV = 'k4-12';
-  const EX = ['RH-Явный-1', 'RH-Явный-2', 'RH-Явный-3'];
+  const STATE = 'rh_scan13';
+  const REV = 'k4-13';
   const GRP = env.RH_GROUP || 'RH-Пул-Обычные';
 
-  const notify = (title, text, action) => {
+  // Кандидаты в тест-адреса. Назначение: 204 — идеал для latency_test_url
+  // (пустое тело, минимальный трафик); ok — годен, но с телом; рф — маяк
+  // для детектора whitelist (должен работать БЕЗ прокси).
+  const URLS = [
+    ['cloudflare', 'http://cp.cloudflare.com/generate_204'],
+    ['gstatic', 'http://www.gstatic.com/generate_204'],
+    ['gstatic_cc', 'http://connectivitycheck.gstatic.com/generate_204'],
+    ['google_c3', 'http://clients3.google.com/generate_204'],
+    ['apple', 'http://captive.apple.com/hotspot-detect.html'],
+    ['msft', 'http://www.msftconnecttest.com/connecttest.txt'],
+    ['msft_edge', 'http://edge-http.microsoft.com/captiveportal/generate_204'],
+    ['firefox', 'http://detectportal.firefox.com/success.txt'],
+    ['gnome', 'http://nmcheck.gnome.org/check_network_status.txt'],
+    ['vivo', 'http://wifi.vivo.com.cn/generate_204'],
+    ['qualcomm', 'http://www.qualcomm.cn/generate_204'],
+    ['icanhazip', 'http://ipv4.icanhazip.com'],
+    ['cf_trace_https', 'https://1.1.1.1/cdn-cgi/trace'],
+    ['ya_ru', 'http://ya.ru'],
+    ['mailru', 'http://mail.ru'],
+    ['gosuslugi', 'https://www.gosuslugi.ru']
+  ];
+
+  const notify = (title, text) => {
     try {
-      if (typeof ctx.notify === 'function') {
-        const o = { title: title, body: text };
-        if (action) o.action = action;
-        ctx.notify(o);
-        return 'ctx.notify';
-      }
+      if (typeof ctx.notify === 'function') { ctx.notify({ title: title, body: text }); return 'ok'; }
       if (typeof $notification !== 'undefined' && $notification && $notification.post) {
-        $notification.post(title, '', text);
-        return 'surge';
+        $notification.post(title, '', text); return 'surge';
       }
-      return 'нет уведомлений';
-    } catch (e) { return 'ошибка: ' + ((e && e.message) || e); }
+    } catch (e) { }
+    return 'нет';
   };
 
-  // Локальная проба с чтением заголовков ответа: Server и WWW-Authenticate
-  // показывают, что за сервер отвечает и требует ли ключа.
-  const local = async (url, method) => {
-    try {
-      const o = { policy: 'DIRECT', timeout: 700 };
-      const fn = method === 'POST' ? ctx.http.post
-               : method === 'PUT' ? ctx.http.put
-               : method === 'DELETE' ? ctx.http.delete
-               : ctx.http.get;
-      if (method === 'POST' || method === 'PUT') o.body = '{}';
-      const r = await fn.call(ctx.http, url, o);
-      const h = {};
+  const median = (arr) => {
+    const a = arr.filter(v => v !== null).sort((x, y) => x - y);
+    if (!a.length) return null;
+    return a[Math.floor(a.length / 2)];
+  };
+
+  // Три повтора одного адреса через одну политику. Если первый заход провален,
+  // повторы не делаются — мёртвый адрес не должен съедать бюджет времени.
+  const measure = async (url, policy) => {
+    const times = [];
+    let status = null, note = null, bytes = null;
+    for (let k = 0; k < 3; k++) {
+      const t = Date.now();
       try {
-        ['server', 'www-authenticate', 'content-type', 'allow'].forEach(k => {
-          const v = r.headers && r.headers.get ? r.headers.get(k) : null;
-          if (v) h[k] = String(v).slice(0, 60);
-        });
-      } catch (e) { }
-      let body = '';
-      try { body = String(await r.text() || '').slice(0, 120); } catch (e) { }
-      const res = { st: r.status };
-      if (body) res.body = body;
-      if (Object.keys(h).length) res.head = h;
-      return res;
-    } catch (e) { return 'err:' + ((e && e.message) || e); }
+        const o = { timeout: 3000 };
+        if (policy) o.policy = policy;
+        const r = await ctx.http.get(url, o);
+        times.push(Date.now() - t);
+        status = r.status;
+        if (bytes === null) {
+          try { bytes = String(await r.text() || '').length; } catch (e) { bytes = -1; }
+        }
+      } catch (e) {
+        note = String((e && e.message) || e).slice(0, 60);
+        times.push(null);
+        break;
+      }
+    }
+    const ok = times.filter(v => v !== null).length;
+    const res = { ok: ok + '/3', ms: median(times) };
+    if (status !== null) res.st = status;
+    if (bytes !== null) res.len = bytes;
+    if (note) res.err = note;
+    return res;
   };
 
-  const describe = (obj, limit) => {
+  const sweep = async (policy) => {
     const out = {};
-    let seen = 0;
-    try {
-      let cur = obj;
-      const names = [];
-      for (let d = 0; d < 3 && cur; d++) {
-        try { Object.getOwnPropertyNames(cur).forEach(n => { if (names.indexOf(n) < 0) names.push(n); }); }
-        catch (e) { }
-        cur = Object.getPrototypeOf(cur);
-      }
-      names.sort();
-      for (let i = 0; i < names.length && seen < (limit || 60); i++) {
-        const n = names[i];
-        if (n === 'constructor' || n.indexOf('__') === 0) continue;
-        if (['hasOwnProperty', 'isPrototypeOf', 'propertyIsEnumerable',
-             'toLocaleString', 'toString', 'valueOf'].indexOf(n) >= 0) continue;
-        let t = 'нет';
-        try { t = typeof obj[n]; } catch (e) { t = 'недоступно'; }
-        if (t === 'undefined') continue;
-        out[n] = t;
-        seen++;
-      }
-    } catch (e) { out.__error = String((e && e.message) || e); }
+    for (let i = 0; i < URLS.length; i++) {
+      out[URLS[i][0]] = await measure(URLS[i][1], policy);
+    }
     return out;
   };
 
   const steps = [
-    // Y1: три отвечающих порта, найденных на k4-11, плюс известный 13991.
-    ['Y1_ports_paths', async () => {
-      const ports = [13991, 13992, 13993, 13994];
-      const paths = ['/', '/v1', '/api', '/js', '/status', '/version', '/health',
-                     '/ws', '/events', '/log', '/policies', '/proxies',
-                     '/connections', '/dashboard'];
+    // Z1: прямой выход. Отсюда берутся кандидаты в internet-test-url и в
+    // маяки детектора whitelist — они обязаны работать БЕЗ прокси.
+    ['Z1_direct', async () => await sweep('DIRECT')],
+    // Z2: российский узел. Главный кандидат в latency_test_url обязан
+    // отвечать именно отсюда — РФ-узлов в пуле большинство.
+    ['Z2_node_ru', async () => await sweep('RH-Явный-1')],
+    // Z3: немецкий узел — контроль, что адрес не привязан к стране выхода.
+    ['Z3_node_de', async () => await sweep('RH-Явный-3')],
+    // Z4: через группу — так адрес будет использоваться в бою.
+    ['Z4_group', async () => await sweep(GRP)],
+    // Z5: источники выходного IP. Нужны для диагностики и для детектора
+    // подмены; проверяем, какие доступны через узел и напрямую.
+    ['Z5_ip_sources', async () => {
+      const src = [
+        ['ifconfig', 'https://ifconfig.me/ip'],
+        ['ipify', 'https://api.ipify.org'],
+        ['ipinfo', 'https://ipinfo.io/ip'],
+        ['icanhazip', 'https://ipv4.icanhazip.com'],
+        ['cf_trace', 'https://www.cloudflare.com/cdn-cgi/trace']
+      ];
       const out = {};
-      for (let p = 0; p < ports.length; p++) {
-        const port = ports[p];
-        const bucket = {};
-        for (let i = 0; i < paths.length; i++) {
-          const r = await local('http://127.0.0.1:' + port + paths[i]);
-          // 404 без тела и заголовков сжимаем до числа, чтобы отчёт не распух.
-          if (r && r.st === 404 && !r.body && !r.head) bucket[paths[i]] = 404;
-          else bucket[paths[i]] = r;
-        }
-        out[port] = bucket;
+      for (let i = 0; i < src.length; i++) {
+        const via = async (pol) => {
+          try {
+            const r = await ctx.http.get(src[i][1], { policy: pol, timeout: 5000 });
+            const b = String(await r.text() || '').trim().slice(0, 60);
+            return { st: r.status, body: b };
+          } catch (e) { return 'err:' + String((e && e.message) || e).slice(0, 50); }
+        };
+        out[src[i][0]] = { node: await via('RH-Явный-1'), direct: await via('DIRECT') };
       }
       return out;
     }],
-
-    // Y2: вдруг чтение закрыто, а запись открыта.
-    ['Y2_methods', async () => ({
-      post_13991: await local('http://127.0.0.1:13991/', 'POST'),
-      put_13991: await local('http://127.0.0.1:13991/', 'PUT'),
-      delete_13991: await local('http://127.0.0.1:13991/', 'DELETE'),
-      post_13992: await local('http://127.0.0.1:13992/', 'POST'),
-      post_13992_v1: await local('http://127.0.0.1:13992/v1', 'POST')
-    })],
-
-    // Y3: единственное неописанное поле объекта Egern.
-    ['Y3_egern_arguments', async () => {
+    // Z6: источники данных для спидтеста. По 128 КБ, два повтора, первый
+    // замер отбрасывается (см. итоги k4-12).
+    ['Z6_speed_sources', async () => {
+      const src = [
+        ['cloudflare', 'https://speed.cloudflare.com/__down?bytes=131072'],
+        ['hetzner', 'https://ash-speed.hetzner.com/100MB.bin'],
+        ['ovh', 'https://proof.ovh.net/files/1Mb.dat']
+      ];
       const out = {};
-      try {
-        if (typeof Egern === 'undefined') return 'нет Egern';
-        out.type = typeof Egern.arguments;
-        try { out.json = JSON.stringify(Egern.arguments).slice(0, 400); }
-        catch (e) { out.json = 'не сериализуется: ' + ((e && e.message) || e); }
-        out.keys = Egern.arguments ? describe(Egern.arguments, 40) : 'пусто';
-      } catch (e) { out.error = String((e && e.message) || e); }
-      return out;
-    }],
-
-    // Y4: жив ли SSH-механизм. Адрес заведомо мёртвый — интересен вид отказа.
-    ['Y4_ssh_alive', async () => {
-      const out = { ssh_type: typeof ctx.ssh };
-      if (!ctx.ssh || typeof ctx.ssh.connect !== 'function') { out.connect = 'нет метода'; return out; }
-      try {
-        const s = await ctx.ssh.connect({ host: '192.0.2.1', port: 22,
-                                          username: 'nobody', password: 'x', timeout: 3000 });
-        out.connected = typeof s;
-        try { await s.close(); } catch (e) { }
-      } catch (e) { out.error = String((e && e.message) || e).slice(0, 200); }
-      return out;
-    }],
-
-    // Y5: медиана вместо одиночного замера — на прошлых ревизиях один и тот же
-    // узел дал 2,8 и 7,4 Мбит/с.
-    ['Y5_speed_median', async () => {
-      const one = async (policy) => {
-        const t = Date.now();
-        try {
-          const r = await ctx.http.get('https://speed.cloudflare.com/__down?bytes=262144',
-                                       { policy: policy, timeout: 30000 });
-          const b = await r.arrayBuffer();
-          const ms = Math.max(1, Date.now() - t);
-          return Math.round(b.byteLength * 8 / ms / 100) / 10;
-        } catch (e) { return null; }
-      };
-      const out = {};
-      for (let i = 0; i < EX.length; i++) {
+      for (let i = 0; i < src.length; i++) {
         const runs = [];
-        for (let k = 0; k < 3; k++) runs.push(await one(EX[i]));
-        const good = runs.filter(v => v !== null).sort((a, b) => a - b);
-        out[EX[i]] = { runs: runs, median: good.length ? good[Math.floor(good.length / 2)] : null };
+        for (let k = 0; k < 3; k++) {
+          const t = Date.now();
+          try {
+            const r = await ctx.http.get(src[i][1], { policy: 'RH-Явный-1', timeout: 20000 });
+            const b = await r.arrayBuffer();
+            const ms = Math.max(1, Date.now() - t);
+            runs.push({ bytes: b.byteLength, ms: ms, mbps: Math.round(b.byteLength * 8 / ms / 100) / 10 });
+          } catch (e) { runs.push('err:' + String((e && e.message) || e).slice(0, 50)); break; }
+        }
+        const good = runs.filter(v => v && v.mbps).map(v => v.mbps);
+        // Первый замер отбрасываем: в него входит установление соединения.
+        const tail = good.slice(1);
+        out[src[i][0]] = { runs: runs, median_no_first: median(tail) };
       }
       return out;
-    }],
-
-    // Y6: перезапишет ли URL-схема существующую группу или создаст дубль.
-    // Ссылка уходит в уведомление, тап делает Диана; итог виден в приложении.
-    ['Y6_urlscheme_notify', async () => {
-      const url = 'egern:/policy_groups/new?name=' + encodeURIComponent(GRP) +
-                  '&type=select&policy=' + encodeURIComponent(EX[0]);
-      const r = notify('k4-12: проверка URL-схемы',
-                       'Нажми это уведомление. Проверяем, перезапишет ли схема группу ' +
-                       GRP + ' или создаст вторую с тем же именем. После нажатия посмотри список групп.',
-                       { type: 'openUrl', url: url });
-      return { url: url, notify: r };
-    }],
-
-    // Y7: нет ли у объектов ctx методов сверх документации.
-    ['Y7_ctx_objects', async () => ({
-      ssh: describe(ctx.ssh, 30),
-      http: describe(ctx.http, 30),
-      storage: describe(ctx.storage, 30),
-      compress: describe(ctx.compress, 30),
-      device: describe(ctx.device, 30),
-      app: describe(ctx.app, 30),
-      script: describe(ctx.script, 30)
-    })]
+    }]
   ];
 
   let st = null;
@@ -268,34 +225,30 @@ export const K4_SCRIPT = `export default async function (ctx) {
   }
 
   st.runs = (st.runs || 0) + 1;
-  let okCount = 0, errCount = 0;
+  let did = 0, errCount = 0, left = 0;
 
   for (let i = 0; i < steps.length; i++) {
     const nm = steps[i][0];
     if (st.dead[nm]) continue;
+    if (st.results[nm] !== undefined) continue;      // уже сделан в прошлый раз
+    if (Date.now() - t0 > BUDGET) { left++; continue; }
     st.inflight = nm;
     try { ctx.storage.setJSON(STATE, st); } catch (e) { }
-    try {
-      st.results[nm] = await steps[i][1]();
-      okCount++;
-    } catch (e) {
-      st.results[nm] = 'ошибка: ' + String((e && e.message) || e);
-      errCount++;
-    }
+    try { st.results[nm] = await steps[i][1](); did++; }
+    catch (e) { st.results[nm] = 'ошибка: ' + String((e && e.message) || e); errCount++; }
     st.inflight = null;
     try { ctx.storage.setJSON(STATE, st); } catch (e) { }
   }
 
-  const deadNames = Object.keys(st.dead);
-  const R = { rev: REV, run: st.runs, total: steps.length,
-              ok: okCount, errors: errCount, skipped: deadNames,
-              results: st.results, total_ms: Date.now() - t0,
-              ts: new Date().toISOString() };
+  const done = Object.keys(st.results).length;
+  const R = { rev: REV, run: st.runs, total: steps.length, done: done,
+              did_now: did, errors: errCount, left: left,
+              dead: Object.keys(st.dead), results: st.results,
+              total_ms: Date.now() - t0, ts: new Date().toISOString() };
 
-  notify(REV + ': прогон ' + st.runs + ' завершён',
-         'Пройдено ' + okCount + ' из ' + steps.length +
-         (errCount ? ', с ошибкой ' + errCount : '') +
-         (deadNames.length ? ', исключено ' + deadNames.length : '') + '. Отчёт отправлен.');
+  notify(REV + ': прогон ' + st.runs,
+         'Готово шагов ' + done + ' из ' + steps.length +
+         (left ? '. Не хватило времени на ' + left + ' — запусти ещё раз' : '. ПЕРЕБОР ЗАВЕРШЁН'));
 
   try {
     if (env.RH_POST_URL) {
@@ -304,7 +257,7 @@ export const K4_SCRIPT = `export default async function (ctx) {
       });
     }
   } catch (e) { }
-  return { rh: REV, run: st.runs, ok: okCount, errors: errCount, skipped: deadNames.length };
+  return { rh: REV, run: st.runs, done: done, left: left };
 }
 `;
 
