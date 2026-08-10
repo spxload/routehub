@@ -1,5 +1,16 @@
 // =============================================================
 // routehub-egern-worker.js — Worker стенда Egern (ветка `egern`)
+// VERSION: e0.5.1 (2026-08-10) — тест-адрес и интервал обновления профиля.
+//   ТЕСТ-АДРЕС сменён с cp.cloudflare.com на connectivitycheck.gstatic.com:
+//   на k4-13 Cloudflare отвергал ОТДЕЛЬНЫЕ выходные адреса узлов (400), из-за
+//   чего живой и быстрый узел выглядел мёртвым; выходные адреса ПЛАВАЮТ, то
+//   есть отказ то появлялся, то исчезал. gstatic дал 3/3 и код 204 через все
+//   четыре выхода (прямой, RU-узел, DE-узел, группа), медиана 57-74 мс.
+//   ИНТЕРВАЛ ОБНОВЛЕНИЯ ПРОФИЛЯ временно 300 с вместо суточного: в интерфейсе
+//   Egern такой настройки нет, менять можно только профилем. Проверяем,
+//   принимает ли Egern малый интервал и приходит ли за профилем САМ — это
+//   единственный оставшийся путь управления выбором узла с сервера
+//   (см. ЭТАП_K_EGERN_ЛАЗЕЙКИ.md, раздел 8). После проверки вернуть 900.
 // VERSION: e0.5.0 (2026-08-09) — ws-узел в proxies + скрипт k4-9.
 //   Обычных ws-узлов в подписке НЕТ (все 17 ws обходные), поэтому разбор
 //   ws-транспорта проверяется одним обходным узлом RH-Явный-WS. Через него
@@ -36,7 +47,7 @@
 import { K4_SCRIPT, K4_REV, firstNormalNode, subNames } from './routehub-egern-k4.js';
 import { explicitNodes, bypassWsNode } from './routehub-egern-proxies.js';
 
-const WORKER_VER = 'e0.5.0';
+const WORKER_VER = 'e0.5.1';
 const KEY_RE = /^k\d+$/;
 const TOKEN_LEN = 32;
 const TOKEN_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -47,6 +58,7 @@ const FRESH_MS = 60 * 60 * 1000;
 const NODE_PREFIXES = ['vless://', 'vmess://', 'trojan://', 'ss://'];
 const PROBE_KEEP = 20;
 const PROBE_MAX_BYTES = 64 * 1024;
+const PROFILE_UPDATE_SEC = 300;               // временно для проверки auto_update; штатное 900
 const EXPLICIT_N = 3;                         // сколько ОБЫЧНЫХ узлов объявляем явно
 const WS_NODE_NAME = 'RH-Явный-WS';           // один обходной ws — проверка разбора ws
 
@@ -54,7 +66,7 @@ const WS_NODE_NAME = 'RH-Явный-WS';           // один обходной 
 const RE_NORMAL = '^(?!.*Обход)';
 const RE_BYPASS = '\\[Обход';
 
-const TEST_URL_PROXY = 'http://cp.cloudflare.com/generate_204';
+const TEST_URL_PROXY = 'http://connectivitycheck.gstatic.com/generate_204';
 const TEST_URL_DIRECT = 'http://www.msftconnecttest.com/connecttest.txt';
 
 const RAW = 'https://raw.githubusercontent.com/';
@@ -264,7 +276,7 @@ function buildProfile(base, key, safe, nodeName, explicit) {
   }];
 
   const out = {
-    auto_update: { url: profUrl, interval: 86400 },
+    auto_update: { url: profUrl, interval: PROFILE_UPDATE_SEC },
     ipv6: false,
     block_quic: false,
     close_connections_on_policy_change: true,
