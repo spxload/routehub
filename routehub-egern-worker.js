@@ -1,45 +1,37 @@
 // =============================================================
 // routehub-egern-worker.js — Worker стенда Egern (ветка `egern`)
-// VERSION: e0.5.1 (2026-08-10) — тест-адрес и интервал обновления профиля.
-//   ТЕСТ-АДРЕС сменён с cp.cloudflare.com на connectivitycheck.gstatic.com:
-//   на k4-13 Cloudflare отвергал ОТДЕЛЬНЫЕ выходные адреса узлов (400), из-за
-//   чего живой и быстрый узел выглядел мёртвым; выходные адреса ПЛАВАЮТ, то
-//   есть отказ то появлялся, то исчезал. gstatic дал 3/3 и код 204 через все
-//   четыре выхода (прямой, RU-узел, DE-узел, группа), медиана 57-74 мс.
-//   ИНТЕРВАЛ ОБНОВЛЕНИЯ ПРОФИЛЯ временно 300 с вместо суточного: в интерфейсе
-//   Egern такой настройки нет, менять можно только профилем. Проверяем,
-//   принимает ли Egern малый интервал и приходит ли за профилем САМ — это
-//   единственный оставшийся путь управления выбором узла с сервера
-//   (см. ЭТАП_K_EGERN_ЛАЗЕЙКИ.md, раздел 8). После проверки вернуть 900.
+// VERSION: e0.6.0 (2026-08-11) — открытый приёмник отчётов + интервал назад.
+//   ПРИЁМНИК /ingest/<INGEST_KEY>: POST складывает отчёт в probe:<src>,
+//   GET отдаёт последние записи. Токена устройства НЕ требует — это сделано
+//   намеренно: скрипты-пробы для Loon и Shadowrocket лежат в ПУБЛИЧНОМ
+//   репозитории, и класть в них токен стенда нельзя (он даёт доступ к
+//   /nodes, то есть к подписке с ключами). INGEST_KEY же не открывает
+//   ничего, кроме записи и чтения отчётов проб.
+//   ИНТЕРВАЛ ПРОФИЛЯ возвращён на 86400: проверка auto_update завершена —
+//   при значении 300 телефон за шесть часов НЕ пришёл за профилем НИ РАЗУ,
+//   хотя скрипт по расписанию всё это время работал. Обновление профиля
+//   в Egern событийное (открытие приложения, ручное обновление), не по
+//   таймеру ⇒ управлять выбором узла через перегенерацию профиля нельзя.
+//   Это закрывает последнее направление (ЭТАП_K_EGERN_ЛАЗЕЙКИ.md, раздел 8).
+// VERSION: e0.5.1 (2026-08-10) — тест-адрес connectivitycheck.gstatic.com
+//   вместо cp.cloudflare.com: Cloudflare отвергал отдельные выходные адреса
+//   узлов (400), из-за чего живой узел выглядел мёртвым, а адреса ПЛАВАЮТ.
+//   gstatic дал 3/3 и код 204 через все четыре выхода, медиана 57-74 мс.
 // VERSION: e0.5.0 (2026-08-09) — ws-узел в proxies + скрипт k4-9.
 //   Обычных ws-узлов в подписке НЕТ (все 17 ws обходные), поэтому разбор
-//   ws-транспорта проверяется одним обходным узлом RH-Явный-WS. Через него
-//   допускается РОВНО ОДИН запрос (шаг W4): трафик обходных узлов платный.
-//   Узел кладётся в select-группу RH-Явные — у select нет interval, значит
-//   фонового теста задержки по расписанию не будет.
-// ИСТОРИЯ: e0.2.2 минимальный профиль (принят: 52/17 узла, 5 групп);
-//   e0.2.3/e0.2.4 диагностика K2 — член DIRECT в fallback тестируется ГРУППОВЫМ
-//   latency_test_url (36 мс и таймаут на 192.0.2.1) ⇒ модель «слабый DIRECT»
-//   переносится; e0.3.0 schedule-скрипт и приём отчётов (K4 закрыт);
-//   e0.4.0 объявленные узлы в proxies.
-// РЕЗУЛЬТАТ e0.4.0 + k4-8 (2026-08-09): ctx.http с policy = имя узла из
-//   proxies АДРЕСУЕТ ИМЕННО ЭТОТ УЗЕЛ (три явных узла — три разных выхода)
-//   ⇒ поузловой спидтест на Egern реализуем. Открытый вопрос №1 закрыт.
+//   ws-транспорта проверяется одним обходным узлом RH-Явный-WS: через него
+//   допускается РОВНО ОДИН запрос, трафик обходных узлов платный. Узел
+//   кладётся в select-группу — у select нет interval, фонового опроса не будет.
+// ИСТОРИЯ: e0.2.2 минимальный профиль; e0.2.3/e0.2.4 диагностика K2 — член
+//   DIRECT в fallback тестируется ГРУППОВЫМ latency_test_url ⇒ модель
+//   «слабый DIRECT» переносится; e0.3.0 schedule-скрипт и приём отчётов
+//   (K4 закрыт); e0.4.0 объявленные узлы в proxies ⇒ ctx.http с policy =
+//   имя узла из proxies адресует именно этот узел, поузловой спидтест
+//   реализуем (открытый вопрос №1 закрыт).
 // ЭНДПОИНТЫ: GET /health; GET /admin/keys?admin=<ADMIN_KEY>;
 //   GET /t/<token>/nodes?key=kN; GET /t/<token>/profile?key=kN (+&safe=1);
-//   GET /t/<token>/script/k4.js?key=kN; POST и GET /t/<token>/probe?key=kN.
-//   Токен обязателен всегда.
-// ЗНАНИЯ ИЗ ПОЛЕЙ (Egern 2.20.0, k3):
-//   • hijack_dns — СПИСОК, не булево; Egern падает на ПЕРВОМ несоответствии
-//     — новые конструкции вводить по одной за импорт.
-//   • rule_set принимает списки формата Shadowrocket (K7 закрыт).
-//   • policy в ctx.http принимает имена групп, DIRECT и имена узлов из
-//     proxies; имя узла ПОДПИСКИ, несуществующее имя и REJECT — 404.
-//   • cron в профиле и cron на устройстве расходятся, если правили в UI:
-//     фактическое значение видно в __context.cronexp отчёта пробы.
-//   • ИЗ ДОКУМЕНТАЦИИ: urls и filter — ОБЩИЕ поля пяти базовых типов,
-//     то есть smart/fallback могут тянуть подписку без external. Перевод пула
-//     на smart + priorities — следующий шаг (вместе с K5).
+//   GET /t/<token>/script/k4.js?key=kN; POST и GET /t/<token>/probe?key=kN;
+//   POST и GET /ingest/<INGEST_KEY>?src=<имя> — без токена устройства.
 // СБОРКА: production branch = egern; «Builds for non-production branches» — СНЯТА.
 // Боевой контур не затрагивается; ветка `egern` в `main` НЕ сливается.
 // =============================================================
@@ -47,7 +39,7 @@
 import { K4_SCRIPT, K4_REV, firstNormalNode, subNames } from './routehub-egern-k4.js';
 import { explicitNodes, bypassWsNode } from './routehub-egern-proxies.js';
 
-const WORKER_VER = 'e0.5.1';
+const WORKER_VER = 'e0.6.0';
 const KEY_RE = /^k\d+$/;
 const TOKEN_LEN = 32;
 const TOKEN_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -58,9 +50,14 @@ const FRESH_MS = 60 * 60 * 1000;
 const NODE_PREFIXES = ['vless://', 'vmess://', 'trojan://', 'ss://'];
 const PROBE_KEEP = 20;
 const PROBE_MAX_BYTES = 64 * 1024;
-const PROFILE_UPDATE_SEC = 300;               // временно для проверки auto_update; штатное 900
-const EXPLICIT_N = 3;                         // сколько ОБЫЧНЫХ узлов объявляем явно
-const WS_NODE_NAME = 'RH-Явный-WS';           // один обходной ws — проверка разбора ws
+const PROFILE_UPDATE_SEC = 86400;
+const EXPLICIT_N = 3;
+const WS_NODE_NAME = 'RH-Явный-WS';
+
+// Ключ приёмника отчётов. НЕ секрет уровня подписки: открывает только
+// запись и чтение проб, к /nodes и /profile отношения не имеет.
+const INGEST_KEY = 'rh-drop-2026';
+const INGEST_SRC_RE = /^[a-z0-9_-]{1,16}$/;
 
 // Признак типа узла — слово в скобочном теге, НЕ значок провайдера (вывод 28).
 const RE_NORMAL = '^(?!.*Обход)';
@@ -208,8 +205,6 @@ function yamlDoc(obj) {
 }
 
 // ---------------------------------------------------------------- профиль
-// explicit — массив из explicitNodes() плюс, при наличии, один ws-узел
-// из bypassWsNode(): [{ node, meta }]
 function buildProfile(base, key, safe, nodeName, explicit) {
   const nodesUrl = base + '/nodes?key=' + key;
   const profUrl = base + '/profile?key=' + key + (safe ? '&safe=1' : '');
@@ -232,19 +227,13 @@ function buildProfile(base, key, safe, nodeName, explicit) {
   }
 
   const groups = [
-    // Обычные узлы. Обходные исключены: платный трафик на пробы не тратим.
     pool('RH-Пул-Обычные', RE_NORMAL, 600),
     pool('RH-Обход', RE_BYPASS, 3600),
     fb('RH-Проба-Обычная', ['RH-Пул-Обычные'], { latency_test_url: TEST_URL_PROXY }),
     fb('RH-RU', ['RH-Проба-Обычная', 'RH-Обход'], { latency_test_url: TEST_URL_PROXY }),
     fb('RH-Главный', ['RH-Пул-Обычные', 'RH-Обход'], { latency_test_url: TEST_URL_PROXY }),
-    // Диагностика K1 — единственная группа с членом DIRECT, правилами не используется.
     fb('RH-Проба-DIRECT', ['DIRECT', 'RH-Обход'], { latency_test_url: TEST_URL_PROXY })
   ];
-  // Группа из явно объявленных узлов — чтобы они были видны в UI и проверялись
-  // штатным тестом задержки. Маршрутизацией не используется. Тип select выбран
-  // намеренно: у него нет interval, то есть фонового опроса членов не будет
-  // (в группе есть обходной ws-узел с платным трафиком).
   if (exNames.length) {
     const g = { name: 'RH-Явные', policies: exNames };
     if (!safe) g.latency_test_url = TEST_URL_PROXY;
@@ -267,7 +256,7 @@ function buildProfile(base, key, safe, nodeName, explicit) {
         RH_POST_URL: base + '/probe?key=' + key,
         RH_GROUP: 'RH-Пул-Обычные',
         RH_NODE: nodeName || '',
-        RH_NODE2: normalNames[0] || '',    // явно объявленный узел
+        RH_NODE2: normalNames[0] || '',
         RH_GROUP2: exNames.length ? 'RH-Явные' : '',
         RH_TEST_URL: TEST_URL_PROXY,
         RH_HEAVY: '0'
@@ -287,7 +276,6 @@ function buildProfile(base, key, safe, nodeName, explicit) {
     proxy_latency_test_url: TEST_URL_PROXY,
     direct_latency_test_url: TEST_URL_DIRECT
   };
-  // proxies объявляются ДО групп: группа RH-Явные на них ссылается по имени.
   if (ex.length) out.proxies = ex.map(function (e) { return { vless: e.node }; });
   out.policy_groups = groups;
   out.rules = rules;
@@ -295,7 +283,6 @@ function buildProfile(base, key, safe, nodeName, explicit) {
   return out;
 }
 
-// Полный набор явных узлов: обычные + один обходной ws (если найден).
 function collectExplicit(text) {
   const list = explicitNodes(text, EXPLICIT_N);
   const ws = bypassWsNode(text, WS_NODE_NAME);
@@ -357,24 +344,36 @@ async function handleProbe(request, url, env, tok) {
   const reg = await loadRegistry(env);
   const bad = gate(reg, key, tok);
   if (bad) return bad;
-  const dbKey = 'probe:' + key;
+  return await storeReport(request, url, env, 'probe:' + key, key);
+}
 
+// Общая часть приёма отчёта: используется и /probe, и /ingest.
+async function storeReport(request, url, env, dbKey, label) {
   if (request.method === 'GET') {
     const cur = await kvGetJSON(env, dbKey);
     const n = parseInt(url.searchParams.get('n') || '0', 10);
     const items = cur || [];
-    return json({ worker: WORKER_VER, script: K4_REV, key: key, runs: items.length,
+    return json({ worker: WORKER_VER, script: K4_REV, key: label, runs: items.length,
                   items: n > 0 ? items.slice(0, n) : items });
   }
-
   const body = await request.text();
   if (body.length > PROBE_MAX_BYTES) return textResp('отчёт слишком велик', 413);
   let rep;
-  try { rep = JSON.parse(body); } catch (e) { return textResp('не JSON', 400); }
+  try { rep = JSON.parse(body); } catch (e) { rep = { raw: body.slice(0, PROBE_MAX_BYTES) }; }
   const list = (await kvGetJSON(env, dbKey)) || [];
   list.unshift({ got: new Date().toISOString(), report: rep });
   await kvPutJSON(env, dbKey, list.slice(0, PROBE_KEEP));
   return json({ ok: true, stored: Math.min(list.length, PROBE_KEEP) });
+}
+
+// Открытый приёмник: /ingest/<INGEST_KEY>?src=<имя>. Токена устройства не
+// требует — скрипты-пробы лежат в публичном репозитории, и токен стенда
+// в них класть нельзя. Ключ приёмника доступа к подписке не даёт.
+async function handleIngest(request, url, env, keyFromPath) {
+  if (keyFromPath !== INGEST_KEY) return textResp('нет доступа', 403);
+  let src = (url.searchParams.get('src') || 'misc').toLowerCase();
+  if (!INGEST_SRC_RE.test(src)) src = 'misc';
+  return await storeReport(request, url, env, 'probe:src:' + src, src);
 }
 
 async function handleAdminKeys(url, env) {
@@ -399,6 +398,7 @@ async function handleAdminKeys(url, env) {
       last_profile_ts: reg[k].last_profile_ts || null
     };
   }
+  out.__ingest = url.origin + '/ingest/' + INGEST_KEY + '?src=<имя>';
   return json({ worker: WORKER_VER, script: K4_REV, devices: out });
 }
 
@@ -440,6 +440,8 @@ export default {
     }
     const m = request.method;
     try {
+      const im = url.pathname.match(/^\/ingest\/([A-Za-z0-9_-]{4,64})$/);
+      if (im && (m === 'GET' || m === 'POST')) return await handleIngest(request, url, env, im[1]);
       if (m === 'GET' && url.pathname === '/health') return await handleHealth(env);
       if (m === 'GET' && url.pathname === '/admin/keys') return await handleAdminKeys(url, env);
       if (m === 'GET' && url.pathname === '/nodes') return await handleNodes(url, env, tok);
@@ -455,6 +457,6 @@ export default {
   }
 };
 
-export const __test = { buildProfile, yamlDoc, yamlStr, collectExplicit, RE_NORMAL, RE_BYPASS, WORKER_VER };
+export const __test = { buildProfile, yamlDoc, yamlStr, collectExplicit, RE_NORMAL, RE_BYPASS, WORKER_VER, INGEST_KEY };
 
 // ХВОСТОВОЙ СТРАЖ — строка без перевода в конце файла; мусор после неё —
