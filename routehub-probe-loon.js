@@ -1,32 +1,37 @@
 // =============================================================
-// routehub-probe-loon.js — диагностика Loon ПОД WHITELIST. REV: L5 (2026-08-11).
+// routehub-probe-loon.js — диагностика Loon ПОД WHITELIST. REV: L6 (2026-08-11).
 //
-// СРОЧНАЯ РЕВИЗИЯ: whitelist РКН ВКЛЮЧЁН ПРЯМО СЕЙЧАС. Это тот режим, ради
-//   которого висели непроверенными K1 и K3, и единственная возможность снять
-//   картину «под блокировкой» и сравнить с эталоном, снятым в норме (k4-13/14).
-//   Пока окно открыто — меряем.
+// ГЛАВНЫЙ РЕЗУЛЬТАТ L5 — БАЗОВОЕ ДОПУЩЕНИЕ ПРОЕКТА ОПРОВЕРГНУТО:
+//   под активным whitelist ОБЫЧНЫЙ узел (🇳🇱 Нидерланды [VPN]) ответил по
+//   ВСЕМ шести маякам за 96-121 мс, а обходной (🇩🇪 [Обход - МТС]) — за
+//   383-452 мс. То есть обычные узлы работают, и ВЧЕТВЕРО быстрее платных.
+//   При этом RH-АВТО-W, RH-АВТО-C, RH-AI-C и RH-RU сидели на обходном узле —
+//   платный трафик тратился там, где бесплатный лучше.
+//   Вероятная причина: в fallback первыми стоят РОССИЙСКИЕ узлы (RH-Все
+//   выбрал 🇷🇺 Россия [VPN] #1); под whitelist они недостижимы, перебор
+//   проваливается до обхода, не дойдя до живых европейских. Проверяется W2.
 //
-// ЧТО ИЗВЕСТНО ИЗ L4 И ЧТО ЭТО МЕНЯЕТ В МЕТОДИКЕ:
-//   • $httpClient БЕЗ параметра node идёт ПО ПРАВИЛАМ КОНФИГА, а не напрямую.
-//     Поэтому на L4 gosuslugi и vivo дали таймаут — их запросы ушли через
-//     обходной узел. Здесь прямой выход задаётся ЯВНО: node: 'DIRECT'.
-//   • Список узлов из скрипта недоступен: getConfig() отдаёт только встроенные
-//     политики и имена групп. Имена реальных узлов берутся из policy_select —
-//     это карта «группа → выбранный член», доступная одним вызовом.
-//   • getSubPolicies не работает ни с какими аргументами (всегда undefined).
-//   • Хранилище держит 1 МБ на ключ, remove работает.
-//   • Геобазы Loon корректны: 8.8.8.8 → US / 15169 / GOOGLE.
-//   • Локальный порт 6152 закрыт: ошибки сокета на все методы и пути.
-//   • Loon 3.5.0(975), iOS 26.5.2 — во всех наших документах значится 3.3.9.
+//   ДЕТЕКТОР ПОДТВЕРЖДЁН: все шесть иностранных маяков напрямую — таймаут
+//   0/2, в норме отвечали за 54-74 мс. Ложных срабатываний нет. K1 и K3 закрыты.
+//
+//   КОНТРОЛЬНЫЕ РОССИЙСКИЕ ПОДОБРАНЫ НЕВЕРНО: напрямую работают только
+//   ya.ru (801 мс) и gosuslugi.ru (233 мс). cbr.ru, nalog.gov.ru,
+//   sberbank.ru, mos.ru — ТАЙМАУТ. Whitelist это конкретный список, а не
+//   «всё российское»; в контроль годятся только ya.ru и gosuslugi.ru.
+//
+//   W7: node и policy с ИМЕНЕМ УЗЛА дали ошибку, а с ИМЕНЕМ ГРУППЫ —
+//   204 за 3492 мс. Имена узлов содержат эмодзи и пробелы; вероятно, дело
+//   в них. Проверяется W4.
+//   W6 (обращение к нашим службам) УРОНИЛ ПРОГОН — здесь разнесён на
+//   отдельные шаги с коротким таймаутом, чтобы падение стоило одного шага.
 //
 // БЕЗОПАСНОСТЬ: ТОЛЬКО ЧТЕНИЕ. setSelectPolicy, setPluginEnable,
 //   setScriptEnable, setRunningModel НЕ вызываются.
-// ТРАФИК: через обходной узел уходит минимум — только маленькие ответы
-//   generate_204 и заголовки; тяжёлых загрузок через обход НЕТ.
-// ДОСТАВКА: отчёт кладётся в буфер обмена через уведомление.
+// ТРАФИК: через обходной узел — только ответы generate_204, тяжёлого нет.
+// ДОСТАВКА: отчёт в буфер обмена через уведомление.
 // =============================================================
 
-const REV = 'L5';
+const REV = 'L6';
 const STATE = 'rh_probe_l1';
 const BUDGET = 70000;
 const t0 = Date.now();
@@ -38,7 +43,6 @@ function readState() {
 function writeState(o) {
   try { $persistentStore.write(JSON.stringify(o), STATE); } catch (e) { }
 }
-
 function get(url, opt, ms) {
   return new Promise(function (resolve) {
     const done = { fired: false };
@@ -52,7 +56,7 @@ function get(url, opt, ms) {
         if (done.fired) return;
         done.fired = true;
         clearTimeout(timer);
-        if (err) { resolve('err:' + String(err).slice(0, 60)); return; }
+        if (err) { resolve('err:' + String(err).slice(0, 50)); return; }
         const r = { st: resp ? resp.status : null, ms: Date.now() - started };
         if (body) r.len = String(body).length;
         resolve(r);
@@ -62,143 +66,114 @@ function get(url, opt, ms) {
     }
   });
 }
-
-// Снимок состояния: карта «группа → выбранный член» плюс режим и сеть.
 function snapshot() {
   try {
     const raw = $config.getConfig();
-    const c = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return c || {};
+    return (typeof raw === 'string' ? JSON.parse(raw) : raw) || {};
   } catch (e) { return {}; }
 }
-
-// Имена узлов берутся из выбора групп — другого источника в Loon нет.
-function pickNodes(snap) {
-  const out = { bypass: null, normal: null, all: [] };
+function seenNodes(snap) {
+  const out = [];
   const sel = (snap && snap.policy_select) || {};
   for (const g in sel) {
     const v = sel[g];
     if (typeof v !== 'string') continue;
     if (v.indexOf('RH-') === 0 || v === 'DIRECT' || v === 'REJECT') continue;
-    if (out.all.indexOf(v) < 0) out.all.push(v);
-    if (v.indexOf('Обход') >= 0) { if (!out.bypass) out.bypass = v; }
-    else if (!out.normal) out.normal = v;
+    if (out.indexOf(v) < 0) out.push(v);
   }
   return out;
 }
 
-// Иностранные маяки: под whitelist должны замолчать НАПРЯМУЮ.
-const FOREIGN = [
-  ['gstatic_cc', 'http://connectivitycheck.gstatic.com/generate_204'],
-  ['google_c3', 'http://clients3.google.com/generate_204'],
-  ['cloudflare', 'http://cp.cloudflare.com/generate_204'],
-  ['apple', 'http://captive.apple.com/hotspot-detect.html'],
-  ['msft', 'http://www.msftconnecttest.com/connecttest.txt'],
-  ['vivo', 'http://wifi.vivo.com.cn/generate_204']
-];
-// Российские: под whitelist обязаны продолжать работать напрямую.
-const RUSSIAN = [
-  ['ya', 'https://ya.ru'],
-  ['gosuslugi', 'https://www.gosuslugi.ru'],
-  ['cbr', 'https://www.cbr.ru'],
-  ['nalog', 'https://www.nalog.gov.ru'],
-  ['sber', 'https://www.sberbank.ru'],
-  ['mos', 'https://www.mos.ru']
-];
-
-async function sweep(list, opt, tries) {
-  const out = {};
-  const n = tries || 2;
-  for (let i = 0; i < list.length; i++) {
-    let ok = 0, st = null, ms = null, note = null;
-    for (let k = 0; k < n; k++) {
-      const r = await get(list[i][1], opt, 4000);
-      if (r && r.st) { ok++; st = r.st; if (ms === null) ms = r.ms; }
-      else { note = String(r).slice(0, 30); break; }
-    }
-    out[list[i][0]] = note ? { ok: ok + '/' + n, err: note } : { ok: ok + '/' + n, st: st, ms: ms };
-  }
-  return out;
-}
+const M = 'http://connectivitycheck.gstatic.com/generate_204';
+const M2 = 'http://cp.cloudflare.com/generate_204';
 
 const steps = [
-  // W1: снимок состояния под whitelist. Что выбрано в каждой группе —
-  // видно, какие группы провалились на обход.
   ['W1_state', async function () {
     const s = snapshot();
-    const nodes = pickNodes(s);
-    return {
-      running_model: s.running_model,
-      ssid: s.ssid,
-      final: s.final,
-      global_proxy: s.global_proxy,
-      groups: (s.all_policy_groups || []).length,
-      policy_select: s.policy_select,
-      node_bypass: nodes.bypass,
-      node_normal: nodes.normal,
-      nodes_seen: nodes.all
-    };
+    return { running_model: s.running_model, final: s.final, ssid: s.ssid,
+             policy_select: s.policy_select, nodes: seenNodes(s) };
   }],
 
-  // W2: ГЛАВНОЕ. Иностранные маяки НАПРЯМУЮ под whitelist.
-  // В норме (эталон k4-14) все отвечали 3/3 за 54-74 мс.
-  ['W2_foreign_direct', async function () {
-    return await sweep(FOREIGN, { node: 'DIRECT' }, 2);
-  }],
-
-  // W3: российские напрямую — контроль, что интернет вообще жив.
-  ['W3_russian_direct', async function () {
-    return await sweep(RUSSIAN, { node: 'DIRECT' }, 2);
-  }],
-
-  // W4: те же иностранные маяки ЧЕРЕЗ ОБХОДНОЙ узел. Должны работать —
-  // именно на этом держится вся модель обхода.
-  ['W4_foreign_via_bypass', async function () {
-    const nodes = pickNodes(snapshot());
-    if (!nodes.bypass) return 'обходной узел не найден в выборе групп';
-    const r = await sweep(FOREIGN, { node: nodes.bypass }, 1);
-    r.__node = nodes.bypass;
-    return r;
-  }],
-
-  // W5: те же маяки через ОБЫЧНЫЙ узел. Под whitelist обычные узлы,
-  // по нашей модели, недоступны — здесь это проверяется прямо.
-  ['W5_foreign_via_normal', async function () {
-    const nodes = pickNodes(snapshot());
-    if (!nodes.normal) return 'обычный узел не найден в выборе групп';
-    const r = await sweep(FOREIGN, { node: nodes.normal }, 1);
-    r.__node = nodes.normal;
-    return r;
-  }],
-
-  // W6: достижимы ли под whitelist наши собственные службы —
-  // Worker, GitHub (подписка и списки правил), стенд.
-  ['W6_our_services', async function () {
-    const list = [
-      ['worker_boevoy', 'https://routehub.proton4iker.workers.dev/status'],
-      ['worker_stend', 'https://routehub-egern.proton4iker.workers.dev/health'],
-      ['github_raw', 'https://raw.githubusercontent.com/spxload/routehub/main/README.md'],
-      ['github', 'https://github.com']
-    ];
-    const nodes = pickNodes(snapshot());
-    const out = { direct: await sweep(list, { node: 'DIRECT' }, 1) };
-    if (nodes.bypass) out.via_bypass = await sweep(list, { node: nodes.bypass }, 1);
+  // W2: ГЛАВНОЕ. Каждый известный узел под whitelist — по два маяка и замер.
+  // Показывает, какие ТИПЫ узлов переживают блокировку: российские,
+  // европейские, игровые, обходные.
+  ['W2_nodes_matrix', async function () {
+    const nodes = seenNodes(snapshot());
+    const out = {};
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      const a = await get(M, { node: n }, 5000);
+      const b = (a && a.st) ? await get(M2, { node: n }, 5000) : 'пропущен';
+      const short = n.slice(0, 24);
+      out[short] = { gstatic: a, cloudflare: b };
+    }
     return out;
   }],
 
-  // W7: работает ли policy как синоним node — от этого зависит, как писать
-  // поузловой спидтест.
-  ['W7_node_vs_policy', async function () {
-    const nodes = pickNodes(snapshot());
-    const U = 'http://connectivitycheck.gstatic.com/generate_204';
+  // W3: скорость через живые узлы — 128 КБ, чтобы понять, годятся ли
+  // обычные узлы под whitelist не только для проб, но и для работы.
+  ['W3_speed_live', async function () {
+    const nodes = seenNodes(snapshot());
     const out = {};
-    if (nodes.bypass) {
-      out.with_node = await get(U, { node: nodes.bypass }, 6000);
-      out.with_policy = await get(U, { policy: nodes.bypass }, 6000);
-      out.node_used = nodes.bypass;
+    const U = 'https://speed.cloudflare.com/__down?bytes=131072';
+    for (let i = 0; i < nodes.length && i < 4; i++) {
+      const n = nodes[i];
+      const r = await get(U, { node: n }, 15000);
+      out[n.slice(0, 24)] = (r && r.len)
+        ? { mbps: Math.round(r.len * 8 / Math.max(1, r.ms) / 100) / 10, ms: r.ms, len: r.len }
+        : r;
     }
-    out.with_group = await get(U, { node: 'RH-Обход' }, 6000);
-    out.no_param = await get(U, null, 6000);
+    return out;
+  }],
+
+  // W4: почему node с именем узла дал ошибку на L5. Пробуем узел без эмодзи
+  // в начале строки и сравниваем с обращением по имени группы.
+  ['W4_node_naming', async function () {
+    const nodes = seenNodes(snapshot());
+    const out = { tried: [] };
+    for (let i = 0; i < nodes.length && i < 3; i++) {
+      const n = nodes[i];
+      out.tried.push(n.slice(0, 24));
+      out['node_' + i] = await get(M, { node: n }, 5000);
+      out['policy_' + i] = await get(M, { policy: n }, 5000);
+    }
+    out.by_group_avto = await get(M, { node: 'RH-АВТО' }, 6000);
+    out.by_group_oboh = await get(M, { node: 'RH-Обход' }, 6000);
+    out.no_param = await get(M, null, 5000);
+    return out;
+  }],
+
+  // W5-W7: наши службы по одной. На L5 общий шаг уронил прогон, поэтому
+  // каждый адрес отдельным шагом — падение стоит одного шага, а не всех.
+  ['W5_worker_direct', async function () {
+    return { direct: await get('https://routehub.proton4iker.workers.dev/status', { node: 'DIRECT' }, 3000) };
+  }],
+  ['W6_worker_via_bypass', async function () {
+    const nodes = seenNodes(snapshot());
+    let bypass = null;
+    for (let i = 0; i < nodes.length; i++) if (nodes[i].indexOf('Обход') >= 0) { bypass = nodes[i]; break; }
+    if (!bypass) return 'обходной узел не найден';
+    return { node: bypass.slice(0, 24),
+             worker: await get('https://routehub.proton4iker.workers.dev/status', { node: bypass }, 6000) };
+  }],
+  ['W7_github', async function () {
+    const nodes = seenNodes(snapshot());
+    let normal = null;
+    for (let i = 0; i < nodes.length; i++) if (nodes[i].indexOf('Обход') < 0) { normal = nodes[i]; break; }
+    const out = { direct: await get('https://raw.githubusercontent.com/spxload/routehub/main/README.md', { node: 'DIRECT' }, 3000) };
+    if (normal) out.via_normal = await get('https://raw.githubusercontent.com/spxload/routehub/main/README.md', { node: normal }, 6000);
+    return out;
+  }],
+
+  // W8: контрольные российские адреса — сузить набор до реально работающих.
+  ['W8_russian_control', async function () {
+    const list = [['ya', 'https://ya.ru'], ['gosuslugi', 'https://www.gosuslugi.ru'],
+                  ['yandex', 'https://yandex.ru'], ['vk', 'https://vk.com'],
+                  ['dzen', 'https://dzen.ru'], ['avito', 'https://www.avito.ru']];
+    const out = {};
+    for (let i = 0; i < list.length; i++) {
+      out[list[i][0]] = await get(list[i][1], { node: 'DIRECT' }, 4000);
+    }
     return out;
   }]
 ];
@@ -208,17 +183,14 @@ const steps = [
   if (!st || st.rev !== REV) st = { rev: REV, dead: {}, results: {}, runs: 0 };
   if (!st.dead) st.dead = {};
   if (!st.results) st.results = {};
-
   if (st.inflight) {
     st.dead[st.inflight] = true;
     st.results[st.inflight] = 'РОНЯЕТ ПРОГОН — шаг исключён';
     st.inflight = null;
     writeState(st);
   }
-
   st.runs = (st.runs || 0) + 1;
   let did = 0, errs = 0, left = 0;
-
   for (let i = 0; i < steps.length; i++) {
     const nm = steps[i][0];
     if (st.dead[nm]) continue;
@@ -231,14 +203,12 @@ const steps = [
     st.inflight = null;
     writeState(st);
   }
-
   const done = Object.keys(st.results).length;
   const R = { rev: REV, client: 'loon', mode: 'WHITELIST', run: st.runs,
               total: steps.length, done: done, errors: errs, left: left,
               dead: Object.keys(st.dead), results: st.results,
               total_ms: Date.now() - t0, ts: new Date().toISOString() };
   const body = JSON.stringify(R);
-
   try {
     $notification.post('Loon ' + REV + ' (whitelist): прогон ' + st.runs,
                        'Отчёт скопирован — вставь в чат',
