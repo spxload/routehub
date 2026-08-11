@@ -1,38 +1,35 @@
 // =============================================================
-// routehub-probe-shadowrocket.js — ЧИТАЮЩАЯ диагностика Shadowrocket. REV: SR1.
+// routehub-probe-shadowrocket.js — ЧИТАЮЩАЯ диагностика Shadowrocket. REV: SR2.
 //
-// ЗАЧЕМ. Третий клиент, который стоит у Дианы и иногда используется.
-//   По Egern пройдено пятнадцать ревизий, по Loon шесть; здесь снимается
-//   базовая картина тем же способом, чтобы три клиента можно было сравнить.
-//   Особая ценность момента: whitelist РКН ВКЛЮЧЁН, значит сразу видно,
-//   как Shadowrocket ведёт себя под блокировкой.
+// ИЗМЕНЕНИЕ ПРОТИВ SR1: отчёт ПЕЧАТАЕТСЯ В КОНСОЛЬ кусками по 800 символов —
+//   в Shadowrocket буфер обмена из уведомления не сработал. Каждый кусок
+//   помечен [RH n/N], чтобы собрать их по порядку из журнала скрипта.
+//   Смотреть: Shadowrocket → журнал/логи скрипта после запуска.
+//   Отчёт дополнительно кладётся в хранилище под ключом rh_probe_sr.
 //
-// ЧТО УЖЕ ЗНАЕМ ПРО ДРУГИЕ КЛИЕНТЫ (для сравнения):
-//   • Egern: управление политиками из скрипта НЕВОЗМОЖНО (доказано сплошной
-//     описью 959 имён); зато есть ctx.ssh, цепочки prev_hop, правила по SSID,
-//     группа smart с рейтингом, виджеты.
+// ЗАЧЕМ. Третий клиент для сравнения. Момент удачный: whitelist РКН ВКЛЮЧЁН.
+//
+// ЧТО УЖЕ ИЗМЕРЕНО НА ДРУГИХ КЛИЕНТАХ (для сопоставления):
+//   • Egern: управление политиками из скрипта невозможно (сплошная опись
+//     959 имён); есть ctx.ssh, prev_hop, правила по SSID, smart, виджеты.
 //   • Loon 3.5.0: $config умеет getPolicy, getSelectedPolicy, setSelectPolicy,
 //     setPluginEnable, setScriptEnable, setRunningModel; getConfig отдаёт
-//     JSON-строку с картой policy_select; WebSocket НЕ соединяется;
-//     локальный порт 6152 закрыт; хранилище 1 МБ на ключ.
+//     JSON-строку с картой policy_select; WebSocket не соединяется; порт
+//     6152 закрыт; хранилище 1 МБ на ключ; движок 12 мс на миллион итераций.
+//   • ПОД WHITELIST (Loon, замерено): обычные узлы РАБОТАЮТ — российский
+//     89-99 мс и 6,4 Мбит/с, немецкий 96-99 мс и 5,5 Мбит/с; обходной
+//     388-505 мс и 1,5 Мбит/с. Напрямую живы только ya.ru и gosuslugi.ru.
 //
-// БЕЗОПАСНОСТЬ: ТОЛЬКО ЧТЕНИЕ. Ничего не переключает и не меняет.
-//   Запись — только собственное состояние под ключом rh_probe_sr.
+// БЕЗОПАСНОСТЬ: ТОЛЬКО ЧТЕНИЕ, ничего не переключает.
 //
-// КАК ЗАПУСТИТЬ (Диана):
-//   Shadowrocket → «Конфигурация» → раздел [Script] активного конфига,
-//   строка вида:
-//     rh-probe = type=cron,script-path=<ссылка>,cronexp=0 0 * * *,enable=true
-//   и запустить вручную кнопкой у скрипта. Либо через «Скрипты» → «Выполнить».
-//   Если в этой версии нет ручного запуска — поставить cronexp на ближайшую
-//   минуту и дождаться срабатывания.
-//
-// ДОСТАВКА: отчёт кладётся в буфер обмена через уведомление (как в Loon).
-//   Если буфер не поддерживается — краткая сводка придёт в тексте пуша,
-//   полный отчёт останется в хранилище под ключом rh_probe_sr.
+// КАК ЗАПУСТИТЬ: Shadowrocket → конфиг, раздел [Script]:
+//   rh-probe = type=cron,script-path=<ссылка>,cronexp=0 0 * * *,enable=true
+//   и запустить вручную кнопкой у скрипта; либо поставить cronexp на
+//   ближайшую минуту. После прогона открыть журнал скрипта и скопировать
+//   строки [RH 1/N] … [RH N/N].
 // =============================================================
 
-const REV = 'SR1';
+const REV = 'SR2';
 const STATE = 'rh_probe_sr';
 const t0 = Date.now();
 
@@ -82,7 +79,7 @@ function get(url, opt, ms) {
         clearTimeout(timer);
         if (err) { resolve('err:' + String(err).slice(0, 60)); return; }
         const r = { st: resp ? resp.status : null, ms: Date.now() - started };
-        if (body) { r.len = String(body).length; r.body = String(body).slice(0, 50); }
+        if (body) { r.len = String(body).length; r.body = String(body).slice(0, 40); }
         resolve(r);
       });
     } catch (e) {
@@ -94,8 +91,7 @@ function get(url, opt, ms) {
 const results = {};
 
 (async function () {
-  // 1. СПЛОШНАЯ опись globalThis — так в Egern стало ясно, что скрытого нет,
-  // а в Loon нашлись captureLog и вся служебная машинерия.
+  // 1. Сплошная опись globalThis.
   try {
     const all = [];
     try { Object.getOwnPropertyNames(globalThis).forEach(function (n) { all.push(n); }); } catch (e) { }
@@ -113,11 +109,10 @@ const results = {};
              l.indexOf('config') >= 0 || l.indexOf('surge') >= 0 || l.indexOf('log') >= 0 ||
              l.indexOf('shadow') >= 0;
     });
-    results.S1_scan = { total: all.length, interesting: interesting.join(','), by_keyword: kw.join(',') };
-  } catch (e) { results.S1_scan = 'ошибка: ' + String((e && e.message) || e); }
+    results.S1 = { total: all.length, glob: interesting.join(','), kw: kw.join(',') };
+  } catch (e) { results.S1 = 'ошибка'; }
 
-  // 2. Описи известных объектов. В Shadowrocket ожидается surge-совместимый
-  // набор; интересно, есть ли $config и что он умеет.
+  // 2. Описи объектов.
   try {
     const o = {};
     const names = ['$rocket', '$config', '$httpClient', '$persistentStore', '$utils',
@@ -126,33 +121,31 @@ const results = {};
     for (let i = 0; i < names.length; i++) {
       let v;
       try { v = eval(names[i]); } catch (e) { v = undefined; }
-      if (typeof v === 'undefined') { o[names[i]] = 'отсутствует'; continue; }
+      if (typeof v === 'undefined') { o[names[i]] = '-'; continue; }
       if (typeof v === 'object' && v !== null) o[names[i]] = describe(v, 40);
-      else if (typeof v === 'function') o[names[i]] = 'function/' + v.length;
-      else o[names[i]] = { type: typeof v, value: String(v).slice(0, 120) };
+      else if (typeof v === 'function') o[names[i]] = 'fn/' + v.length;
+      else o[names[i]] = String(v).slice(0, 100);
     }
-    results.S2_objects = o;
-  } catch (e) { results.S2_objects = 'ошибка: ' + String((e && e.message) || e); }
+    results.S2 = o;
+  } catch (e) { results.S2 = 'ошибка'; }
 
-  // 3. Среда исполнения: движок, хранилища, WebSocket, криптография.
+  // 3. Среда и движок.
   try {
     const has = function (n) { try { return typeof eval(n); } catch (e) { return 'нет'; } };
-    const env = {
-      websocket: has('WebSocket'), localStorage: has('localStorage'),
-      indexedDB: has('indexedDB'), fetch: has('fetch'), crypto: has('crypto'),
-      wasm: has('WebAssembly'), xhr: has('XMLHttpRequest'), document: has('document')
-    };
-    try { env.subtle = (typeof crypto !== 'undefined' && crypto.subtle) ? 'есть' : 'ОТСУТСТВУЕТ'; } catch (e) { }
-    try { env.ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? String(navigator.userAgent).slice(0, 70) : null; } catch (e) { }
+    const env = { ws: has('WebSocket'), ls: has('localStorage'), idb: has('indexedDB'),
+                  fetch: has('fetch'), crypto: has('crypto'), wasm: has('WebAssembly'),
+                  xhr: has('XMLHttpRequest'), doc: has('document') };
+    try { env.subtle = (typeof crypto !== 'undefined' && crypto.subtle) ? 'есть' : 'нет'; } catch (e) { }
+    try { env.ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? String(navigator.userAgent).slice(0, 60) : null; } catch (e) { }
     try { env.tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { }
     const t = Date.now();
     let acc = 0;
     for (let i = 0; i < 1000000; i++) acc += i % 7;
-    env.million_iterations_ms = Date.now() - t;
-    results.S3_env = env;
-  } catch (e) { results.S3_env = 'ошибка: ' + String((e && e.message) || e); }
+    env.mln_ms = Date.now() - t;
+    results.S3 = env;
+  } catch (e) { results.S3 = 'ошибка'; }
 
-  // 4. Хранилище: лимиты и удаление.
+  // 4. Хранилище.
   try {
     const TMP = 'rh_probe_sr_tmp';
     const out = {};
@@ -161,59 +154,58 @@ const results = {};
       const data = new Array(sizes[i] + 1).join('x');
       const w = store_write(data, TMP);
       const back = store_read(TMP);
-      out[sizes[i]] = { write: w, read_back: back ? back.length : 0 };
+      out[sizes[i]] = { w: w, back: back ? back.length : 0 };
     }
-    try { out.remove = $persistentStore.remove ? $persistentStore.remove(TMP) : 'нет метода remove'; }
+    try { out.remove = $persistentStore.remove ? $persistentStore.remove(TMP) : 'нет метода'; }
     catch (e) { out.remove = 'ошибка'; }
-    results.S4_storage = out;
-  } catch (e) { results.S4_storage = 'ошибка: ' + String((e && e.message) || e); }
+    results.S4 = out;
+  } catch (e) { results.S4 = 'ошибка'; }
 
-  // 5. ПОД WHITELIST: маяки напрямую и через прокси. Прямой выход задаётся
-  // явно — в Loon выяснилось, что без параметра запрос идёт по правилам.
+  // 5. Поведение под whitelist: маяки напрямую, по правилам и российские.
   try {
-    const M = [
-      ['gstatic_cc', 'http://connectivitycheck.gstatic.com/generate_204'],
-      ['cloudflare', 'http://cp.cloudflare.com/generate_204'],
-      ['apple', 'http://captive.apple.com/hotspot-detect.html']
-    ];
+    const M = [['gstatic', 'http://connectivitycheck.gstatic.com/generate_204'],
+               ['cloudflare', 'http://cp.cloudflare.com/generate_204'],
+               ['apple', 'http://captive.apple.com/hotspot-detect.html']];
     const R = [['ya', 'https://ya.ru'], ['gosuslugi', 'https://www.gosuslugi.ru']];
-    const out = { foreign_direct: {}, russian_direct: {}, foreign_default: {} };
+    const out = { direct: {}, rules: {}, ru: {} };
     for (let i = 0; i < M.length; i++) {
-      out.foreign_direct[M[i][0]] = await get(M[i][1], { node: 'DIRECT' }, 4000);
-      out.foreign_default[M[i][0]] = await get(M[i][1], null, 4000);
+      out.direct[M[i][0]] = await get(M[i][1], { node: 'DIRECT' }, 4000);
+      out.rules[M[i][0]] = await get(M[i][1], null, 4000);
     }
-    for (let i = 0; i < R.length; i++) {
-      out.russian_direct[R[i][0]] = await get(R[i][1], { node: 'DIRECT' }, 4000);
-    }
-    results.S5_whitelist = out;
-  } catch (e) { results.S5_whitelist = 'ошибка: ' + String((e && e.message) || e); }
+    for (let i = 0; i < R.length; i++) out.ru[R[i][0]] = await get(R[i][1], { node: 'DIRECT' }, 4000);
+    results.S5 = out;
+  } catch (e) { results.S5 = 'ошибка'; }
 
-  // 6. Локальные порты — у Shadowrocket может быть свой управляющий интерфейс.
+  // 6. Локальные порты.
   try {
     const ports = [9090, 6152, 1080, 8080, 7890, 8888];
     const out = {};
     for (let i = 0; i < ports.length; i++) {
       out[ports[i]] = await get('http://127.0.0.1:' + ports[i] + '/', { node: 'DIRECT' }, 1200);
     }
-    results.S6_ports = out;
-  } catch (e) { results.S6_ports = 'ошибка: ' + String((e && e.message) || e); }
+    results.S6 = out;
+  } catch (e) { results.S6 = 'ошибка'; }
 
   const R = { rev: REV, client: 'shadowrocket', mode: 'WHITELIST',
               results: results, total_ms: Date.now() - t0, ts: new Date().toISOString() };
   const body = JSON.stringify(R);
   store_write(body, STATE);
 
-  try {
-    $notification.post('Shadowrocket-проба ' + REV,
-                       'Отчёт скопирован — вставь в чат',
-                       'Байт: ' + body.length + '. Шагов: ' + Object.keys(results).length,
-                       { 'clipboard': body });
-  } catch (e) {
-    try {
-      $notification.post('Shadowrocket-проба ' + REV, '',
-                         'Готово. Байт: ' + body.length + '. Отчёт в хранилище, ключ ' + STATE);
-    } catch (e2) { }
+  // ГЛАВНАЯ ДОСТАВКА — печать в консоль кусками: буфер обмена в Shadowrocket
+  // не сработал. Куски помечены, чтобы собрать их по порядку из журнала.
+  const CH = 800;
+  const parts = Math.ceil(body.length / CH);
+  console.log('===== RouteHub ' + REV + ' НАЧАЛО ОТЧЁТА, кусков: ' + parts + ', байт: ' + body.length + ' =====');
+  for (let i = 0; i < parts; i++) {
+    console.log('[RH ' + (i + 1) + '/' + parts + '] ' + body.slice(i * CH, (i + 1) * CH));
   }
+  console.log('===== RouteHub ' + REV + ' КОНЕЦ ОТЧЁТА =====');
+
+  try {
+    $notification.post('Shadowrocket ' + REV, 'Отчёт в журнале скрипта',
+                       'Кусков: ' + parts + ', байт: ' + body.length +
+                       '. Открой журнал и скопируй строки [RH n/' + parts + ']');
+  } catch (e) { }
   $done({});
 })();
 
