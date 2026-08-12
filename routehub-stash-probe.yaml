@@ -1,20 +1,23 @@
 # =============================================================
-# RouteHub — КОНФИГ STASH ДЛЯ АВТОНОМНОЙ ПРОБЫ ST2
+# RouteHub — КОНФИГ STASH ДЛЯ ПРОБЫ ST3 (ЛОКАЛЬНЫЙ КОНТРОЛЛЕР)
 # =============================================================
-# ОТЛИЧИЕ ОТ ПРЕДЫДУЩЕЙ РЕДАКЦИИ: тело скрипта вшито в конфиг
-# (поле payload), внешняя загрузка не требуется, отчёт не зависит от сети.
-# ПРИЧИНА: под активным whitelist РКН туннель Stash без узлов выхода
-# в сеть не даёт: ни raw.githubusercontent.com, ни workers.dev напрямую
-# недостижимы. Главная часть пробы сети не требует.
+# ВОПРОС ПРОБЫ: можно ли управлять политикой из скрипта через локальный
+# контроллер. Основание: в ST2 в `$environment` найдены поля
+# `controller-url` и `controller-authorization`, в документации не описанные.
+# Прямого API управления в среде НЕТ (только шесть $-объектов).
 #
-# УСТАНОВКА (делать ПРИ ВКЛЮЧЁННОМ Loon — сам конфиг тянется по сети):
-#   Stash → Настройки → Конфигурационный файл → Загрузить по ссылке:
+# ЗАПРОСЫ ЛОКАЛЬНЫЕ — whitelist РКН им не мешает, сеть наружу не нужна.
+# БОЕВОЙ КОНТУР НЕ ЗАТРАГИВАЕТСЯ: единственная запись — выбор `DIRECT`
+# в группе `RH-Проба` этого же конфига, где `DIRECT` и так единственный член.
+# Состояние не меняется, проверяется сам факт успешной записи.
+#
+# УСТАНОВКА (при включённом Loon): Stash → Настройки → Конфигурационный
+#   файл → Загрузить по ссылке, старую копию удалить:
 #   https://raw.githubusercontent.com/spxload/routehub/main/routehub-stash-probe.yaml
-#   Старую копию удалить, чтобы не путаться.
-# ЗАПУСК: выключить Loon → включить Stash → плитка «RouteHub ST2» на главном
-#   экране либо ждать две минуты (расписание).
-# РЕЗУЛЬТАТ: сводка на плитке и в уведомлении; полный отчёт — в хранилище
-#   скриптов (ключи RH_ST2_sum, RH_ST2_globals, RH_ST2_members) и в журнале.
+# ЗАПУСК: Loon выкл → Stash вкл → плитка «RouteHub ST3» либо ждать две минуты.
+# РЕЗУЛЬТАТ: ключи RH_ST3_sum, RH_ST3_proxies, RH_ST3_raw в хранилище скриптов
+#   плюс сводка на плитке и в уведомлении.
+# ТОКЕН КОНТРОЛЛЕРА В ОТЧЁТ НЕ ПОПАДАЕТ — только его длина и форма.
 # =============================================================
 
 mode: rule
@@ -32,219 +35,211 @@ rules:
   - MATCH,DIRECT
 
 tiles:
-  - name: routehub-probe-st2
+  - name: routehub-probe-st3
     interval: 600
-    title: 'RouteHub ST2'
+    title: 'RouteHub ST3'
     content: 'обновить панель = запустить пробу'
-    icon: 'stethoscope'
+    icon: 'antenna.radiowaves.left.and.right'
     backgroundColor: '#663399'
 
 cron:
   script:
-    - name: routehub-probe-st2
+    - name: routehub-probe-st3
       cron: '*/2 * * * *'
       timeout: 40
 
 script-providers:
-  routehub-probe-st2:
+  routehub-probe-st3:
     interval: 86400
     payload: |
-      // RouteHub — ПРОБА ВОЗМОЖНОСТЕЙ STASH. Ревизия ST2 (автономная).
-      // ТОЛЬКО ЧТЕНИЕ: политика, правила и узлы не меняются.
-      // Сеть необязательна: под whitelist шаги 1-7 выполняются полностью.
-      var REV = 'ST2';
-      var INGEST = 'https://routehub-egern.proton4iker.workers.dev/ingest/rh-drop-2026?src=stash-ST2';
-      var URL204 = 'http://connectivitycheck.gstatic.com/generate_204';
+      // RouteHub — ПРОБА STASH. Ревизия ST3: локальный контроллер.
+      // Цель: доказать или опровергнуть управление политикой из скрипта.
+      // Шаги: среда → globalProxy → /version → /configs → /proxies → PUT → сверка.
+      var REV = 'ST3';
+      var GROUP = 'RH-Проба';
+      var PICK = 'DIRECT';
       var G = (typeof globalThis !== 'undefined') ? globalThis : this;
       var T0 = Date.now();
       var FIN = false;
       var rep = { rev: REV, ts: new Date().toISOString(), steps: {}, errors: [] };
+      var BASE = null, AUTH = null, AUTH_MODE = null;
 
+      function has(n) { try { return typeof G[n]; } catch (e) { return 'error'; } }
       function safe(name, fn) {
         var t = Date.now();
         try { rep.steps[name] = fn(); }
         catch (e) { rep.errors.push(name + ': ' + String((e && e.message) || e)); }
         rep.steps['_ms_' + name] = Date.now() - t;
       }
-      function has(n) { try { return typeof G[n]; } catch (e) { return 'error'; } }
 
-      // ШАГ 1. Сплошная опись глобальных имён (вывод 54).
-      safe('globals', function () {
-        var names = Object.getOwnPropertyNames(G).sort();
-        var proto = [];
-        try {
-          var p = Object.getPrototypeOf(G);
-          if (p) proto = Object.getOwnPropertyNames(p).sort();
-        } catch (e) {}
-        return { count: names.length, names: names, proto_count: proto.length, proto: proto };
-      });
-
-      var KNOWN = ['$httpClient', '$persistentStore', '$notification', '$done', '$argument',
-        '$environment', '$script', '$config', '$stash', '$task', '$utils', '$network',
-        '$surge', '$rocket', '$loon', 'WebSocket', 'crypto', 'fetch', 'setTimeout'];
-
-      // ШАГ 2. Наличие ожидаемых интерфейсов.
-      safe('api', function () {
-        var r = {};
-        for (var i = 0; i < KNOWN.length; i++) r[KNOWN[i]] = has(KNOWN[i]);
+      // ШАГ 1. Среда. Токен не раскрывается: только длина и признаки.
+      safe('env', function () {
+        var r = { available: has('$environment') };
+        if (r.available === 'undefined') return r;
+        var e = G.$environment;
+        r.keys = [];
+        try { r.keys = Object.getOwnPropertyNames(e).sort(); } catch (x) {}
+        r.version = e['stash-version'];
+        r.build = e['stash-build'];
+        r.system = e.system;
+        r.device = e['device-model'];
+        var u = e['controller-url'];
+        var a = e['controller-authorization'];
+        r.controller_url = u ? String(u) : null;
+        r.auth_present = !!a;
+        r.auth_len = a ? String(a).length : 0;
+        r.auth_has_bearer = a ? (String(a).slice(0, 7).toLowerCase() === 'bearer ') : false;
+        if (u) BASE = String(u).replace(/\/+$/, '');
+        if (a) AUTH = String(a);
         return r;
       });
 
-      // ШАГ 3. Опись членов найденных объектов.
-      safe('members', function () {
-        var r = {};
-        for (var i = 0; i < KNOWN.length; i++) {
-          var n = KNOWN[i], t = has(n);
-          if (t !== 'object' && t !== 'function') continue;
-          try {
-            var o = G[n], m = Object.getOwnPropertyNames(o);
-            try {
-              var pp = Object.getPrototypeOf(o);
-              if (pp && pp !== Object.prototype) m = m.concat(Object.getOwnPropertyNames(pp));
-            } catch (e) {}
-            r[n] = m.sort();
-          } catch (e) { r[n] = 'error'; }
-        }
-        return r;
-      });
-
-      // ШАГ 4. Охота на управление политикой — главный вопрос пробы.
-      safe('control_hunt', function () {
-        var pat = /polic|proxy|select|group|switch|running|mode|node/i;
-        var hit = [];
-        var names = (rep.steps.globals && rep.steps.globals.names) || [];
-        for (var i = 0; i < names.length; i++) if (pat.test(names[i])) hit.push(names[i]);
-        var mem = rep.steps.members || {};
-        for (var k in mem) {
-          var arr = mem[k];
-          if (Object.prototype.toString.call(arr) !== '[object Array]') continue;
-          for (var j = 0; j < arr.length; j++) if (pat.test(arr[j])) hit.push(k + '.' + arr[j]);
-        }
-        return { count: hit.length, names: hit };
-      });
-
-      // ШАГ 5. Аргумент задания и тип запуска.
-      safe('argument', function () {
-        var r = { type: has('$argument'), raw: null, parsed: null, script_type: null };
-        try { if (G.$script) r.script_type = G.$script.type; } catch (e) {}
+      // ШАГ 2. Неописанный член $httpClient.globalProxy.
+      safe('global_proxy', function () {
+        if (has('$httpClient') === 'undefined') return { available: false };
+        var r = { type: typeof G.$httpClient.globalProxy };
+        try { r.value = JSON.stringify(G.$httpClient.globalProxy); } catch (e) { r.value = 'unserializable'; }
         try {
-          if (r.type !== 'undefined') {
-            r.raw = String(G.$argument);
-            try { r.parsed = JSON.parse(G.$argument); } catch (e) {}
+          var v = G.$httpClient.globalProxy;
+          if (v && (typeof v === 'object' || typeof v === 'function')) {
+            r.members = Object.getOwnPropertyNames(v).sort();
           }
         } catch (e) {}
         return r;
       });
 
-      // ШАГ 6. Хранилище (временный ключ чистится тут же).
-      safe('store', function () {
-        if (has('$persistentStore') === 'undefined') return { available: false };
-        var key = 'RH_probe_tmp', val = 'v' + Date.now(), r = { available: true };
-        try { r.write = G.$persistentStore.write(val, key); } catch (e) { r.write_err = String(e); }
-        try { r.read_match = (G.$persistentStore.read(key) === val); } catch (e) { r.read_err = String(e); }
-        try { G.$persistentStore.write(null, key); } catch (e) {}
-        return r;
-      });
+      function hdr() {
+        var h = { 'Content-Type': 'application/json' };
+        if (AUTH) h.Authorization = (AUTH_MODE === 'bearer') ? ('Bearer ' + AUTH) : AUTH;
+        return h;
+      }
 
-      // ШАГ 7. Производительность: Egern 7 мс / Loon 12 / Shadowrocket 40.
-      safe('perf', function () {
-        var t = Date.now(), s = 0;
-        for (var i = 0; i < 1000000; i++) s += i;
-        return { million_iterations_ms: Date.now() - t, checksum: s };
-      });
-
-      // ШАГ 8. WebSocket: только конструктор, без ожидания соединения.
-      safe('websocket_ctor', function () {
-        if (has('WebSocket') === 'undefined') return { available: false };
+      function call(method, path, body, cb) {
+        if (!BASE) { cb({ error: 'нет controller-url' }); return; }
+        if (has('$httpClient') === 'undefined') { cb({ error: 'no $httpClient' }); return; }
+        var t = Date.now(), fired = false;
+        var opts = { url: BASE + path, headers: hdr(), timeout: 6 };
+        if (body !== null && body !== undefined) opts.body = JSON.stringify(body);
+        function once(o) { if (!fired) { fired = true; cb(o); } }
+        setTimeout(function () { once({ error: 'таймаут 7 с', ms: Date.now() - t }); }, 7000);
         try {
-          var ws = new G.WebSocket('wss://echo.websocket.events');
-          var st = ws.readyState;
-          try { ws.close(); } catch (e) {}
-          return { available: true, constructed: true, readyState: st };
+          G.$httpClient[method](opts, function (err, resp, data) {
+            once({
+              ms: Date.now() - t,
+              error: err ? String(err) : null,
+              status: resp ? (resp.status || resp.statusCode) : null,
+              body_len: data ? String(data).length : 0,
+              body: data ? String(data).slice(0, 4000) : ''
+            });
+          });
         } catch (e) {
-          return { available: true, constructed: false, error: String((e && e.message) || e) };
+          once({ error: 'throw: ' + String((e && e.message) || e), ms: Date.now() - t });
         }
-      });
+      }
 
-      // --- Завершение: хранилище, журнал, уведомление, плитка ------
+      // ШАГ 3. /version — есть ли контроллер и какой вид авторизации верен.
+      function step_version_raw() {
+        AUTH_MODE = 'raw';
+        call('get', '/version', null, function (r) {
+          rep.steps.version_raw = r;
+          if (r.status && r.status >= 200 && r.status < 300) { step_configs(); return; }
+          step_version_bearer();
+        });
+      }
+
+      function step_version_bearer() {
+        AUTH_MODE = 'bearer';
+        call('get', '/version', null, function (r) {
+          rep.steps.version_bearer = r;
+          if (r.status && r.status >= 200 && r.status < 300) { step_configs(); return; }
+          AUTH_MODE = 'raw';
+          finish('контроллер не ответил');
+        });
+      }
+
+      // ШАГ 4. /configs — режим и настройки ядра.
+      function step_configs() {
+        call('get', '/configs', null, function (r) {
+          rep.steps.configs = r;
+          step_proxies();
+        });
+      }
+
+      // ШАГ 5. /proxies — видны ли группы и их члены.
+      function step_proxies() {
+        call('get', '/proxies', null, function (r) {
+          rep.steps.proxies = { ms: r.ms, status: r.status, error: r.error, body_len: r.body_len };
+          rep.proxies_raw = r.body || '';
+          try {
+            var o = JSON.parse(r.body || '{}');
+            var names = Object.keys(o.proxies || {});
+            var groups = [];
+            for (var i = 0; i < names.length; i++) {
+              var p = o.proxies[names[i]];
+              if (p && p.all) groups.push({ name: names[i], type: p.type, now: p.now, members: p.all.length });
+            }
+            rep.steps.proxies.total = names.length;
+            rep.steps.proxies.groups = groups;
+          } catch (e) { rep.steps.proxies.parse_err = String((e && e.message) || e); }
+          step_put();
+        });
+      }
+
+      // ШАГ 6. ЗАПИСЬ: выбор DIRECT в собственной группе пробы.
+      // В Clash-совместимом API успех — код 204.
+      function step_put() {
+        call('put', '/proxies/' + encodeURIComponent(GROUP), { name: PICK }, function (r) {
+          rep.steps.put = r;
+          step_check();
+        });
+      }
+
+      // ШАГ 7. Сверка: что теперь выбрано в группе.
+      function step_check() {
+        call('get', '/proxies/' + encodeURIComponent(GROUP), null, function (r) {
+          rep.steps.check = r;
+          var ok = rep.steps.put && rep.steps.put.status && rep.steps.put.status >= 200 && rep.steps.put.status < 300;
+          finish(ok ? 'ЗАПИСЬ ПРОШЛА' : 'запись отклонена');
+        });
+      }
+
       function finish(note) {
         if (FIN) return;
         FIN = true;
         rep.total_ms = Date.now() - T0;
-        var ctl = rep.steps.control_hunt || {};
+        var env = rep.steps.env || {};
+        var pr = rep.steps.proxies || {};
         var sum = {
           rev: REV, ts: rep.ts, note: note || '',
-          globals: rep.steps.globals && rep.steps.globals.count,
-          proto: rep.steps.globals && rep.steps.globals.proto_count,
-          control_count: ctl.count || 0,
-          control_names: (ctl.names || []).slice(0, 40),
-          store_ok: rep.steps.store && rep.steps.store.read_match,
-          argument: rep.steps.argument,
-          perf_ms: rep.steps.perf && rep.steps.perf.million_iterations_ms,
-          websocket: rep.steps.websocket_ctor,
-          net: rep.steps.net || null,
+          stash: env.version + ' (' + env.build + ')',
+          controller_url: env.controller_url,
+          auth_present: env.auth_present, auth_len: env.auth_len, auth_mode: AUTH_MODE,
+          env_keys: env.keys,
+          global_proxy: rep.steps.global_proxy,
+          version: rep.steps.version_raw ? { raw: rep.steps.version_raw.status, bearer: rep.steps.version_bearer ? rep.steps.version_bearer.status : null, body: (rep.steps.version_raw.body || '').slice(0, 200) } : null,
+          configs_status: rep.steps.configs ? rep.steps.configs.status : null,
+          proxies_total: pr.total, groups: pr.groups,
+          put: rep.steps.put ? { status: rep.steps.put.status, error: rep.steps.put.error, body: (rep.steps.put.body || '').slice(0, 200) } : null,
+          check: rep.steps.check ? { status: rep.steps.check.status, body: (rep.steps.check.body || '').slice(0, 300) } : null,
           errors: rep.errors, total_ms: rep.total_ms
         };
-        try { G.$persistentStore.write(JSON.stringify(sum), 'RH_ST2_sum'); } catch (e) {}
-        try { G.$persistentStore.write(JSON.stringify(rep.steps.globals || {}), 'RH_ST2_globals'); } catch (e) {}
-        try { G.$persistentStore.write(JSON.stringify(rep.steps.members || {}), 'RH_ST2_members'); } catch (e) {}
-        try { console.log('[RH-ST2-SUM] ' + JSON.stringify(sum)); } catch (e) {}
-        try { console.log('[RH-ST2-FULL] ' + JSON.stringify(rep)); } catch (e) {}
-        var line = (sum.globals || '?') + ' имён · управление: ' + sum.control_count +
-          ' · store ' + (sum.store_ok ? 'да' : 'нет') + ' · ' + (sum.perf_ms || '?') + ' мс';
-        try { G.$notification.post('RouteHub ST2', note || '', line); } catch (e) {}
+        try { G.$persistentStore.write(JSON.stringify(sum), 'RH_ST3_sum'); } catch (e) {}
+        try { G.$persistentStore.write(String(rep.proxies_raw || ''), 'RH_ST3_proxies'); } catch (e) {}
+        try { G.$persistentStore.write(JSON.stringify(rep), 'RH_ST3_raw'); } catch (e) {}
+        try { console.log('[RH-ST3-SUM] ' + JSON.stringify(sum)); } catch (e) {}
+        try { console.log('[RH-ST3-FULL] ' + JSON.stringify(rep)); } catch (e) {}
+        var line = 'контроллер: ' + (sum.version && sum.version.raw ? 'да' : 'нет') +
+          ' · групп: ' + ((sum.groups && sum.groups.length) || 0) +
+          ' · запись: ' + ((sum.put && sum.put.status) || '—');
+        try { G.$notification.post('RouteHub ST3', note || '', line); } catch (e) {}
         try {
-          G.$done({ title: 'RouteHub ST2', content: line, icon: 'stethoscope', backgroundColor: '#663399' });
+          G.$done({ title: 'RouteHub ST3', content: line, icon: 'antenna.radiowaves.left.and.right', backgroundColor: '#663399' });
         } catch (e) {
           try { G.$done({}); } catch (e2) {}
         }
       }
 
-      // ШАГ 9. Сеть — необязательная. Нет сети — отчёт всё равно готов.
-      function step_net() {
-        if (has('$httpClient') === 'undefined') { rep.steps.net = { error: 'no $httpClient' }; finish('без сети'); return; }
-        var t = Date.now(), fired = false;
-        setTimeout(function () {
-          if (fired) return;
-          fired = true;
-          rep.steps.net = { error: 'таймаут 6 с' };
-          finish('сеть недоступна');
-        }, 6000);
-        try {
-          G.$httpClient.get({ url: URL204, timeout: 5 }, function (err, resp) {
-            if (fired) return;
-            fired = true;
-            rep.steps.net = {
-              ms: Date.now() - t,
-              error: err ? String(err) : null,
-              status: resp ? (resp.status || resp.statusCode) : null
-            };
-            if (!err && resp) step_post(); else finish('сеть недоступна');
-          });
-        } catch (e) {
-          if (!fired) { fired = true; rep.steps.net = { error: 'исключение' }; finish('сеть недоступна'); }
-        }
-      }
+      setTimeout(function () { finish('исчерпан бюджет 30 с'); }, 30000);
 
-      function step_post() {
-        var sent = false;
-        setTimeout(function () { if (!sent) { sent = true; finish('POST без ответа'); } }, 8000);
-        try {
-          G.$httpClient.post({
-            url: INGEST, headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(rep), timeout: 8
-          }, function (err, resp) {
-            if (sent) return;
-            sent = true;
-            finish(err ? ('POST не прошёл') : ('отчёт отправлен ' + (resp && (resp.status || resp.statusCode))));
-          });
-        } catch (e) {
-          if (!sent) { sent = true; finish('POST исключение'); }
-        }
-      }
-
-      // Общий предохранитель: отчёт выйдет даже при зависшей сети.
-      setTimeout(function () { finish('исчерпан бюджет 25 с'); }, 25000);
-
-      step_net();
+      if (!BASE) finish('controller-url отсутствует'); else step_version_raw();
       // конец файла
