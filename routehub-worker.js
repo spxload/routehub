@@ -199,7 +199,7 @@ const KEY_RE = /^k\d+$/;
 // деплоя. Константа ниже — значение по умолчанию при отсутствии ключа settings.
 const TOKEN_REQUIRED_DEFAULT = false;
 const SETTINGS_KEY = 'settings';
-const WORKER_VER = 'v1.9.2';
+const WORKER_VER = 'v1.9.3';
 const TOKEN_LEN = 32;
 const TOKEN_ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const TOKEN_RE = /^[A-Za-z0-9]{16,64}$/;
@@ -606,8 +606,7 @@ function aiBlocks(tiers) {
   gW.push('RH-Filter-W-AIrest');
   gC.push('RH-Filter-C-AIrest');
   const filters = fW.join('\n') + '\n' + fC.join('\n');
-  const u = 'url=http://cp.cloudflare.com/generate_204, interval=120, max-timeout=2000';
-  const groups =
+  const u = 'url=http://connectivitycheck.gstatic.com/generate_204, interval=120, max-timeout=2000';  const groups =
     'RH-AI = select, RH-AI-W, RH-AI-C, img-url=https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/AI.png\n' +
     'RH-AI-W = fallback, ' + gW.join(', ') + ', RH-Filter-\u041e\u0431\u0445\u043e\u0434, ' + u + '\n' +
     'RH-AI-C = fallback, ' + gC.join(', ') + ', RH-Filter-\u041e\u0431\u0445\u043e\u0434, ' + u;
