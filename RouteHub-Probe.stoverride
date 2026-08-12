@@ -1,0 +1,31 @@
+name: "RouteHub Probe ST1"
+desc: "Проба возможностей Stash. Только чтение: политику, правила и узлы не меняет."
+author: "RouteHub"
+category: "RouteHub"
+
+# Файл-переопределение (override) ставится ПОВЕРХ любого профиля Stash.
+# Основной конфиг провайдера не редактируется. Правила слияния (docs Stash):
+# словари сливаются рекурсивно, массивы из override вставляются в начало.
+#
+# Установка одной ссылкой (открыть на телефоне):
+# https://link.stash.ws/install-override/raw.githubusercontent.com/spxload/routehub/main/RouteHub-Probe.stoverride
+#
+# ВАЖНО: плановые задания Stash требуют ПОДКЛЮЧЁННОГО туннеля Stash
+# (docs: "Scheduled tasks require Network Extension (VPN) to be connected").
+# Пока активен Loon, проба не запустится вовсе.
+
+script-providers:
+  routehub-probe-stash:
+    url: https://raw.githubusercontent.com/spxload/routehub/main/routehub-probe-stash.js
+    interval: 86400
+
+cron:
+  script:
+    - name: routehub-probe-stash
+      cron: '*/5 * * * *'
+      timeout: 40
+      # Шаг 9 (адресация конкретного узла через X-Stash-Selected-Proxy)
+      # выполняется, только если в argument передано имя узла. Имя берётся
+      # ТОЧНО из списка прокси профиля Stash, вместе со значками и пробелами.
+      # Пример: argument: '{"node":"🇩🇪 Германия [VPN] #1"}'
+      # Без этого ключа шаг помечается пропущенным, остальные восемь идут.
