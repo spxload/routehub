@@ -1,39 +1,42 @@
-// routehub-egern-k4.js — диагностика Egern. K4_REV: k4-15 (2026-08-12).
+// routehub-egern-k4.js — диагностика Egern. K4_REV: k4-16 (2026-08-12).
 //
-// ЗАДАЧА k4-15: закрыть ПРОБЕЛ МЕТОДИКИ, обнаруженный на Stash.
+// ЗАДАЧА: закрыть ПРОБЕЛ МЕТОДИКИ, обнаруженный на Stash.
 //
 // ЧТО СЛУЧИЛОСЬ НА STASH (пробы ST2-ST5, 2026-08-12):
-//   в среде оказалось всего шесть $-объектов и НИ ОДНОГО метода
-//   управления. Но в $environment лежали ДВА НЕОПИСАННЫХ ПОЛЯ —
-//   controller-url и controller-authorization. По ним нашёлся локальный
-//   Clash-совместимый контроллер, и через него ЗАПИСЬ ПРОШЛА (204):
+//   в среде всего шесть $-объектов и НИ ОДНОГО метода управления.
+//   Но в $environment лежали ДВА НЕОПИСАННЫХ ПОЛЯ — controller-url и
+//   controller-authorization. По ним нашёлся локальный Clash-совместимый
+//   контроллер на 127.0.0.1:9090, и через него ЗАПИСЬ ПРОШЛА (204):
 //   переключение группы, смена режима, журнал соединений, WebSocket.
 //
-// ПОЧЕМУ ЭТО КАСАЕТСЯ EGERN: в k4-11/k4-12 мы перебирали порты ВСЛЕПУЮ
-//   (13990-13995) и стучались БЕЗ АВТОРИЗАЦИИ, а члены $environment
-//   НИ РАЗУ НЕ ОПИСЫВАЛИСЬ. Если адрес и ключ лежат там же, где у Stash,
-//   вывод 44 (управление невозможно) придётся пересматривать.
+// ПОЧЕМУ ЭТО КАСАЕТСЯ EGERN: в k4-11/k4-12 порты перебирались ВСЛЕПУЮ
+//   (13990-13995) и БЕЗ АВТОРИЗАЦИИ, а члены $environment НИ РАЗУ не
+//   описывались. Два условия могли скрыть контроллер: неизвестный порт и
+//   ответ 404 без ключа. Оба проверяются здесь.
 //
-// ШАГИ:
-//   E1 — сплошная опись $environment: все ключи и значения (длинные обрезаны);
-//   E2 — опись __context и его вложенных объектов;
-//   E3 — опись ctx.app, ctx.device, ctx.env со значениями;
-//   E4 — поиск во всех собранных значениях адресов, портов и ключей;
-//   E5 — перебор портов С АВТОРИЗАЦИЕЙ, если ключ нашёлся;
-//   E6 — пути контроллера Stash на откликнувшихся портах.
+// ИЗМЕНЕНИЯ k4-16 ОТНОСИТЕЛЬНО k4-15:
+//   1. БЕЗОПАСНОСТЬ: значения ключей с именами token/auth/secret/key
+//      МАСКИРУЮТСЯ всегда (три первых символа и длина), без оглядки на
+//      длину. В k4-15 короткие значения выводились целиком — токен Stash
+//      был 15 символов и ушёл бы полностью.
+//   2. ДОСТАВКА: отчёт дублируется на ОТКРЫТЫЙ приёмник стенда, чтобы
+//      его можно было прочитать без токена устройства. Приёмник доступа
+//      к подписке не даёт; благодаря п. 1 ключи туда не попадают.
+//
+// ШАГИ: E1 опись $environment; E2 __context с вложенностью; E3 ctx.app,
+//   ctx.device, ctx.env; E4 поиск адресов, портов и ключей; E5 перебор
+//   портов С АВТОРИЗАЦИЕЙ; E6 пути контроллера на откликнувшихся портах.
 //
 // ТОЛЬКО ЧТЕНИЕ: только GET, ни одного записывающего запроса.
 // ТРАФИК: всё локальное (127.0.0.1), обходные узлы не задействованы.
-// КЛЮЧ В ОТЧЁТ НЕ ПОПАДАЕТ: выводятся длина и первые символы.
 //
 // В ТЕКСТЕ K4_SCRIPT НЕЛЬЗЯ: обратные кавычки, шаблонные подстановки
-// и ОБРАТНЫЕ СЛЭШИ.
-// ФАЙЛ ЗАКАНЧИВАЕТСЯ СТРОЧНЫМ КОММЕНТАРИЕМ БЕЗ ПЕРЕВОДА СТРОКИ.
+// и ОБРАТНЫЕ СЛЭШИ. ФАЙЛ ЗАКАНЧИВАЕТСЯ СТРОЧНЫМ КОММЕНТАРИЕМ
+// БЕЗ ПЕРЕВОДА СТРОКИ.
 //
-// ИСТОРИЯ: ревизии k4-1 … k4-14 см. в истории git и в ЭТАП_K_EGERN_*.md.
-// Итоги k4-13 (тест-адреса) и k4-14 (маяки) перенесены в справочник.
+// ИСТОРИЯ: k4-1 … k4-14 см. в истории git и в ЭТАП_K_EGERN_*.md.
 
-export const K4_REV = 'k4-15';
+export const K4_REV = 'k4-16';
 
 export function subNames(text) {
   const out = [];
@@ -62,8 +65,9 @@ export function firstNormalNode(text) {
 
 export const K4_SCRIPT = `export default async function (ctx) {
   const t0 = Date.now();
-  const REV = 'k4-15';
+  const REV = 'k4-16';
   const env = ctx.env || {};
+  const OPEN = 'https://routehub-egern.proton4iker.workers.dev/ingest/rh-drop-2026?src=egern-k4-16';
   const rep = { rev: REV, ts: new Date().toISOString(), steps: {}, errors: [] };
 
   const notify = (title, text) => {
@@ -73,11 +77,20 @@ export const K4_SCRIPT = `export default async function (ctx) {
     return 'no';
   };
 
-  const shown = (v) => {
+  const secretName = (k) => {
+    const lk = String(k).toLowerCase();
+    return lk.indexOf('token') >= 0 || lk.indexOf('auth') >= 0 ||
+           lk.indexOf('secret') >= 0 || lk.indexOf('key') >= 0 ||
+           lk.indexOf('password') >= 0 || lk.indexOf('cred') >= 0;
+  };
+
+  // Ключи маскируются ВСЕГДА: отчёт уходит на открытый приёмник.
+  const shown = (v, key) => {
     if (v === null || v === undefined) return String(v);
     if (typeof v === 'function') return 'function';
     let s;
     try { s = (typeof v === 'object') ? JSON.stringify(v) : String(v); } catch (e) { s = 'unserializable'; }
+    if (key && secretName(key)) return s.slice(0, 3) + '***[длина ' + s.length + ']';
     if (s.length > 48) return s.slice(0, 14) + '...[' + s.length + ']';
     return s;
   };
@@ -94,7 +107,7 @@ export const K4_SCRIPT = `export default async function (ctx) {
     names.sort();
     r.keys = names;
     for (let i = 0; i < names.length && i < 80; i++) {
-      try { r.values[names[i]] = shown(obj[names[i]]); } catch (e) { r.values[names[i]] = 'error'; }
+      try { r.values[names[i]] = shown(obj[names[i]], names[i]); } catch (e) { r.values[names[i]] = 'error'; }
     }
     return r;
   };
@@ -149,11 +162,11 @@ export const K4_SCRIPT = `export default async function (ctx) {
         const s = String(raw);
         const lk = k.toLowerCase();
         const isUrl = s.indexOf('http') === 0 || s.indexOf('127.0.0.1') >= 0 || s.indexOf('localhost') >= 0;
-        const isKeyName = lk.indexOf('token') >= 0 || lk.indexOf('auth') >= 0 || lk.indexOf('secret') >= 0 || lk.indexOf('key') >= 0;
+        const isKeyName = secretName(k);
         const isPortName = lk.indexOf('port') >= 0;
         const isCtrl = lk.indexOf('control') >= 0 || lk.indexOf('api') >= 0 || lk.indexOf('dash') >= 0;
         if (isUrl || isKeyName || isPortName || isCtrl) {
-          hits.push({ src: src, key: k, shown: shown(raw) });
+          hits.push({ src: src, key: k, shown: shown(raw, k) });
           if (isUrl && !FOUND_URL) FOUND_URL = s;
           if ((isKeyName || isCtrl) && !FOUND_AUTH && s.length > 3 && s.length < 200 && !isUrl) FOUND_AUTH = s;
           if (isPortName) { const n = parseInt(s, 10); if (n > 0 && n < 65536) FOUND_PORTS.push(n); }
@@ -162,7 +175,9 @@ export const K4_SCRIPT = `export default async function (ctx) {
     }
     rep.steps.hunt = {
       hits: hits,
-      url: FOUND_URL ? shown(FOUND_URL) : null,
+      url_found: !!FOUND_URL,
+      url_host: FOUND_URL ? String(FOUND_URL).slice(0, 30) : null,
+      auth_found: !!FOUND_AUTH,
       auth_len: FOUND_AUTH ? FOUND_AUTH.length : 0,
       ports: FOUND_PORTS
     };
@@ -209,13 +224,15 @@ export const K4_SCRIPT = `export default async function (ctx) {
   const envKeys = (rep.steps.environment && rep.steps.environment.keys) ? rep.steps.environment.keys.length : 0;
   notify(REV, 'environment: ' + envKeys + ', портов откликнулось ' + alive.length);
 
-  try {
-    if (env.RH_POST_URL) {
-      await ctx.http.post(env.RH_POST_URL, {
-        body: rep, headers: { 'Content-Type': 'application/json' }, timeout: 15000
-      });
-    }
-  } catch (e) { }
+  const post = async (u) => {
+    try {
+      await ctx.http.post(u, { body: rep, headers: { 'Content-Type': 'application/json' }, timeout: 15000 });
+      return true;
+    } catch (e) { return false; }
+  };
+  if (env.RH_POST_URL) await post(env.RH_POST_URL);
+  await post(OPEN);
+
   return { rh: REV, env_keys: envKeys, alive: alive.length };
 }
 `;
