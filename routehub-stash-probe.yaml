@@ -1,25 +1,20 @@
 # =============================================================
-# RouteHub — МИНИМАЛЬНЫЙ КОНФИГ STASH ДЛЯ ПРОБЫ ST1
+# RouteHub — КОНФИГ STASH ДЛЯ АВТОНОМНОЙ ПРОБЫ ST2
 # =============================================================
-# НАЗНАЧЕНИЕ: дать Stash рабочий профиль, чтобы поднялся туннель и
-# запустилось плановое задание. УЗЛОВ ЗДЕСЬ НЕТ СОЗНАТЕЛЬНО.
+# ОТЛИЧИЕ ОТ ПРЕДЫДУЩЕЙ РЕДАКЦИИ: тело скрипта вшито в конфиг
+# (поле payload), внешняя загрузка не требуется, отчёт не зависит от сети.
+# ПРИЧИНА: под активным whitelist РКН туннель Stash без узлов выхода
+# в сеть не даёт: ни raw.githubusercontent.com, ни workers.dev напрямую
+# недостижимы. Главная часть пробы сети не требует.
 #
-# ЧТО ЭТО ЗНАЧИТ НА ПРАКТИКЕ: весь трафик идёт напрямую (DIRECT), то есть
-# телефон работает так же, как без VPN. На время пробы ИИ-сервисы и прочее
-# заблокированное будут недоступны — это ожидаемо, проба занимает минуты.
-#
-# ОСНОВАНИЯ (документация Stash):
-#   — конфиг обязателен, но у всех полей есть значения по умолчанию;
-#   — группа без прокси трактуется как DIRECT;
-#   — плановые задания требуют подключённого Network Extension (VPN).
-#
-# УСТАНОВКА: Stash → Настройки → Конфигурационный файл → Загрузить по ссылке:
+# УСТАНОВКА (делать ПРИ ВКЛЮЧЁННОМ Loon — сам конфиг тянется по сети):
+#   Stash → Настройки → Конфигурационный файл → Загрузить по ссылке:
 #   https://raw.githubusercontent.com/spxload/routehub/main/routehub-stash-probe.yaml
-# Затем выбрать этот конфиг активным и включить туннель (Loon выключить).
-# Отдельный override ставить НЕ НУЖНО: секции пробы уже внутри этого файла.
-#
-# ОТЧЁТ: https://routehub-egern.proton4iker.workers.dev/ingest/rh-drop-2026?src=stash-ST1
-# Подробности — ЭТАП_K_STASH.md (ветка main).
+#   Старую копию удалить, чтобы не путаться.
+# ЗАПУСК: выключить Loon → включить Stash → плитка «RouteHub ST2» на главном
+#   экране либо ждать две минуты (расписание).
+# РЕЗУЛЬТАТ: сводка на плитке и в уведомлении; полный отчёт — в хранилище
+#   скриптов (ключи RH_ST2_sum, RH_ST2_globals, RH_ST2_members) и в журнале.
 # =============================================================
 
 mode: rule
@@ -36,34 +31,220 @@ proxy-groups:
 rules:
   - MATCH,DIRECT
 
-# --- собственно проба ----------------------------------------
-# interval умышленно малый: новые ревизии пробы подтягиваются без плясок.
-# Лишнего трафика нет: Stash учитывает Etag и Last-Modified и не качает
-# файл заново, если он не менялся.
-script-providers:
-  routehub-probe-stash:
-    url: https://raw.githubusercontent.com/spxload/routehub/main/routehub-probe-stash.js
-    interval: 300
-
-cron:
-  script:
-    - name: routehub-probe-stash
-      cron: '*/2 * * * *'
-      timeout: 40
-      # Шаг 9 (адресация узла через X-Stash-Selected-Proxy) в этом конфиге
-      # пропускается: узлов нет. Когда появится хотя бы один узел —
-      # добавить сюда строку вида:
-      # argument: '{"node":"точное имя узла из профиля"}'
-
-# --- ручной запуск через панель на главном экране -----------------
-# URL-схемы запуска скрипта в Stash НЕТ (есть только install-config,
-# install-override, install-icon-set, start, stop, toggle). Панель закрывает
-# эту дыру: скрипт выполняется при её обновлении на главном экране.
-# Тот же файл пробы, тот же отчёт по POST — просто другой повод к запуску.
 tiles:
-  - name: routehub-probe-stash
+  - name: routehub-probe-st2
     interval: 600
-    title: 'RouteHub проба ST1'
+    title: 'RouteHub ST2'
     content: 'обновить панель = запустить пробу'
     icon: 'stethoscope'
     backgroundColor: '#663399'
+
+cron:
+  script:
+    - name: routehub-probe-st2
+      cron: '*/2 * * * *'
+      timeout: 40
+
+script-providers:
+  routehub-probe-st2:
+    interval: 86400
+    payload: |
+      // RouteHub — ПРОБА ВОЗМОЖНОСТЕЙ STASH. Ревизия ST2 (автономная).
+      // ТОЛЬКО ЧТЕНИЕ: политика, правила и узлы не меняются.
+      // Сеть необязательна: под whitelist шаги 1-7 выполняются полностью.
+      var REV = 'ST2';
+      var INGEST = 'https://routehub-egern.proton4iker.workers.dev/ingest/rh-drop-2026?src=stash-ST2';
+      var URL204 = 'http://connectivitycheck.gstatic.com/generate_204';
+      var G = (typeof globalThis !== 'undefined') ? globalThis : this;
+      var T0 = Date.now();
+      var FIN = false;
+      var rep = { rev: REV, ts: new Date().toISOString(), steps: {}, errors: [] };
+
+      function safe(name, fn) {
+        var t = Date.now();
+        try { rep.steps[name] = fn(); }
+        catch (e) { rep.errors.push(name + ': ' + String((e && e.message) || e)); }
+        rep.steps['_ms_' + name] = Date.now() - t;
+      }
+      function has(n) { try { return typeof G[n]; } catch (e) { return 'error'; } }
+
+      // ШАГ 1. Сплошная опись глобальных имён (вывод 54).
+      safe('globals', function () {
+        var names = Object.getOwnPropertyNames(G).sort();
+        var proto = [];
+        try {
+          var p = Object.getPrototypeOf(G);
+          if (p) proto = Object.getOwnPropertyNames(p).sort();
+        } catch (e) {}
+        return { count: names.length, names: names, proto_count: proto.length, proto: proto };
+      });
+
+      var KNOWN = ['$httpClient', '$persistentStore', '$notification', '$done', '$argument',
+        '$environment', '$script', '$config', '$stash', '$task', '$utils', '$network',
+        '$surge', '$rocket', '$loon', 'WebSocket', 'crypto', 'fetch', 'setTimeout'];
+
+      // ШАГ 2. Наличие ожидаемых интерфейсов.
+      safe('api', function () {
+        var r = {};
+        for (var i = 0; i < KNOWN.length; i++) r[KNOWN[i]] = has(KNOWN[i]);
+        return r;
+      });
+
+      // ШАГ 3. Опись членов найденных объектов.
+      safe('members', function () {
+        var r = {};
+        for (var i = 0; i < KNOWN.length; i++) {
+          var n = KNOWN[i], t = has(n);
+          if (t !== 'object' && t !== 'function') continue;
+          try {
+            var o = G[n], m = Object.getOwnPropertyNames(o);
+            try {
+              var pp = Object.getPrototypeOf(o);
+              if (pp && pp !== Object.prototype) m = m.concat(Object.getOwnPropertyNames(pp));
+            } catch (e) {}
+            r[n] = m.sort();
+          } catch (e) { r[n] = 'error'; }
+        }
+        return r;
+      });
+
+      // ШАГ 4. Охота на управление политикой — главный вопрос пробы.
+      safe('control_hunt', function () {
+        var pat = /polic|proxy|select|group|switch|running|mode|node/i;
+        var hit = [];
+        var names = (rep.steps.globals && rep.steps.globals.names) || [];
+        for (var i = 0; i < names.length; i++) if (pat.test(names[i])) hit.push(names[i]);
+        var mem = rep.steps.members || {};
+        for (var k in mem) {
+          var arr = mem[k];
+          if (Object.prototype.toString.call(arr) !== '[object Array]') continue;
+          for (var j = 0; j < arr.length; j++) if (pat.test(arr[j])) hit.push(k + '.' + arr[j]);
+        }
+        return { count: hit.length, names: hit };
+      });
+
+      // ШАГ 5. Аргумент задания и тип запуска.
+      safe('argument', function () {
+        var r = { type: has('$argument'), raw: null, parsed: null, script_type: null };
+        try { if (G.$script) r.script_type = G.$script.type; } catch (e) {}
+        try {
+          if (r.type !== 'undefined') {
+            r.raw = String(G.$argument);
+            try { r.parsed = JSON.parse(G.$argument); } catch (e) {}
+          }
+        } catch (e) {}
+        return r;
+      });
+
+      // ШАГ 6. Хранилище (временный ключ чистится тут же).
+      safe('store', function () {
+        if (has('$persistentStore') === 'undefined') return { available: false };
+        var key = 'RH_probe_tmp', val = 'v' + Date.now(), r = { available: true };
+        try { r.write = G.$persistentStore.write(val, key); } catch (e) { r.write_err = String(e); }
+        try { r.read_match = (G.$persistentStore.read(key) === val); } catch (e) { r.read_err = String(e); }
+        try { G.$persistentStore.write(null, key); } catch (e) {}
+        return r;
+      });
+
+      // ШАГ 7. Производительность: Egern 7 мс / Loon 12 / Shadowrocket 40.
+      safe('perf', function () {
+        var t = Date.now(), s = 0;
+        for (var i = 0; i < 1000000; i++) s += i;
+        return { million_iterations_ms: Date.now() - t, checksum: s };
+      });
+
+      // ШАГ 8. WebSocket: только конструктор, без ожидания соединения.
+      safe('websocket_ctor', function () {
+        if (has('WebSocket') === 'undefined') return { available: false };
+        try {
+          var ws = new G.WebSocket('wss://echo.websocket.events');
+          var st = ws.readyState;
+          try { ws.close(); } catch (e) {}
+          return { available: true, constructed: true, readyState: st };
+        } catch (e) {
+          return { available: true, constructed: false, error: String((e && e.message) || e) };
+        }
+      });
+
+      // --- Завершение: хранилище, журнал, уведомление, плитка ------
+      function finish(note) {
+        if (FIN) return;
+        FIN = true;
+        rep.total_ms = Date.now() - T0;
+        var ctl = rep.steps.control_hunt || {};
+        var sum = {
+          rev: REV, ts: rep.ts, note: note || '',
+          globals: rep.steps.globals && rep.steps.globals.count,
+          proto: rep.steps.globals && rep.steps.globals.proto_count,
+          control_count: ctl.count || 0,
+          control_names: (ctl.names || []).slice(0, 40),
+          store_ok: rep.steps.store && rep.steps.store.read_match,
+          argument: rep.steps.argument,
+          perf_ms: rep.steps.perf && rep.steps.perf.million_iterations_ms,
+          websocket: rep.steps.websocket_ctor,
+          net: rep.steps.net || null,
+          errors: rep.errors, total_ms: rep.total_ms
+        };
+        try { G.$persistentStore.write(JSON.stringify(sum), 'RH_ST2_sum'); } catch (e) {}
+        try { G.$persistentStore.write(JSON.stringify(rep.steps.globals || {}), 'RH_ST2_globals'); } catch (e) {}
+        try { G.$persistentStore.write(JSON.stringify(rep.steps.members || {}), 'RH_ST2_members'); } catch (e) {}
+        try { console.log('[RH-ST2-SUM] ' + JSON.stringify(sum)); } catch (e) {}
+        try { console.log('[RH-ST2-FULL] ' + JSON.stringify(rep)); } catch (e) {}
+        var line = (sum.globals || '?') + ' имён · управление: ' + sum.control_count +
+          ' · store ' + (sum.store_ok ? 'да' : 'нет') + ' · ' + (sum.perf_ms || '?') + ' мс';
+        try { G.$notification.post('RouteHub ST2', note || '', line); } catch (e) {}
+        try {
+          G.$done({ title: 'RouteHub ST2', content: line, icon: 'stethoscope', backgroundColor: '#663399' });
+        } catch (e) {
+          try { G.$done({}); } catch (e2) {}
+        }
+      }
+
+      // ШАГ 9. Сеть — необязательная. Нет сети — отчёт всё равно готов.
+      function step_net() {
+        if (has('$httpClient') === 'undefined') { rep.steps.net = { error: 'no $httpClient' }; finish('без сети'); return; }
+        var t = Date.now(), fired = false;
+        setTimeout(function () {
+          if (fired) return;
+          fired = true;
+          rep.steps.net = { error: 'таймаут 6 с' };
+          finish('сеть недоступна');
+        }, 6000);
+        try {
+          G.$httpClient.get({ url: URL204, timeout: 5 }, function (err, resp) {
+            if (fired) return;
+            fired = true;
+            rep.steps.net = {
+              ms: Date.now() - t,
+              error: err ? String(err) : null,
+              status: resp ? (resp.status || resp.statusCode) : null
+            };
+            if (!err && resp) step_post(); else finish('сеть недоступна');
+          });
+        } catch (e) {
+          if (!fired) { fired = true; rep.steps.net = { error: 'исключение' }; finish('сеть недоступна'); }
+        }
+      }
+
+      function step_post() {
+        var sent = false;
+        setTimeout(function () { if (!sent) { sent = true; finish('POST без ответа'); } }, 8000);
+        try {
+          G.$httpClient.post({
+            url: INGEST, headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(rep), timeout: 8
+          }, function (err, resp) {
+            if (sent) return;
+            sent = true;
+            finish(err ? ('POST не прошёл') : ('отчёт отправлен ' + (resp && (resp.status || resp.statusCode))));
+          });
+        } catch (e) {
+          if (!sent) { sent = true; finish('POST исключение'); }
+        }
+      }
+
+      // Общий предохранитель: отчёт выйдет даже при зависшей сети.
+      setTimeout(function () { finish('исчерпан бюджет 25 с'); }, 25000);
+
+      step_net();
+      // конец файла
