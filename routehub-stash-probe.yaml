@@ -37,17 +37,33 @@ rules:
   - MATCH,DIRECT
 
 # --- собственно проба ----------------------------------------
+# interval умышленно малый: новые ревизии пробы подтягиваются без плясок.
+# Лишнего трафика нет: Stash учитывает Etag и Last-Modified и не качает
+# файл заново, если он не менялся.
 script-providers:
   routehub-probe-stash:
     url: https://raw.githubusercontent.com/spxload/routehub/main/routehub-probe-stash.js
-    interval: 86400
+    interval: 300
 
 cron:
   script:
     - name: routehub-probe-stash
-      cron: '*/5 * * * *'
+      cron: '*/2 * * * *'
       timeout: 40
       # Шаг 9 (адресация узла через X-Stash-Selected-Proxy) в этом конфиге
       # пропускается: узлов нет. Когда появится хотя бы один узел —
       # добавить сюда строку вида:
       # argument: '{"node":"точное имя узла из профиля"}'
+
+# --- ручной запуск через панель на главном экране -----------------
+# URL-схемы запуска скрипта в Stash НЕТ (есть только install-config,
+# install-override, install-icon-set, start, stop, toggle). Панель закрывает
+# эту дыру: скрипт выполняется при её обновлении на главном экране.
+# Тот же файл пробы, тот же отчёт по POST — просто другой повод к запуску.
+tiles:
+  - name: routehub-probe-stash
+    interval: 600
+    title: 'RouteHub проба ST1'
+    content: 'обновить панель = запустить пробу'
+    icon: 'stethoscope'
+    backgroundColor: '#663399'
