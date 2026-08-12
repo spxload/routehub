@@ -1,25 +1,25 @@
 # =============================================================
-# RouteHub — КОНФИГ STASH ДЛЯ ПРОБЫ ST4 (КАРТА КОНТРОЛЛЕРА)
+# RouteHub — КОНФИГ STASH ДЛЯ ПРОБЫ ST5 (ЗАПИСЬ В КОНТРОЛЛЕР)
 # =============================================================
-# ЧТО УЖЕ ДОКАЗАНО (ST3, Stash 3.4.1 build 1248):
-#   — контроллер ЖИВ: http://127.0.0.1:9090 отвечает за 25-52 мс;
-#   — ответ «404 page not found» — стандартная страница Go-роутера,
-#     то есть путь неверен, а НЕ авторизация (та дала бы 401);
-#   — Clash-путь /version отсутствует как с токеном как есть, так и с Bearer;
-#   — `$httpClient.globalProxy` — СТРОКА (сейчас пустая): вероятно, имя
-#     прокси по умолчанию для всех запросов скрипта.
+# ДОКАЗАНО В ST4 (Stash 3.4.1 build 1248, iOS 26.5.2):
+#   — на http://127.0.0.1:9090 работает Clash-совместимый API без пути /version;
+#   — отвечают: / , /proxies , /configs , /rules , /connections , /providers/proxies;
+#   — без токена все они дают 401 — токен из $environment действителен;
+#   — группы видны как Selector: GLOBAL (now=PROXY), PROXY, RH-Проба.
 #
-# ЗАДАЧА ST4: найти реальные пути контроллера сплошным перебором
-# кандидатов (вывод 54: отсутствие доказывается только сплошной описью).
-# ТОЛЬКО ЧТЕНИЕ: ни одного записывающего запроса. Запись — следующая
-# ревизия, когда будет известен верный путь.
-# Стримы (/traffic, /logs, /memory) исключены: они не закрывают соединение.
+# ЗАДАЧА ST5: проверить ЗАПИСЬ — то есть управление политикой из скрипта,
+# которого нет ни в Egern, ни через прямое API самого Stash.
+#
+# БЕЗОПАСНОСТЬ ЗАПИСЕЙ:
+#   — PUT /proxies/RH-Проба → DIRECT: в этой группе DIRECT и так единственный член;
+#   — PATCH /configs → mode "rule": режим уже rule, значение не меняется;
+#   — узлов в этом профиле нет вовсе, боевой контур не затрагивается;
+#   — DELETE соединений НЕ выполняется сознательно.
 #
 # УСТАНОВКА (при включённом Loon), старую копию удалить:
 #   https://raw.githubusercontent.com/spxload/routehub/main/routehub-stash-probe.yaml
-# ЗАПУСК: Loon выкл → Stash вкл → плитка «RouteHub ST4».
-# РЕЗУЛЬТАТ: RH_ST4_sum (сводка), RH_ST4_hits (тела ответивших путей).
-# Токен контроллера в отчёт НЕ попадает.
+# ЗАПУСК: Loon выкл → Stash вкл → плитка «RouteHub ST5».
+# РЕЗУЛЬТАТ: RH_ST5_sum, RH_ST5_raw.
 # =============================================================
 
 mode: rule
@@ -37,145 +37,205 @@ rules:
   - MATCH,DIRECT
 
 tiles:
-  - name: routehub-probe-st4
+  - name: routehub-probe-st5
     interval: 600
-    title: 'RouteHub ST4'
+    title: 'RouteHub ST5'
     content: 'обновить панель = запустить пробу'
-    icon: 'map'
+    icon: 'switch.2'
     backgroundColor: '#663399'
 
 cron:
   script:
-    - name: routehub-probe-st4
+    - name: routehub-probe-st5
       cron: '*/2 * * * *'
       timeout: 40
 
 script-providers:
-  routehub-probe-st4:
+  routehub-probe-st5:
     interval: 86400
     payload: |
-      // RouteHub — ПРОБА STASH. Ревизия ST4: карта локального контроллера.
-      // ТОЛЬКО ЧТЕНИЕ. Перебор путей в два захода: с токеном и без него.
-      var REV = 'ST4';
+      // RouteHub — ПРОБА STASH. Ревизия ST5: запись в локальный контроллер.
+      // Шаги: выбор в группе → сверка → замер задержки → режим → соединения → WebSocket.
+      var REV = 'ST5';
+      var GROUP = 'RH-Проба';
+      var PICK = 'DIRECT';
       var G = (typeof globalThis !== 'undefined') ? globalThis : this;
       var T0 = Date.now();
       var FIN = false;
-      var rep = { rev: REV, ts: new Date().toISOString(), steps: {}, probe: [], errors: [] };
-      var BASE = null, AUTH = null;
+      var rep = { rev: REV, ts: new Date().toISOString(), steps: {}, errors: [] };
+      var BASE = null, AUTH = null, TOKEN = null;
 
-      var PATHS = [
-        '/', '/version', '/status', '/health', '/info',
-        '/api', '/api/version', '/api/v1/version', '/v1/version',
-        '/stash', '/stash/version', '/rest/version',
-        '/proxies', '/api/proxies', '/v1/proxies', '/policies', '/policy', '/groups',
-        '/configs', '/config', '/rules', '/connections', '/providers/proxies',
-        '/scripts', '/tiles', '/profile', '/ui', '/dns/query?name=example.com&type=A'
-      ];
-
-      function has(n) { try { return typeof G[n]; } catch (e) { return 'error'; } }
-
-      // Среда: адрес и токен. Токен не раскрывается.
       try {
         var e = G.$environment;
         if (e) {
           if (e['controller-url']) BASE = String(e['controller-url']).replace(/\/+$/, '');
-          if (e['controller-authorization']) AUTH = String(e['controller-authorization']);
-          rep.steps.env = {
-            url: BASE, auth_len: AUTH ? AUTH.length : 0,
-            version: e['stash-version'], build: e['stash-build']
-          };
+          if (e['controller-authorization']) {
+            AUTH = String(e['controller-authorization']);
+            TOKEN = AUTH.replace(/^[Bb]earer\s+/, '');
+          }
+          rep.steps.env = { url: BASE, version: e['stash-version'], build: e['stash-build'] };
         }
       } catch (x) { rep.errors.push('env: ' + String(x)); }
 
-      function call(path, withAuth, cb) {
+      function call(method, path, body, cb) {
         var t = Date.now(), fired = false;
-        var h = { 'Content-Type': 'application/json' };
-        if (withAuth && AUTH) h.Authorization = AUTH;
+        var opts = {
+          url: BASE + path,
+          headers: { 'Content-Type': 'application/json', Authorization: AUTH },
+          timeout: 6
+        };
+        if (body !== null && body !== undefined) opts.body = JSON.stringify(body);
         function once(o) { if (!fired) { fired = true; cb(o); } }
-        setTimeout(function () { once({ path: path, auth: !!withAuth, status: null, error: 'таймаут 4 с', ms: Date.now() - t }); }, 4000);
+        setTimeout(function () { once({ error: 'таймаут 7 с', ms: Date.now() - t, status: null }); }, 7000);
         try {
-          G.$httpClient.get({ url: BASE + path, headers: h, timeout: 3 }, function (err, resp, data) {
-            var hd = null;
-            try { hd = resp && resp.headers ? resp.headers : null; } catch (z) {}
+          G.$httpClient[method](opts, function (err, resp, data) {
             once({
-              path: path, auth: !!withAuth, ms: Date.now() - t,
+              ms: Date.now() - t,
               status: resp ? (resp.status || resp.statusCode) : null,
               error: err ? String(err) : null,
               len: data ? String(data).length : 0,
-              head: data ? String(data).slice(0, 300) : '',
-              headers: hd
+              body: data ? String(data).slice(0, 1200) : ''
             });
           });
+        } catch (z) { once({ error: 'throw: ' + String(z), ms: Date.now() - t, status: null }); }
+      }
+
+      // ШАГ 1. Состояние группы ДО записи.
+      function s1() {
+        call('get', '/proxies/' + encodeURIComponent(GROUP), null, function (r) {
+          rep.steps.before = r;
+          s2();
+        });
+      }
+
+      // ШАГ 2. ЗАПИСЬ: выбор члена группы. В Clash-API успех — 204.
+      function s2() {
+        call('put', '/proxies/' + encodeURIComponent(GROUP), { name: PICK }, function (r) {
+          rep.steps.put = r;
+          s3();
+        });
+      }
+
+      // ШАГ 3. Сверка ПОСЛЕ записи.
+      function s3() {
+        call('get', '/proxies/' + encodeURIComponent(GROUP), null, function (r) {
+          rep.steps.after = r;
+          s4();
+        });
+      }
+
+      // ШАГ 4. Штатный замер задержки узла силами ядра.
+      // Под whitelist замер провалится — важен САМ ФАКТ наличия эндпоинта.
+      function s4() {
+        var q = '/proxies/DIRECT/delay?timeout=3000&url=' +
+          encodeURIComponent('http://connectivitycheck.gstatic.com/generate_204');
+        call('get', q, null, function (r) {
+          rep.steps.delay = r;
+          s5();
+        });
+      }
+
+      // ШАГ 5. ЗАПИСЬ настроек: тот же режим rule, значение не меняется.
+      function s5() {
+        call('patch', '/configs', { mode: 'rule' }, function (r) {
+          rep.steps.patch_configs = r;
+          s6();
+        });
+      }
+
+      // ШАГ 6. Журнал соединений: сколько и какие поля в метаданных.
+      // Вывод 8 гласит, что журнала трафика нет ни у одного клиента — проверяем.
+      function s6() {
+        call('get', '/connections', null, function (r) {
+          var o = { ms: r.ms, status: r.status, len: r.len, error: r.error };
+          try {
+            var j = JSON.parse(r.body && r.len <= 1200 ? r.body : '{}');
+            if (j.connections) {
+              o.count = j.connections.length;
+              o.upload_total = j.uploadTotal;
+              o.download_total = j.downloadTotal;
+              if (j.connections[0] && j.connections[0].metadata) {
+                o.metadata_keys = Object.keys(j.connections[0].metadata).sort();
+                o.sample_host = j.connections[0].metadata.host || j.connections[0].metadata.destinationIP || null;
+              }
+            }
+          } catch (z) { o.note = 'тело обрезано, разбор пропущен'; }
+          rep.steps.connections = o;
+          s7();
+        });
+      }
+
+      // ШАГ 7. WebSocket на /traffic. В Loon не соединяется, в Egern работает.
+      function s7() {
+        if (typeof G.WebSocket === 'undefined') {
+          rep.steps.ws = { available: false };
+          finish();
+          return;
+        }
+        var res = { available: true, opened: false, messages: 0, sample: null, error: null };
+        var closed = false;
+        try {
+          var wsUrl = BASE.replace(/^http/, 'ws') + '/traffic?token=' + encodeURIComponent(TOKEN || '');
+          var ws = new G.WebSocket(wsUrl);
+          ws.onopen = function () { res.opened = true; };
+          ws.onmessage = function (ev) {
+            res.messages++;
+            if (!res.sample) { try { res.sample = String(ev.data).slice(0, 200); } catch (z) {} }
+          };
+          ws.onerror = function () { res.error = 'onerror'; };
+          setTimeout(function () {
+            if (closed) return;
+            closed = true;
+            try { res.readyState = ws.readyState; ws.close(); } catch (z) {}
+            rep.steps.ws = res;
+            finish();
+          }, 5000);
         } catch (z) {
-          once({ path: path, auth: !!withAuth, status: null, error: 'throw: ' + String(z), ms: Date.now() - t });
+          res.error = 'throw: ' + String(z);
+          rep.steps.ws = res;
+          finish();
         }
-      }
-
-      // Заход 1 — с токеном, по всем путям. Заход 2 — без токена,
-      // только по тем, где ответ отличался от 404 (чтобы различить
-      // «пути нет» и «путь есть, но закрыт»).
-      var i = 0;
-      function walk() {
-        if (i >= PATHS.length) { second(); return; }
-        if (Date.now() - T0 > 26000) { rep.errors.push('бюджет исчерпан на ' + i + ' из ' + PATHS.length); second(); return; }
-        var p = PATHS[i++];
-        call(p, true, function (r) { rep.probe.push(r); walk(); });
-      }
-
-      var alt = [], j = 0;
-      function second() {
-        if (!alt.length) {
-          for (var k = 0; k < rep.probe.length; k++) {
-            var r = rep.probe[k];
-            if (r.status !== null && r.status !== 404) alt.push(r.path);
-          }
-          if (!alt.length) alt.push('/');
-        }
-        if (j >= alt.length || Date.now() - T0 > 29000) { finish(); return; }
-        var p = alt[j++];
-        call(p, false, function (r) { rep.probe.push(r); second(); });
       }
 
       function finish() {
         if (FIN) return;
         FIN = true;
         rep.total_ms = Date.now() - T0;
-        var hits = [], notfound = 0, dead = 0;
-        for (var k = 0; k < rep.probe.length; k++) {
-          var r = rep.probe[k];
-          if (r.status === 404) { notfound++; continue; }
-          if (r.status === null) { dead++; continue; }
-          hits.push(r);
-        }
+        var put = rep.steps.put || {};
+        var ok = put.status && put.status >= 200 && put.status < 300;
         var sum = {
           rev: REV, ts: rep.ts,
           stash: rep.steps.env ? (rep.steps.env.version + ' (' + rep.steps.env.build + ')') : null,
-          url: BASE, auth_len: rep.steps.env ? rep.steps.env.auth_len : 0,
-          checked: rep.probe.length, notfound: notfound, no_answer: dead,
-          hits: hits.map(function (r) {
-            return { path: r.path, auth: r.auth, status: r.status, len: r.len, head: (r.head || '').slice(0, 200) };
-          }),
+          before: (rep.steps.before || {}).body,
+          put_status: put.status, put_error: put.error, put_body: put.body,
+          after: (rep.steps.after || {}).body,
+          delay: rep.steps.delay ? { status: rep.steps.delay.status, body: rep.steps.delay.body } : null,
+          patch_configs: rep.steps.patch_configs ? { status: rep.steps.patch_configs.status, body: rep.steps.patch_configs.body } : null,
+          connections: rep.steps.connections,
+          websocket: rep.steps.ws,
+          verdict: ok ? 'ЗАПИСЬ ПРОШЛА' : 'запись отклонена',
           errors: rep.errors, total_ms: rep.total_ms
         };
-        try { G.$persistentStore.write(JSON.stringify(sum), 'RH_ST4_sum'); } catch (z) {}
-        try { G.$persistentStore.write(JSON.stringify(hits), 'RH_ST4_hits'); } catch (z) {}
-        try { console.log('[RH-ST4-SUM] ' + JSON.stringify(sum)); } catch (z) {}
-        try { console.log('[RH-ST4-FULL] ' + JSON.stringify(rep)); } catch (z) {}
-        var line = 'путей ' + sum.checked + ' · откликнулось ' + sum.hits.length + ' · 404: ' + notfound;
-        try { G.$notification.post('RouteHub ST4', sum.hits.length ? 'есть отклик' : 'всё 404', line); } catch (z) {}
+        try { G.$persistentStore.write(JSON.stringify(sum), 'RH_ST5_sum'); } catch (z) {}
+        try { G.$persistentStore.write(JSON.stringify(rep), 'RH_ST5_raw'); } catch (z) {}
+        try { console.log('[RH-ST5-SUM] ' + JSON.stringify(sum)); } catch (z) {}
+        var line = 'запись: ' + (put.status || '—') +
+          ' · delay: ' + ((rep.steps.delay && rep.steps.delay.status) || '—') +
+          ' · ws: ' + (rep.steps.ws && rep.steps.ws.opened ? 'открыт' : 'нет');
+        try { G.$notification.post('RouteHub ST5', sum.verdict, line); } catch (z) {}
         try {
-          G.$done({ title: 'RouteHub ST4', content: line, icon: 'map', backgroundColor: '#663399' });
+          G.$done({ title: 'RouteHub ST5', content: line, icon: 'switch.2', backgroundColor: '#663399' });
         } catch (z) {
           try { G.$done({}); } catch (z2) {}
         }
       }
 
-      setTimeout(function () { finish(); }, 32000);
+      setTimeout(function () { finish(); }, 33000);
 
-      if (!BASE || has('$httpClient') === 'undefined') {
+      if (!BASE || typeof G.$httpClient === 'undefined') {
         rep.errors.push('нет controller-url или $httpClient');
         finish();
       } else {
-        walk();
+        s1();
       }
       // конец файла
