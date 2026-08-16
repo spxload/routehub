@@ -4,8 +4,23 @@
 обходит блокировки, экономит платный трафик обходных узлов. Подписка одна,
 узлы раздаёт Cloudflare Worker, выбор внутри группы делает сам Loon.
 
-**Состояние на 2026-08-16:** Worker `v1.9.8`, конфиг `C-draft-41`,
+**Состояние на 2026-08-16:** Worker `v1.9.9`, конфиг `C-draft-41`,
 спидтест `v0.6.3`. Проверить живой Worker: `curl https://<worker>/version`.
+
+## Карта репозитория
+
+| Где | Что лежит |
+|---|---|
+| корень | `routehub-worker.js` (роутинг), `routehub.conf` (боевой конфиг), `wrangler.toml`, `README`, `CHANGELOG`, `СТАРТ` |
+| `src/` | ядро Worker'а: `const util store sub ai api dash admin` |
+| `src/clients/` | клиентский слой, пока один — `loon.js` (рендер конфига) |
+| `tests/` | `harness.js` + четыре набора тестов, запуск `node --test "tests/*.test.js"` |
+| `scripts/` | скрипты устройства: speedtest, netwatch, viewer, dash, dashcache, faillog, rkn |
+| `probes/` | разовые пробы: L10 (`routehub-probe-context.js`), Stash |
+| `plugins/` | `.plugin` для Loon и `.stoverride` для Stash |
+| `web/` | `routehub-admin.html`, `routehub-dash.html` |
+| `docs/` | актуальные документы |
+| `docs/archive/` | история этапов, читать только как хронику |
 
 ## С чего начать
 
@@ -30,8 +45,8 @@ Cloudflare Worker (routehub-worker.js + src/*.js)
       ▼
 routehub.conf на устройстве  →  Loon выбирает узел внутри fallback-группы
       ▲
-      └── скрипты устройства: speedtest (метрики), netwatch (смена сети),
-          viewer, dash, dashcache, L10 (ручная проба контекста)
+      └── scripts/ на устройстве: speedtest (метрики), netwatch (смена сети),
+          viewer, dash, dashcache; probes/ — ручная проба контекста L10
 ```
 
 Стенды разворачиваются из этой же ветки через `[env.*]` в `wrangler.toml`:
@@ -39,18 +54,18 @@ routehub.conf на устройстве  →  Loon выбирает узел в�
 
 ## Актуальность документов
 
-Часть документов описывает решения, которые уже заменены. Они оставлены как
-история — но читать их как описание текущего состояния нельзя.
+Часть документов описывает решения, которые уже заменены. Они лежат в
+`docs/archive/` как история — читать их как описание текущего состояния нельзя.
 
 | Документ | Статус |
 |---|---|
-| `docs/ЭТАП_E_ПРОГРЕСС.md` | **устарел**: `RH-Прямой = select` заменён в C-draft-25 на fallback-группы |
-| `docs/ИНСТРУКЦИЯ_ПРОЕКТА.md` | **устарела**: 58 узлов, старая раскладка файлов, отменённые запреты |
-| `docs/ДЛЯ_ДИАНЫ_инструкция_и_промпты.md` | **устарела**: вторая инструкция, расходится с первой |
-| `docs/ЭТАП_D_RESEARCH_ПРОМПТ.md` | исполнен, ценность историческая |
-| `docs/МИГРАЦИЯ_НА_WORKERS.md` | выполнено 2026-06-08 |
+| `docs/archive/ЭТАП_E_ПРОГРЕСС.md` | **устарел**: `RH-Прямой = select` заменён в C-draft-25 на fallback-группы |
+| `docs/archive/ИНСТРУКЦИЯ_ПРОЕКТА.md` | **устарела**: 58 узлов, старая раскладка файлов, отменённые запреты |
+| `docs/archive/ДЛЯ_ДИАНЫ_инструкция_и_промпты.md` | **устарела**: вторая инструкция, расходится с первой |
+| `docs/archive/ЭТАП_D_RESEARCH_ПРОМПТ.md` | исполнен, ценность историческая |
+| `docs/archive/МИГРАЦИЯ_НА_WORKERS.md` | выполнено 2026-06-08 |
+| `docs/archive/ЭТАП_K_EGERN.md` и ветка `egern` | исследование закрыто: управления политиками из скрипта у Egern нет |
 | `docs/ДОКУМЕНТАЦИЯ_LOON_RU.md` | перевод версии **3.3.9**, на устройстве 3.5.0 — сверка в `docs/СВЕРКА_LOON_3.5.md` |
-| `docs/ЭТАП_K_EGERN.md` и ветка `egern` | исследование закрыто: управления политиками из скрипта у Egern нет |
 
 Актуальные: `CHANGELOG.md`, `docs/ADR-01_СХЕМА_КОНТУРОВ.md`, `docs/ТЕХДОЛГ.md`,
 `docs/ЗАМЕРЫ_И_ВЕСА.md`, `docs/СВЕРКА_LOON_3.5.md`, `docs/ЭТАП_K_STASH.md`,
@@ -61,7 +76,7 @@ routehub.conf на устройстве  →  Loon выбирает узел в�
 
 ```bash
 git clone --depth 1 https://github.com/spxload/routehub.git
-node --test "tests/*.test.js"          # 63 теста, CI нет намеренно
+node --test "tests/*.test.js"          # 64 теста, CI нет намеренно
 npx wrangler deploy --env="" --dry-run # боевое окружение
 npx wrangler deploy --env stash --dry-run
 ```
