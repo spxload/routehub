@@ -1,6 +1,8 @@
 // routehub — модуль util.js
 // Чистые функции: разбор и сборка имён узлов, баллы, коды ответов.
 // Разделён из routehub-worker.js 2026-08-15 (v1.9.5). Логика не менялась.
+// Здесь только то, что от клиента не зависит: разбор строки [Remote Proxy]
+// уехал в clients/loon.js (v1.9.6, ADR-01).
 // История версий — CHANGELOG.md в корне репозитория.
 
 import { BLK, CELL_HINTS, DEAD, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, METRIC_SEP, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SUP_DIG, SUP_PLUS, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED } from './const.js';
@@ -149,20 +151,6 @@ function classifyNet(asOrg) {
   return 'wifi';
 }
 
-// Извлечь хвост параметров Loon из строки [Remote Proxy] конфига.
-// Строка вида: "Lastdep = <url>,p1=v1,p2=v2,...". URL запятых не содержит,
-// поэтому всё ПОСЛЕ первой запятой — параметры подписки (block-quic, udp, ...).
-
-function subParamsFromConf(conf) {
-  const m = String(conf).match(/^Lastdep\s*=\s*(.*)$/m);
-  if (!m) return ',udp=true,enabled=true';
-  const rhs = m[1].trim();
-  const ci = rhs.indexOf(',');
-  if (ci < 0) return ',udp=true,enabled=true'; // параметров нет — запасной дефолт
-  const params = rhs.slice(ci + 1).trim();      // всё после URL (без ведущей запятой)
-  return params ? (',' + params) : ',udp=true,enabled=true';
-}
-
 function metricOf(s) {
   if (s.dead) return { dead: true };
   const o = {
@@ -182,4 +170,4 @@ function labelOf(icon, m, max, showRtt) {
   return icon + speedBlock(m.down) + ' ' + supNum(pct) + v + (showRtt ? (' ' + m.down + '↓' + m.rtt) : '');
 }
 
-export { b64ToUtf8, clamp01, classifyNet, confVersion, decodeName, flagOf, fragOf, iconResp, jsonResp, labelOf, matchKey, metricOf, norm, parseUserinfo, proxOf, regionOf, scoreOf, speedBlock, startFlag, stripMetric, subParamsFromConf, supNum, tagOf, utf8ToB64, voiceOk, withFrag };
+export { b64ToUtf8, clamp01, classifyNet, confVersion, decodeName, flagOf, fragOf, iconResp, jsonResp, labelOf, matchKey, metricOf, norm, parseUserinfo, proxOf, regionOf, scoreOf, speedBlock, startFlag, stripMetric, supNum, tagOf, utf8ToB64, voiceOk, withFrag };
