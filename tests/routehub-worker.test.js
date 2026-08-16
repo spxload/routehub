@@ -4,6 +4,9 @@
 // Worker импортирует routehub-admin.html (модуль типа Text, его подставляет
 // Wrangler при сборке). Node такой импорт не понимает, поэтому тесты грузят
 // копию исходника с заменённой строкой импорта. Остальной код не трогается.
+//
+// v1.9.5: копия кладётся В КОРЕНЬ репозитория, а не в системный /tmp —
+// иначе не разрешаются относительные импорты модулей src/*.js.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +21,7 @@ const SRC = fs.readFileSync(path.join(ROOT, 'routehub-worker.js'), 'utf8');
 const SHIM = SRC.replace(/^import ADMIN_HTML from .+$/m,
   "const ADMIN_HTML = '<!doctype html><title>test</title>';");
 assert.notEqual(SHIM, SRC, 'строка импорта HTML не найдена — проверить шапку worker.js');
-const TMP = path.join(os.tmpdir(), 'rh-worker-under-test.mjs');
+const TMP = path.join(ROOT, '.rh-worker-under-test.mjs');
 fs.writeFileSync(TMP, SHIM);
 const W = await import(pathToFileURL(TMP).href);
 const T = W.__test;
@@ -44,8 +47,8 @@ test('FRESH_MS = 60 минут', () => {
   assert.equal(T.FRESH_MS, 60 * 60 * 1000);
 });
 
-test('версия Worker\'а — v1.9.2', () => {
-  assert.equal(T.WORKER_VER, 'v1.9.2');
+test('версия Worker\'а — v1.9.5', () => {
+  assert.equal(T.WORKER_VER, 'v1.9.5');
 });
 
 // ------------------------------------------------------------------- tagOf
@@ -53,12 +56,12 @@ test('версия Worker\'а — v1.9.2', () => {
 // в теге, а не точная подстрока '[VPN]'. Порядок: обход -> игры -> VPN.
 test('tagOf: обычный VPN-узел', () => {
   assert.equal(T.tagOf('[VPN] ' + DE + ' Германия #1'), 'vpn');
-  assert.equal(T.tagOf(DE + ' \u26A1\u2B50 Германия [VPN]'), 'vpn');
+  assert.equal(T.tagOf(DE + ' ⚡⭐ Германия [VPN]'), 'vpn');
 });
 
 test('tagOf: значок внутри скобок не мешает — [🌀 VPN] это vpn', () => {
-  assert.equal(T.tagOf(DE + ' \u26A1\u2B50 Германия [\u{1F300} VPN]'), 'vpn');
-  assert.equal(T.tagOf(NL + ' \u26A1\u2B50 Нидерланды [\u{1F300} VPN] \u00B7 ' + WIFI + '\u2585'), 'vpn');
+  assert.equal(T.tagOf(DE + ' ⚡⭐ Германия [\u{1F300} VPN]'), 'vpn');
+  assert.equal(T.tagOf(NL + ' ⚡⭐ Нидерланды [\u{1F300} VPN] · ' + WIFI + '▅'), 'vpn');
 });
 
 test('tagOf: игровой узел', () => {
@@ -86,7 +89,7 @@ test('subParamsFromConf: строки нет либо параметров не�
 });
 
 test('matchKey срезает метрику и нормализует пробелы', () => {
-  const nm = '[VPN] ' + DE + ' Германия  #1 \u00B7 ' + WIFI + '\u2585 \u2077\u2075';
+  const nm = '[VPN] ' + DE + ' Германия  #1 · ' + WIFI + '▅ ⁷⁵';
   assert.equal(T.matchKey(nm), '[VPN] ' + DE + ' Германия #1');
 });
 
@@ -118,6 +121,37 @@ test('AIrest исключает весь СНГ, а не только RU/BY', ()
   const blocks = T.aiBlocks([DE, NL]);
   const line = blocks.filters.split('\n').find((l) => l.indexOf('AIrest') >= 0);
   for (const fl of [RUF, KZ]) assert.ok(line.indexOf(fl) >= 0, 'в исключениях нет ' + fl);
+});
+
+test('AIeu поднимает одноузловую Европу выше тира прочих регионов', () => {
+  // Повторяет состав подписки на 2026-08-15: у Великобритании один узел,
+  // поэтому в тиры она не попадает. Раньше её ловил только общий AIrest —
+  // НИЖЕ тира Турции. Теперь между ними стоит региональный остаток AIeu.
+  const GB = '\u{1F1EC}\u{1F1E7}';
+  const tiers = [DE, NL, US, TR];
+  const blocks = T.aiBlocks(tiers);
+  const cascade = blocks.groups.split('\n').find((l) => l.startsWith('RH-AI-W'));
+  const names = cascade.split(', ').filter((s) => s.indexOf('RH-Filter-W-AI') === 0);
+  const iEu = names.indexOf('RH-Filter-W-AIeu');
+  const iRest = names.indexOf('RH-Filter-W-AIrest');
+  assert.ok(iEu > 0, 'AIeu должен присутствовать в каскаде');
+  // Турция — регион 3, её тир обязан идти ПОСЛЕ европейского остатка.
+  const tierLines = blocks.filters.split('\n');
+  const trFilter = tierLines.find((l) => l.indexOf(TR) >= 0 && l.indexOf('-W-') >= 0);
+  const trName = trFilter.split(' =')[0];
+  assert.ok(iEu < names.indexOf(trName), 'AIeu обязан стоять выше тира Турции');
+  assert.ok(names.indexOf(trName) < iRest, 'общий AIrest — последний');
+  const euLine = tierLines.find((l) => l.indexOf('W-AIeu') >= 0);
+  assert.ok(euLine.indexOf(GB) >= 0, 'AIeu обязан ловить Великобританию');
+  assert.ok(euLine.indexOf(DE) < 0, 'занятая тиром DE в AIeu попадать не должна');
+});
+
+test('AIrest не пересекается с региональными остатками', () => {
+  const blocks = T.aiBlocks([DE, NL]);
+  const line = blocks.filters.split('\n').find((l) => l.indexOf('W-AIrest') >= 0);
+  for (const fl of [RUF, KZ, US, '\u{1F1EC}\u{1F1E7}']) {
+    assert.ok(line.indexOf(fl) >= 0, 'в исключениях AIrest нет ' + fl);
+  }
 });
 
 test('cascadeOf раскладывает узлы по тирам конфига', () => {
@@ -342,7 +376,7 @@ test('/admin/state отдаёт подписку, каскад, устройст
   });
   const r = await worker.fetch(req('https://w.invalid/admin/state', { headers: ADM }), env);
   const j = await r.json();
-  assert.equal(j.worker, 'v1.9.2');
+  assert.equal(j.worker, 'v1.9.5');
   assert.equal(j.dev, 'k1');
   assert.equal(j.sub.nodes, 2);
   assert.equal(j.sub.fresh_min, 60);
