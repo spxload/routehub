@@ -6,7 +6,7 @@
 # faillog: http-request сборщик. HTTP ловит всегда; HTTPS — только когда в Loon
 # ВРУЧНУЮ включён перехват MITM (UI-тумблер «Включить перехват пакетов» + hostname=*).
 # Пишет host в $persistentStore rh_faillog; дашборд показывает и даёт «+ список».
-http-request ^https?:\/\/ script-path=https://raw.githubusercontent.com/spxload/routehub/main/routehub-faillog.js, requires-body=false, timeout=5, tag=RH-FailLog, enabled=true
+http-request ^https?:\/\/ script-path=https://raw.githubusercontent.com/spxload/routehub/main/scripts/routehub-faillog.js, requires-body=false, timeout=5, tag=RH-FailLog, enabled=true
 
 # [MITM] В ПЛАГИНЕ НЕ РАБОТАЕТ (проверено: httpbin/wikipedia/* — перехвата нет).
 # MITM включать ТОЛЬКО вручную в Loon. Список исключений для вставки в UI

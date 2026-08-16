@@ -29,7 +29,7 @@
 // Loon, а не скрипт.
 // =============================================================
 
-import ADMIN_HTML from './routehub-admin.html';
+import ADMIN_HTML from './web/routehub-admin.html';
 
 import * as CONST from './src/const.js';
 import * as UTIL from './src/util.js';

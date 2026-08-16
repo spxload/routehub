@@ -8,7 +8,7 @@ category: "RouteHub"
 # словари сливаются рекурсивно, массивы из override вставляются в начало.
 #
 # Установка одной ссылкой (открыть на телефоне):
-# https://link.stash.ws/install-override/raw.githubusercontent.com/spxload/routehub/main/RouteHub-Probe.stoverride
+# https://link.stash.ws/install-override/raw.githubusercontent.com/spxload/routehub/main/plugins/RouteHub-Probe.stoverride
 #
 # ВАЖНО: плановые задания Stash требуют ПОДКЛЮЧЁННОГО туннеля Stash
 # (docs: "Scheduled tasks require Network Extension (VPN) to be connected").
@@ -16,7 +16,7 @@ category: "RouteHub"
 
 script-providers:
   routehub-probe-stash:
-    url: https://raw.githubusercontent.com/spxload/routehub/main/routehub-probe-stash.js
+    url: https://raw.githubusercontent.com/spxload/routehub/main/probes/routehub-probe-stash.js
     interval: 86400
 
 cron:
