@@ -1,6 +1,6 @@
 // =============================================================
 // routehub-viewer.js — RouteHub, ручной просмотр метрик узлов (Этап E/H)
-var VERSION = 'viewer v0.6.3 (2026-06-11)';
+var VERSION = 'viewer v0.6.4 (2026-08-16)';
 //
 // Тип: generic (запуск ВРУЧНУЮ из Loon). Читает rh_speed_wifi/rh_speed_cell,
 //   считает ТОТ ЖЕ балл, что Worker (задержка = med, фолбэк rtt):
@@ -14,16 +14,17 @@ var VERSION = 'viewer v0.6.3 (2026-06-11)';
 //   чистит сам (v0.6.1) — «вечные» старые даты исчезают.
 //   v0.6.2: возраст пинг-свипа (tsp) в таблице; свип в истории.
 //
-// Метрики: down(Мбит/с, кэш 24ч), rtt(мин из 3), med(медиана — балл по ней),
+// Метрики: down(Мбит/с, кэш 24ч), rtt(мин из проб), med(медиана — балл по ней),
 //   jit, bl. med/rtt/jit обновляются пинг-свипом (~каждые 20 мин). Цель пинга —
-//   cp.cloudflare.com/generate_204 (как у групп Loon); скорость — speed.cloudflare.com.
+//   connectivitycheck.gstatic.com/generate_204 (как у групп Loon, с v0.6.3
+//   спидтеста); скорость — speed.cloudflare.com.
 // =============================================================
 
 var SCORE_WS = 0.40, SCORE_WR = 0.30, SCORE_WJ = 0.20, SCORE_WB = 0.10;
 var FLOOR_RTT = 30, FLOOR_JIT = 10, FLOOR_BL = 20;
 var MAX_FAILS = 5;
-var BLK = ['\u2581', '\u2583', '\u2585', '\u2587', '\u2588']; // ▁▃▅▇█
-var SUP_PLUS = '\u207A';
+var BLK = ['▁', '▃', '▅', '▇', '█']; // ▁▃▅▇█
+var SUP_PLUS = '⁺';
 var K_RUNLOG = 'rh_runlog';
 
 function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
@@ -52,13 +53,13 @@ function scoreOf(m, maxDown) {
 function pad(s, n) { s = String(s); while (s.length < n) s += ' '; return s; }
 function padL(s, n) { s = String(s); while (s.length < n) s = ' ' + s; return s; }
 function two(n) { return n < 10 ? '0' + n : '' + n; }
-function fmtDate(ts) { if (!ts) return '\u2014'; var d = new Date(ts); return two(d.getDate()) + '.' + two(d.getMonth() + 1) + ' ' + two(d.getHours()) + ':' + two(d.getMinutes()); }
+function fmtDate(ts) { if (!ts) return '—'; var d = new Date(ts); return two(d.getDate()) + '.' + two(d.getMonth() + 1) + ' ' + two(d.getHours()) + ':' + two(d.getMinutes()); }
 function fmtAge(ts) {
-  if (!ts) return '\u2014';
+  if (!ts) return '—';
   var s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 3600) return Math.floor(s / 60) + '\u043C';
-  if (s < 86400) return Math.floor(s / 3600) + '\u0447';
-  return Math.floor(s / 86400) + '\u0434';
+  if (s < 3600) return Math.floor(s / 60) + 'м';
+  if (s < 86400) return Math.floor(s / 3600) + 'ч';
+  return Math.floor(s / 86400) + 'д';
 }
 function shortName(n) { return String(n).replace(/^\[Lastdep\]\s*/, ''); }
 
@@ -74,14 +75,14 @@ function buildBlock(cache, title) {
   rows.sort(function (a, b) { return b.score - a.score; });
 
   var lines = [];
-  lines.push('===== ' + title + ' =====  (узлов: ' + rows.length + ', макс ' + maxDown + ' \u041C\u0431\u0438\u0442/\u0441)');
+  lines.push('===== ' + title + ' =====  (узлов: ' + rows.length + ', макс ' + maxDown + ' Мбит/с)');
   lines.push(' #  балл |  скорость   | rtt | med | jit |  bl | скорость обн. | пинг | узел');
   var tested = 0, deadN = 0, newest = 0, oldest = 0, best = null;
   for (var j = 0; j < rows.length; j++) {
     var r = rows[j], en = r.e;
     if (isDead(en)) {
       deadN++;
-      lines.push(padL(j + 1, 2) + ' \u26D4DEAD fails=' + (en.fails || 0) + '  ' + fmtDate(en.ts) + ' (' + fmtAge(en.ts) + ')  ' + shortName(r.name));
+      lines.push(padL(j + 1, 2) + ' ⛔DEAD fails=' + (en.fails || 0) + '  ' + fmtDate(en.ts) + ' (' + fmtAge(en.ts) + ')  ' + shortName(r.name));
       continue;
     }
     tested++;
@@ -92,15 +93,15 @@ function buildBlock(cache, title) {
     lines.push(
       padL(j + 1, 2) + '  ' +
       padL(sc, 3) + ' | ' +
-      padL(en.down, 4) + '\u041C\u0431 ' + speedBlock(en.down) + padL(pct, 3) + '% | ' +
+      padL(en.down, 4) + 'Мб ' + speedBlock(en.down) + padL(pct, 3) + '% | ' +
       padL(en.rtt, 3) + ' | ' +
       padL(en.med == null ? '-' : en.med, 3) + ' | ' +
       padL(en.jit == null ? '-' : en.jit, 3) + ' | ' +
       padL(en.bl == null ? '-' : en.bl, 3) + ' | ' +
       pad(fmtDate(en.ts) + ' (' + fmtAge(en.ts) + ')', 14) + ' | ' +
-      padL(en.tsp ? fmtAge(en.tsp) : '\u2014', 4) + ' | ' +
+      padL(en.tsp ? fmtAge(en.tsp) : '—', 4) + ' | ' +
       shortName(r.name) +
-      (en.fails ? ' \u26A0fails=' + en.fails : '')
+      (en.fails ? ' ⚠fails=' + en.fails : '')
     );
   }
   return { lines: lines, tested: tested, dead: deadN, newest: newest, oldest: oldest, best: best, title: title };
@@ -113,7 +114,7 @@ function buildHistory() {
   var gaps = 0;
   for (var i = lg.length - 1; i >= 0; i--) {
     var e = lg[i];
-    var src = (e.s === 'net') ? '\uD83D\uDCF6 net ' : '\u23F0 cron';
+    var src = (e.s === 'net') ? '📶 net ' : '⏰ cron';
     var parts = [fmtDate(e.t), src, pad(e.n || '?', 4)];
     if (e.s === 'cron') {
       if (e.x) parts.push('-> ' + e.x);
@@ -127,10 +128,10 @@ function buildHistory() {
       if (e.w) parts.push('WHITELIST');
       if (e.o) parts.push(e.o);
     }
-    if (e.gap) { parts.push('\u26A0 РАЗРЫВ ' + e.gap + ' мин до этого'); gaps++; }
+    if (e.gap) { parts.push('⚠ РАЗРЫВ ' + e.gap + ' мин до этого'); gaps++; }
     lines.push(parts.join('  '));
   }
-  lines.push(gaps ? ('\u26A0 Разрывов: ' + gaps + ' (Loon/VPN не работал или iOS усыпил расширение)') : 'Разрывов нет — расписание шло непрерывно.');
+  lines.push(gaps ? ('⚠ Разрывов: ' + gaps + ' (Loon/VPN не работал или iOS усыпил расширение)') : 'Разрывов нет — расписание шло непрерывно.');
   return lines;
 }
 
@@ -141,36 +142,36 @@ function main() {
   var hasC = Object.keys(cell).length > 0;
 
   var head = [];
-  head.push('RouteHub viewer \u2014 ' + VERSION);
+  head.push('RouteHub viewer — ' + VERSION);
   head.push('БАЛЛ: нормировка 0..1, веса down 0.40 / задержка 0.30 / jit 0.20 / bl 0.10.');
-  head.push('Задержка для балла = med; rtt (min) — для метки \u2193. med/rtt/jit обновляются пинг-свипом (~20 мин), скорость — раз в 24ч.');
-  head.push('Floor: rtt ' + FLOOR_RTT + ' / jit ' + FLOOR_JIT + ' / bl ' + FLOOR_BL + ' мс. Балл 0..100, выше = лучше \u2014 по нему порядок узлов.');
-  head.push('Пинг: cp.cloudflare.com/generate_204 (та же цель, что у групп Loon). Скорость: speed.cloudflare.com.');
-  head.push('Метка в имени узла = скорость% (НЕ балл). Порядок в подписке = балл. \u26A0fails=N — замер скорости падает, дата не обновится.');
+  head.push('Задержка для балла = med; rtt (min) — для метки ↓. med/rtt/jit обновляются пинг-свипом (~20 мин), скорость — раз в 24ч.');
+  head.push('Floor: rtt ' + FLOOR_RTT + ' / jit ' + FLOOR_JIT + ' / bl ' + FLOOR_BL + ' мс. Балл 0..100, выше = лучше — по нему порядок узлов.');
+  head.push('Пинг: connectivitycheck.gstatic.com/generate_204 (та же цель, что у групп Loon). Скорость: speed.cloudflare.com.');
+  head.push('Метка в имени узла = скорость% (НЕ балл). Порядок в подписке = балл. ⚠fails=N — замер скорости падает, дата не обновится.');
   console.log(head.join('\n'));
 
   console.log('\n' + buildHistory().join('\n'));
 
   if (!hasW && !hasC) {
     console.log('\nНет данных спидтеста. Запусти RH-Speed или дождись окна (cron 20 мин).');
-    $notification.post('RouteHub viewer', 'Нет данных спидтеста', 'История запусков \u2014 в логе Loon.');
+    $notification.post('RouteHub viewer', 'Нет данных спидтеста', 'История запусков — в логе Loon.');
     $done(); return;
   }
 
   var parts = [], sum = [];
   if (hasW) {
-    var bw = buildBlock(wifi, 'Wi-Fi \uD83D\uDEDC');
+    var bw = buildBlock(wifi, 'Wi-Fi 🛜');
     parts.push(bw.lines.join('\n'));
-    sum.push('\uD83D\uDEDC ' + bw.tested + ' ок/' + bw.dead + ' мёртв; свежесть ' + fmtAge(bw.newest) + '\u2026' + fmtAge(bw.oldest) + (bw.best ? ('; топ ' + Math.round(bw.best.score * 100) + ' ' + shortName(bw.best.name)) : ''));
+    sum.push('🛜 ' + bw.tested + ' ок/' + bw.dead + ' мёртв; свежесть ' + fmtAge(bw.newest) + '…' + fmtAge(bw.oldest) + (bw.best ? ('; топ ' + Math.round(bw.best.score * 100) + ' ' + shortName(bw.best.name)) : ''));
   }
   if (hasC) {
-    var bc = buildBlock(cell, 'Сотовая \uD83D\uDCF1');
+    var bc = buildBlock(cell, 'Сотовая 📱');
     parts.push(bc.lines.join('\n'));
-    sum.push('\uD83D\uDCF1 ' + bc.tested + ' ок/' + bc.dead + ' мёртв; свежесть ' + fmtAge(bc.newest) + '\u2026' + fmtAge(bc.oldest) + (bc.best ? ('; топ ' + Math.round(bc.best.score * 100) + ' ' + shortName(bc.best.name)) : ''));
+    sum.push('📱 ' + bc.tested + ' ок/' + bc.dead + ' мёртв; свежесть ' + fmtAge(bc.newest) + '…' + fmtAge(bc.oldest) + (bc.best ? ('; топ ' + Math.round(bc.best.score * 100) + ' ' + shortName(bc.best.name)) : ''));
   }
 
   console.log('\n' + parts.join('\n\n'));
-  $notification.post('RouteHub \u2014 метрики узлов', sum.join('   '), 'Таблица узлов + история запусков (разрывы) \u2014 в логе Loon.');
+  $notification.post('RouteHub — метрики узлов', sum.join('   '), 'Таблица узлов + история запусков (разрывы) — в логе Loon.');
   $done();
 }
 
