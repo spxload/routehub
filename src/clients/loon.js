@@ -90,7 +90,10 @@ function renderConfig(conf, ctx) {
   out = out.replace(/^Lastdep = .*$/m, 'Lastdep = ' + subUrl);
   const mylistUrl = base + '/mylist?key=' + key;
   out = out.replace('# __RH_MYLIST_URL__', mylistUrl);
-  out = out.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + ctx.scriptBase + '$1');
+  // v1.9.9: путь скрипта может содержать папку (scripts/, probes/) — regex
+  // ловит и «routehub-x.js», и «scripts/routehub-x.js». Сделано ДО переезда
+  // файлов, чтобы Worker работал с обеими раскладками и окна поломки не было.
+  out = out.replace(/script-path=((?:[\w.-]+\/)*routehub-[^,\s]+)/g, 'script-path=' + ctx.scriptBase + '$1');
 
   const sFlags = [];
   if (dev.cell_unlim) sFlags.push('cellall');
