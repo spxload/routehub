@@ -28,7 +28,7 @@ const TOKEN_REQUIRED_DEFAULT = false;
 
 const SETTINGS_KEY = 'settings';
 
-const WORKER_VER = 'v1.9.6';
+const WORKER_VER = 'v1.9.7';
 
 const TOKEN_LEN = 32;
 
@@ -107,6 +107,15 @@ const FLOOR_RTT = 30, FLOOR_JIT = 10, FLOOR_BL = 20;
 
 const VOICE_JIT = 30, VOICE_BL = 50, VOICE_MED = 160; // пороги голосовой пригодности (☎)
 
+// v1.9.7: ПРЕДЕЛ РАЗУМНОГО для метрик задержки. Значение выше — это не «узел
+// хуже», а сбой замера: проба попала в таймаут или в паузу планировщика iOS.
+// Такие значения приходят как null (компонент нейтрален), иначе один
+// испорченный замер отбрасывал быстрый узел на десятки позиций вниз —
+// см. ЗАМЕРЫ_И_ВЕСА.md, разбор среза от 2026-08-16 (видели jit 23726, bl 8039).
+// Реальный плохой джиттер (сотни миллисекунд) порог не превышает и наказывает
+// узел как раньше.
+const JIT_BAD = 1000, BL_BAD = 2000;
+
 const VOICE = '☎'; // ☎ маркер пригодности для звонков
 
 const CORS = { 'Access-Control-Allow-Origin': '*' };
@@ -124,4 +133,4 @@ const ADMIN_SESSION_TAG = 'rh-admin-v1';
 
 const CASCADE_TIERS = ['EU', 'AM', 'RU', 'REST', 'GAME', 'BYPASS'];
 
-export { ADMIN_COOKIE, ADMIN_SESSION_MS, ADMIN_SESSION_TAG, BLK, BY, CASCADE_TIERS, CELL_HINTS, CORS, DE, DEAD, DOMAIN_RE, FLAGS, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, FRESH_MS, ICON_CELL, ICON_WIFI, KEY_RE, KV_UPSERT, META_HEADERS, METRIC_SEP, NODATA, NODE_PREFIXES, PATH_TOKEN_RE, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, RU, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SETTINGS_KEY, SUP_DIG, SUP_PLUS, TOKEN_ALPHABET, TOKEN_LEN, TOKEN_RE, TOKEN_REQUIRED_DEFAULT, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED, WORKER_VER };
+export { ADMIN_COOKIE, ADMIN_SESSION_MS, ADMIN_SESSION_TAG, BLK, BL_BAD, BY, CASCADE_TIERS, CELL_HINTS, CORS, DE, DEAD, DOMAIN_RE, FLAGS, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, FRESH_MS, ICON_CELL, ICON_WIFI, JIT_BAD, KEY_RE, KV_UPSERT, META_HEADERS, METRIC_SEP, NODATA, NODE_PREFIXES, PATH_TOKEN_RE, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, RU, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SETTINGS_KEY, SUP_DIG, SUP_PLUS, TOKEN_ALPHABET, TOKEN_LEN, TOKEN_RE, TOKEN_REQUIRED_DEFAULT, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED, WORKER_VER };
