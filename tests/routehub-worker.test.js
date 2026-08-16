@@ -1,54 +1,23 @@
-// Тесты routehub-worker.js. Запуск: node --test "tests/*.test.js"
+// Тесты ядра routehub-worker.js. Запуск: node --test "tests/*.test.js"
 // CI нет намеренно — прогон ручной, перед коммитом.
 //
-// Worker импортирует routehub-admin.html (модуль типа Text, его подставляет
-// Wrangler при сборке). Node такой импорт не понимает, поэтому тесты грузят
-// копию исходника с заменённой строкой импорта. Остальной код не трогается.
-//
-// v1.9.5: копия кладётся В КОРЕНЬ репозитория, а не в системный /tmp —
-// иначе не разрешаются относительные импорты модулей src/*.js.
+// Загрузка Worker'а и общие помощники — в tests/harness.js.
+// Рядом лежат clients-loon.test.js и metrics.test.js.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import { pathToFileURL } from 'node:url';
 import { makeEnv, nodeLine } from './mock-d1.js';
-
-const ROOT = path.resolve(import.meta.dirname, '..');
-const SRC = fs.readFileSync(path.join(ROOT, 'routehub-worker.js'), 'utf8');
-const SHIM = SRC.replace(/^import ADMIN_HTML from .+$/m,
-  "const ADMIN_HTML = '<!doctype html><title>test</title>';");
-assert.notEqual(SHIM, SRC, 'строка импорта HTML не найдена — проверить шапку worker.js');
-const TMP = path.join(ROOT, '.rh-worker-under-test.mjs');
-fs.writeFileSync(TMP, SHIM);
-const W = await import(pathToFileURL(TMP).href);
-const T = W.__test;
-const worker = W.default;
-
-const DE = '\u{1F1E9}\u{1F1EA}', NL = '\u{1F1F3}\u{1F1F1}', US = '\u{1F1FA}\u{1F1F8}';
-const KZ = '\u{1F1F0}\u{1F1FF}', RUF = '\u{1F1F7}\u{1F1FA}', TR = '\u{1F1F9}\u{1F1F7}';
-const WIFI = '\u{1F6DC}';
-
-function req(url, opts) {
-  return new Request(url, opts || {});
-}
-function post(url, body, headers) {
-  return new Request(url, {
-    method: 'POST',
-    headers: Object.assign({ 'Content-Type': 'application/json' }, headers || {}),
-    body: JSON.stringify(body),
-  });
-}
+import { T, worker, SRC, DE, NL, US, KZ, RUF, TR, WIFI, req, post } from './harness.js';
 
 // ---------------------------------------------------------------- параметры
 test('FRESH_MS = 60 минут', () => {
   assert.equal(T.FRESH_MS, 60 * 60 * 1000);
 });
 
-test('версия Worker\'а — v1.9.6', () => {
-  assert.equal(T.WORKER_VER, 'v1.9.6');
+// Версию намеренно НЕ хардкодим: иначе каждый релиз требует правки тестов.
+// Проверяем формат и то, что панель отдаёт ту же строку, что лежит в const.js.
+test('версия Worker\'а имеет вид vX.Y.Z', () => {
+  assert.match(T.WORKER_VER, /^v\d+\.\d+\.\d+$/);
 });
 
 // ------------------------------------------------------------------- tagOf
@@ -76,16 +45,6 @@ test('tagOf: обходной узел — bypass, даже если в имен
 test('tagOf: посторонние имена — other', () => {
   assert.equal(T.tagOf(DE + ' Германия #1'), 'other');
   assert.equal(T.tagOf(''), 'other');
-});
-
-test('subParamsFromConf сохраняет хвост параметров подписки', () => {
-  const conf = 'Lastdep = https://x.invalid/nodes?key=k1,block-quic=false,udp=true,enabled=true\n';
-  assert.equal(T.subParamsFromConf(conf), ',block-quic=false,udp=true,enabled=true');
-});
-
-test('subParamsFromConf: строки нет либо параметров нет — запасной дефолт', () => {
-  assert.equal(T.subParamsFromConf('# пусто'), ',udp=true,enabled=true');
-  assert.equal(T.subParamsFromConf('Lastdep = https://x.invalid/n'), ',udp=true,enabled=true');
 });
 
 test('matchKey срезает метрику и нормализует пробелы', () => {
@@ -376,7 +335,7 @@ test('/admin/state отдаёт подписку, каскад, устройст
   });
   const r = await worker.fetch(req('https://w.invalid/admin/state', { headers: ADM }), env);
   const j = await r.json();
-  assert.equal(j.worker, 'v1.9.6');
+  assert.equal(j.worker, T.WORKER_VER, 'панель и const.js разошлись в версии');
   assert.equal(j.dev, 'k1');
   assert.equal(j.sub.nodes, 2);
   assert.equal(j.sub.fresh_min, 60);
@@ -593,46 +552,4 @@ test('неизвестный путь -> 404', async () => {
   const env = makeEnv({});
   const r = await worker.fetch(req('https://w.invalid/no-such-path'), env);
   assert.equal(r.status, 404);
-});
-
-// ── Клиентский слой Loon (ADR-01, 16.08) ────────────────────────────────────
-// Проверяем сам факт подстановки: ядро отдаёт посчитанное, clients/loon.js
-// превращает это в текст конфига. Если плейсхолдер уцелел или аргумент
-// скрипта не подставился — устройство получит нерабочий конфиг молча.
-
-test('renderConfig подставляет плейсхолдеры и аргументы скриптов', () => {
-  const conf = [
-    'Lastdep = https://old.invalid/n,udp=true',
-    '# __RH_AI_FILTERS__',
-    '# __RH_AI_GROUPS__',
-    '# __RH_MYLIST_URL__',
-    'generic script-path=routehub-speedtest.js, tag=RH-Speed, timeout=60',
-    'generic script-path=routehub-netwatch.js, tag=RH-Net, timeout=60',
-  ].join('\n');
-  const out = T.renderConfig(conf, {
-    key: 'k1',
-    base: 'https://w.invalid/t/TOK',
-    dev: { cell_unlim: true, ewma: true, auto_refresh: true },
-    blocks: { filters: 'FILTERS', groups: 'GROUPS' },
-    subParams: ',udp=true,enabled=true',
-    scriptBase: 'https://raw.invalid/repo/',
-  });
-  assert.ok(out.indexOf('__RH_') < 0, 'плейсхолдеры остались в конфиге');
-  assert.ok(out.indexOf('Lastdep = https://w.invalid/t/TOK/nodes?key=k1,udp=true,enabled=true') >= 0);
-  assert.ok(out.indexOf('script-path=https://raw.invalid/repo/routehub-speedtest.js') >= 0);
-  assert.ok(out.indexOf('argument=k1|https://w.invalid/t/TOK|cellall,ewma') >= 0, 'флаги устройства не доехали');
-  assert.ok(out.indexOf('argument=k1|https://w.invalid/t/TOK|autorefresh') >= 0);
-});
-
-test('renderConfig без флагов устройства оставляет аргумент пустым, а не undefined', () => {
-  const out = T.renderConfig('generic script-path=routehub-speedtest.js, tag=RH-Speed', {
-    key: 'k2',
-    base: 'https://w.invalid/t/T2',
-    dev: {},
-    blocks: { filters: '', groups: '' },
-    subParams: ',udp=true,enabled=true',
-    scriptBase: 'https://raw.invalid/repo/',
-  });
-  assert.ok(out.indexOf('argument=k2|https://w.invalid/t/T2|,') >= 0 || out.endsWith('argument=k2|https://w.invalid/t/T2|'));
-  assert.ok(out.indexOf('undefined') < 0);
 });
