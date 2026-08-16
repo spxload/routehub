@@ -1,6 +1,6 @@
 // =============================================================
 // RouteHub — Cloudflare Worker, точка входа.
-// Версия v1.9.6 (2026-08-16). ИСТОРИЯ ВЕРСИЙ — CHANGELOG.md в корне.
+// Версия v1.9.8 (2026-08-16). ИСТОРИЯ ВЕРСИЙ — CHANGELOG.md в корне.
 //
 // ЗАЧЕМ РАЗДЕЛЁН НА МОДУЛИ. Файл вырос до 76 КБ и перестал передаваться
 // инструментами целиком: git push из облачной сессии блокирует прокси.
@@ -65,6 +65,9 @@ export default {
       }
       if (req.method === 'GET' && (url.pathname === '/icon.svg' || url.pathname === '/icon.png' || url.pathname === '/apple-touch-icon.png')) return UTIL.iconResp();
       if (req.method === 'GET' && url.pathname === '/whoami') return API.handleWhoami(req);
+      // v1.9.8: /version — проверка деплоя одной командой, без панели и ключа.
+      // Версия не секрет, а раньше её можно было увидеть только в /admin.
+      if (req.method === 'GET' && url.pathname === '/version') return UTIL.jsonResp({ worker: CONST.WORKER_VER });
       if (req.method === 'GET' && url.pathname === '/config') return await API.handleConfig(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/nodes') return await API.handleNodes(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/refresh') return await API.handleRefresh(url, env, tok);
