@@ -1,0 +1,151 @@
+# Одноразовая раскладка репозитория по папкам: документы И код.
+# Запуск: вкладка Actions -> «Структура репозитория» -> «Run workflow».
+#
+# ПОРЯДОК БЕЗОПАСНОСТИ. Worker v1.9.9 уже умеет подставлять базу и для
+# «routehub-x.js», и для «scripts/routehub-x.js» — поэтому между переездом
+# файлов и обновлением конфига на устройстве окна поломки нет.
+#
+# Что делает:
+#   docs/            актуальные документы
+#   docs/archive/    история этапов
+#   scripts/         скрипты устройства (speedtest, netwatch, viewer, dash,
+#                    dashcache, faillog, rkn)
+#   probes/          пробы L10 и Stash + yaml
+#   plugins/         .plugin и .stoverride
+#   web/             admin.html и dash.html
+#   в корне          routehub.conf, routehub-worker.js, wrangler.toml,
+#                    README, CHANGELOG, СТАРТ, src/, tests/
+#
+# И правит ссылки: script-path в routehub.conf, URL плагинов в конфиге,
+# импорт HTML в routehub-worker.js, ссылки внутри самих плагинов.
+#
+# Перед коммитом: каждая ссылка проверяется на существование файла, тесты,
+# сборка обоих окружений wrangler. Не сошлось — падает БЕЗ push.
+
+name: Структура репозитория
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Только показать результат, без коммита'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  restructure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Переместить файлы
+        run: |
+          set -e
+          git config core.quotepath false
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p docs docs/archive scripts probes plugins web
+
+          echo "→ документы"
+          for f in ADR-01_СХЕМА_КОНТУРОВ.md ТЕХДОЛГ.md ЗАМЕРЫ_И_ВЕСА.md \
+                   СВЕРКА_LOON_3.5.md ДОКУМЕНТАЦИЯ_LOON_RU.md ЭТАП_K_STASH.md \
+                   ЭТАП_K_STASH_СТЕНД.md ЭТАП_F_ЗАМЕТКИ.md ЭТАП_D_ФОРМУЛА.md \
+                   СРАВНЕНИЕ_КЛИЕНТОВ_И_WHITELIST.md КАТАЛОГ_СПИСКОВ.md; do
+            [ -f "$f" ] && git mv "$f" docs/ && echo "   docs/$f"
+          done
+          # имена с Ё и Й записаны в NFD — точное совпадение их не находит
+          for f in СВЕРКА_С_ДОКУМЕНТАЦИ*.md; do
+            [ -f "$f" ] && git mv "$f" docs/ && echo "   docs/$f"
+          done
+          for f in *.md; do
+            case "$f" in README.md|CHANGELOG.md|СТАРТ.md) continue ;; esac
+            [ -f "$f" ] && git mv "$f" docs/archive/ && echo "   docs/archive/$f"
+          done
+
+          echo "→ скрипты устройства"
+          for f in routehub-speedtest.js routehub-netwatch.js routehub-viewer.js \
+                   routehub-dash.js routehub-dashcache.js routehub-faillog.js \
+                   routehub-rkn.js; do
+            [ -f "$f" ] && git mv "$f" scripts/ && echo "   scripts/$f"
+          done
+
+          echo "→ пробы"
+          for f in routehub-probe-context.js routehub-probe-stash.js routehub-stash-probe.yaml; do
+            [ -f "$f" ] && git mv "$f" probes/ && echo "   probes/$f"
+          done
+
+          echo "→ веб"
+          for f in routehub-admin.html routehub-dash.html; do
+            [ -f "$f" ] && git mv "$f" web/ && echo "   web/$f"
+          done
+
+          echo "→ ссылки в конфиге и коде"
+          sed -i -E 's#script-path=routehub-probe-context\.js#script-path=probes/routehub-probe-context.js#g' routehub.conf
+          sed -i -E 's#script-path=routehub-(speedtest|netwatch|viewer|dash|dashcache|faillog|rkn)#script-path=scripts/routehub-\1#g' routehub.conf
+          sed -i -E 's#(routehub/main/)(RouteHub-[A-Za-z]+\.plugin)#\1plugins/\2#g' routehub.conf
+          sed -i "s#from './routehub-admin.html'#from './web/routehub-admin.html'#" routehub-worker.js
+
+          echo "→ плагины (двигаем после правки конфига, чтобы sed видел исходные пути)"
+          for f in RouteHub-Dash.plugin RouteHub-FailLog.plugin RouteHub-Probe.stoverride; do
+            [ -f "$f" ] && git mv "$f" plugins/ && echo "   plugins/$f"
+          done
+          sed -i -E 's#(routehub/main/)routehub-faillog\.js#\1scripts/routehub-faillog.js#g' plugins/RouteHub-FailLog.plugin
+          sed -i -E 's#(routehub/main/)routehub-probe-stash\.js#\1probes/routehub-probe-stash.js#g' plugins/RouteHub-Probe.stoverride
+          sed -i -E 's#(routehub/main/)(RouteHub-Probe\.stoverride)#\1plugins/\2#g' plugins/RouteHub-Probe.stoverride
+
+          echo
+          echo "→ в корне осталось:"
+          ls -1
+
+      - name: Проверить, что все ссылки ведут на существующие файлы
+        run: |
+          set -e
+          ok=1
+          echo "— script-path в routehub.conf"
+          for f in $(grep -o "script-path=[^,]*" routehub.conf | sed 's/script-path=//'); do
+            if [ -f "$f" ]; then echo "  OK  $f"; else echo "  ПОТЕРЯН  $f"; ok=0; fi
+          done
+          echo "— ссылки на файлы репозитория в конфиге и плагинах"
+          for u in $(grep -rho "routehub/main/[A-Za-z0-9_./-]*" routehub.conf plugins/ | sed 's|routehub/main/||' | sort -u); do
+            if [ -f "$u" ]; then echo "  OK  $u"; else echo "  ПОТЕРЯН  $u"; ok=0; fi
+          done
+          echo "— импорт HTML в точке входа"
+          grep -n "routehub-admin.html" routehub-worker.js
+          [ -f web/routehub-admin.html ] || { echo "  ПОТЕРЯН web/routehub-admin.html"; ok=0; }
+          [ "$ok" = "1" ] || { echo "::error::Ссылки сломаны — push отменён"; exit 1; }
+
+      - name: Тесты Worker'а
+        run: node --test "tests/*.test.js"
+
+      - name: Сборка обоих окружений
+        run: |
+          set -e
+          npm i wrangler --no-audit --no-fund --silent
+          npx wrangler deploy --env="" --dry-run
+          npx wrangler deploy --env stash --dry-run
+
+      - name: Коммит и push
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          set -e
+          rm -rf node_modules package.json package-lock.json
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Нечего коммитить — вероятно, раскладка уже сделана."
+            exit 0
+          fi
+          git commit -m "Структура: docs/, scripts/, probes/, plugins/, web/ + правка ссылок"
+          git push
+
+      - name: Итог сухого прогона
+        if: ${{ inputs.dry_run == true }}
+        run: |
+          echo "Сухой прогон: ничего не закоммичено, все проверки прошли."
+          echo "Запусти ещё раз, сняв галочку dry_run."
