@@ -1,13 +1,15 @@
 // routehub — модуль api.js
 // Боевые эндпоинты устройства: /config, /nodes, /speed, /rkn, /status.
 // Разделён из routehub-worker.js 2026-08-15 (v1.9.5). Логика не менялась.
-// История версий — CHANGELOG.md в корне репозитория.
+// Синтаксис конфига с 2026-08-16 (v1.9.6) — в clients/loon.js, здесь только
+// сбор контекста. История версий — CHANGELOG.md в корне репозитория.
 
-import { aiBlocks, buildAiTiers } from './ai.js';
+import { buildAiTiers } from './ai.js';
+import { aiBlocks, renderConfig, subParamsFromConf } from './clients/loon.js';
 import { KEY_RE } from './const.js';
 import { ensureFlags, ensureFreeSpare, kvGetJSON, kvPutJSON, kvPutManyJSON, loadRegistry, tokenGate } from './store.js';
 import { fetchUpstream, getSub, renderNodesBoth } from './sub.js';
-import { classifyNet, confVersion, decodeName, fragOf, jsonResp, matchKey, metricOf, subParamsFromConf, utf8ToB64 } from './util.js';
+import { classifyNet, confVersion, decodeName, fragOf, jsonResp, matchKey, metricOf, utf8ToB64 } from './util.js';
 
 function handleWhoami(req) {
   const cf = req.cf || {};
@@ -45,25 +47,15 @@ async function handleConfig(url, env, tok) {
   const sub = await getSub(env, false);
   const masterLines = sub.text.split('\n').filter(Boolean);
   const state = (await kvGetJSON(env, 'metrics:' + key)) || {};
-  const blocks = aiBlocks(buildAiTiers(masterLines, state));
-  conf = conf.replace('# __RH_AI_FILTERS__', blocks.filters);
-  conf = conf.replace('# __RH_AI_GROUPS__', blocks.groups);
-
-  const subUrl = base + '/nodes?key=' + key + subParams;
-  conf = conf.replace(/^Lastdep = .*$/m, 'Lastdep = ' + subUrl);
-  const mylistUrl = base + '/mylist?key=' + key;
-  conf = conf.replace('# __RH_MYLIST_URL__', mylistUrl);
-  const scriptBase = env.CONFIG_URL.replace(/[^/]+$/, '');
-  conf = conf.replace(/script-path=(routehub-[^,\s]+)/g, 'script-path=' + scriptBase + '$1');
-  const sFlags = [];
-  if (reg[key].cell_unlim) sFlags.push('cellall');
-  if (reg[key].ewma) sFlags.push('ewma');
-  conf = conf.replace('tag=RH-Speed', 'tag=RH-Speed, argument=' + key + '|' + base + '|' + sFlags.join(','));
-  const nOpts = reg[key].auto_refresh ? 'autorefresh' : '';
-  conf = conf.replace('tag=RH-Net', 'tag=RH-Net, argument=' + key + '|' + base + '|' + nOpts);
-  conf = conf.replace('tag=RH-DashCache,', 'tag=RH-DashCache, argument=' + key + '|' + base + ',');
-  conf = conf.replace('tag=RH-Dash,', 'tag=RH-Dash, argument=' + key + '|' + base + ',');
-  conf = conf.replace('tag=RH-RKN,', 'tag=RH-RKN, argument=' + key + '|' + base + ',');
+  // Ядро посчитало тиеры; синтаксис конфига — забота клиентского слоя.
+  conf = renderConfig(conf, {
+    key: key,
+    base: base,
+    dev: reg[key],
+    blocks: aiBlocks(buildAiTiers(masterLines, state)),
+    subParams: subParams,
+    scriptBase: env.CONFIG_URL.replace(/[^/]+$/, ''),
+  });
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
