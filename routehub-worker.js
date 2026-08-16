@@ -1,21 +1,27 @@
 // =============================================================
 // RouteHub — Cloudflare Worker, точка входа.
-// Версия v1.9.5 (2026-08-15). ИСТОРИЯ ВЕРСИЙ — CHANGELOG.md в корне.
+// Версия v1.9.6 (2026-08-16). ИСТОРИЯ ВЕРСИЙ — CHANGELOG.md в корне.
 //
 // ЗАЧЕМ РАЗДЕЛЁН НА МОДУЛИ. Файл вырос до 76 КБ и перестал передаваться
 // инструментами целиком: git push из облачной сессии блокирует прокси.
 // Каждый модуль ниже меньше 15 КБ, то есть правится по отдельности. При
 // разделении логика НЕ менялась — только раскладка по файлам.
 //
+// ДВА УРОВНЯ (ADR-01, v1.9.6). Ядро src/*.js считает и хранит; клиентский
+// слой src/clients/*.js рендерит результат под конкретный клиент. Один и тот
+// же код разворачивается несколькими Worker-сервисами через [env.*] в
+// wrangler.toml: боевой Loon и стенд Stash делят ядро, но не рантайм и не базу.
+//
 // КАРТА МОДУЛЕЙ (граф импортов ацикличен, сверху вниз — по зависимостям):
 //   src/const.js — константы: разметка имён, регионы, токены, иконка
 //   src/util.js  — чистые функции: разбор имён, баллы, ответы      (const)
 //   src/store.js — D1 (таблица kv), реестр устройств, токены       (const, util)
 //   src/sub.js   — подписка Lastdep: загрузка, кэш, два набора     (const, store, util)
-//   src/ai.js    — AI-тиеры и региональные остатки                 (const, util)
+//   src/ai.js    — AI-тиеры: РАСЧЁТ страновых каскадов             (const, util)
 //   src/api.js   — /config, /nodes, /speed, /rkn, /status          (все выше)
 //   src/dash.js  — дашборд rh.box и личный список доменов          (const, store, util)
 //   src/admin.js — админ-панель                                    (const, store, sub, util)
+//   src/clients/loon.js — синтаксис конфига Loon: AI-блоки, подстановки
 //
 // МОДЕЛЬ ОДНОЙ ПОДПИСКИ: /nodes отдаёт оба набора (🛜/📱); каждая функция —
 // select-родитель из двух fallback-детей (-W/-C); netwatch флипает родителя по
@@ -33,6 +39,7 @@ import * as AI from './src/ai.js';
 import * as API from './src/api.js';
 import * as DASH from './src/dash.js';
 import * as ADMIN from './src/admin.js';
+import * as LOON from './src/clients/loon.js';
 
 export default {
   async fetch(req, env) {
@@ -90,4 +97,4 @@ export default {
 // Экспорт для тестов (tests/routehub-worker.test.js): всё объявленное в
 // модулях, одним объектом. На работу Worker'а не влияет — рантайм обращается
 // только к default-экспорту.
-export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN };
+export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...LOON };
