@@ -5,7 +5,7 @@
 // уехал в clients/loon.js (v1.9.6, ADR-01).
 // История версий — CHANGELOG.md в корне репозитория.
 
-import { BLK, CELL_HINTS, DEAD, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, METRIC_SEP, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SUP_DIG, SUP_PLUS, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED } from './const.js';
+import { BLK, BL_BAD, CELL_HINTS, DEAD, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, JIT_BAD, METRIC_SEP, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SUP_DIG, SUP_PLUS, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED } from './const.js';
 
 function proxOf(fl) { return (fl in PROX) ? PROX[fl] : 99; }
 
@@ -151,13 +151,22 @@ function classifyNet(asOrg) {
   return 'wifi';
 }
 
+// v1.9.7: значения задержки выше предела разумного (JIT_BAD / BL_BAD) —
+// это сбой замера, а не свойство узла, поэтому они приходят как null:
+// в scoreOf такой компонент считается нейтральным, а не худшим из возможных.
+// Раньше одиночный выброс ронял быстрый узел на 10-23 позиции (ЗАМЕРЫ_И_ВЕСА.md).
+// Для звонков (voiceOk) null остаётся отказом — обещать голос по сбойному
+// замеру нельзя.
+
 function metricOf(s) {
   if (s.dead) return { dead: true };
+  const jit = Math.max(0, Math.round(+s.jit || 0));
+  const bl = (s.bl == null ? null : Math.max(0, Math.round(+s.bl)));
   const o = {
     down: Math.max(0, Math.round(+s.down || 0)),
     rtt: Math.max(0, Math.round(+s.rtt || 0)),
-    jit: Math.max(0, Math.round(+s.jit || 0)),
-    bl: (s.bl == null ? null : Math.max(0, Math.round(+s.bl))),
+    jit: (jit > JIT_BAD ? null : jit),
+    bl: ((bl == null || bl > BL_BAD) ? null : bl),
   };
   if (s.med != null) o.med = Math.max(0, Math.round(+s.med));
   return o;
