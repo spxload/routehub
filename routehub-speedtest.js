@@ -1,9 +1,16 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.6.1 (2026-06-11)';
+var VERSION = 'speedtest v0.6.2 (2026-08-16)';
 //
 // Тип: cron (весь день, каждые 20 мин). Аргумент: "<key>|<origin>|<opts>".
 //
+// v0.6.2 — УСТОЙЧИВЫЙ ДЖИТТЕР: 5 проб вместо 3, jit = УСЕЧЁННЫЙ размах
+//   (отбрасываются минимум и максимум). ПРИЧИНА: разбор среза метрик 16.08
+//   (ЗАМЕРЫ_И_ВЕСА.md) показал, что jit и bl дают ~45% различий между узлами,
+//   а считались размахом max-min по трём пробам: одна проба, попавшая в
+//   таймаут или в паузу планировщика iOS, определяла метрику целиком.
+//   Видели jit 23726 мс и bl 8039 мс; из-за такого выброса быстрый узел
+//   съезжал на 10-23 позиции вниз. При acc < 5 поведение прежнее (max-min).
 // v0.6.1 — ЧИСТКА УШЕДШИХ УЗЛОВ: записи кэша, которых нет в текущем пуле
 //   (провайдер ротирует/переименовывает узлы), удаляются при каждом прогоне —
 //   иначе висят вечно со старой датой. Вернётся узел — перемеряется заново.
@@ -30,7 +37,7 @@ var EWMA_A = 0.6;
 var DOWN_BYTES = 4000000;
 var DOWN_BIG = 12000000;
 var FAST_SEC = 1.5;
-var RTT_SAMPLES = 3;
+var RTT_SAMPLES = 5;   // v0.6.2: было 3 — размах по трём пробам ловил выброс, а не джиттер
 var BL_SAMPLES = 3;
 var RTT_TIMEOUT = 10000;
 var DOWN_TIMEOUT = 25000;
@@ -38,11 +45,11 @@ var LOCK_MS = 10 * 60 * 1000;
 var SWEEP_TIMEOUT = 4000;
 var SWEEP_CELL_TOP = 15;
 var SWEEP_BUDGET_MS = 150 * 1000;
-var POOL_W = 'RH-\u0410\u0412\u0422\u041E-W';
-var POOL_C = 'RH-\u0410\u0412\u0422\u041E-C';
+var POOL_W = 'RH-АВТО-W';
+var POOL_C = 'RH-АВТО-C';
 var DOWN_HOST = 'https://speed.cloudflare.com/__down';
 var PING_URL = 'http://cp.cloudflare.com/generate_204';
-var METRIC_SEP = ' \u00B7 ';
+var METRIC_SEP = ' · ';
 var GAP_MS = 25 * 60 * 1000;
 var RUNLOG_MAX = 50;
 
@@ -99,6 +106,15 @@ function buildArr(cacheKey) {
     }
   }
   return out;
+}
+
+// v0.6.2: усечённый размах. На 5+ пробах отбрасываем крайние значения —
+// одиночный выброс (таймаут, пауза планировщика) перестаёт быть метрикой.
+// На меньшем числе проб отбрасывать нечего, поведение прежнее.
+function jitterOf(arr) {
+  var a = arr.slice().sort(function (x, y) { return x - y; });
+  if (a.length >= 5) return Math.round(a[a.length - 2] - a[1]);
+  return Math.round(a[a.length - 1] - a[0]);
 }
 
 function median(arr) {
@@ -203,9 +219,9 @@ function main() {
   function measureNode(name, cb) {
     rttSamples(name, RTT_SAMPLES, [], RTT_TIMEOUT, function (acc) {
       if (!acc.length) { console.log('  x RTT [' + name + ']: нет ответа'); cb(null); return; }
-      var mn = acc[0], mx = acc[0];
-      for (var i = 1; i < acc.length; i++) { if (acc[i] < mn) mn = acc[i]; if (acc[i] > mx) mx = acc[i]; }
-      var jit = Math.round(mx - mn);
+      var mn = acc[0];
+      for (var i = 1; i < acc.length; i++) { if (acc[i] < mn) mn = acc[i]; }
+      var jit = jitterOf(acc);
       var med = median(acc);
       rateOf(name, DOWN_BYTES, true, function (mbps1, sec1, loaded) {
         if (mbps1 === null || mbps1 <= 0) { console.log('  ~ DOWN [' + name + ']: fail (rtt ' + mn + ')'); cb(null); return; }
@@ -253,7 +269,7 @@ function main() {
     for (var i = 0; i < arr.length; i++) {
       var nm = nameOf(arr[i]);
       if (!looksLikeNode(nm)) continue;
-      if (nm.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) continue;
+      if (nm.indexOf('[Обход') >= 0) continue;
       var e = results[baseName(nm)];
       if (e && (e.fails || 0) >= MAX_FAILS) continue; // мёртвые — на бэкоффе DEAD_MS
       list.push(nm);
@@ -281,11 +297,11 @@ function main() {
       rttSamples(name, RTT_SAMPLES, [], SWEEP_TIMEOUT, function (acc) {
         var prev = results[base] || {};
         if (acc.length) {
-          var mn = acc[0], mx = acc[0];
-          for (var i2 = 1; i2 < acc.length; i2++) { if (acc[i2] < mn) mn = acc[i2]; if (acc[i2] > mx) mx = acc[i2]; }
+          var mn = acc[0];
+          for (var i2 = 1; i2 < acc.length; i2++) { if (acc[i2] < mn) mn = acc[i2]; }
           prev.rtt = mn;
           prev.med = median(acc);
-          prev.jit = Math.round(mx - mn);
+          prev.jit = jitterOf(acc);
           prev.tsp = Date.now();
           prev.fails = 0; // ответил — жив
           results[base] = prev;
@@ -331,7 +347,7 @@ function main() {
     for (var i = 0; i < arr.length; i++) {
       var nm = nameOf(arr[i]);
       if (!looksLikeNode(nm)) continue;
-      if (nm.indexOf('[\u041E\u0431\u0445\u043E\u0434') >= 0) continue; // [Обход
+      if (nm.indexOf('[Обход') >= 0) continue; // [Обход
       if (isDue(results[baseName(nm)], catchup)) due.push(nm);
       if (due.length >= BATCH) break;
     }
