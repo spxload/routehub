@@ -53,3 +53,24 @@ test('subParamsFromConf: строки нет либо параметров не�
   assert.equal(T.subParamsFromConf('# пусто'), ',udp=true,enabled=true');
   assert.equal(T.subParamsFromConf('Lastdep = https://x.invalid/n'), ',udp=true,enabled=true');
 });
+
+// v1.9.9: файлы скриптов переезжают в папки (scripts/, probes/). Подстановка
+// обязана работать для обеих раскладок — иначе между переездом файлов и
+// обновлением конфига на устройстве ссылки укажут в никуда.
+test('renderConfig подставляет базу и для путей с папкой, и без неё', () => {
+  const conf = [
+    'generic script-path=routehub-viewer.js, tag=RH-View',
+    'generic script-path=scripts/routehub-speedtest.js, tag=RH-Speed',
+    'generic script-path=probes/routehub-probe-context.js, tag=RH-L10',
+  ].join('\n');
+  const out = T.renderConfig(conf, {
+    key: 'k1', base: 'https://w.invalid/t/TOK', dev: {},
+    blocks: { filters: '', groups: '' }, subParams: ',udp=true',
+    scriptBase: 'https://raw.invalid/repo/',
+  });
+  assert.ok(out.indexOf('script-path=https://raw.invalid/repo/routehub-viewer.js') >= 0);
+  assert.ok(out.indexOf('script-path=https://raw.invalid/repo/scripts/routehub-speedtest.js') >= 0,
+    'путь с папкой scripts/ должен получить базу');
+  assert.ok(out.indexOf('script-path=https://raw.invalid/repo/probes/routehub-probe-context.js') >= 0);
+  assert.ok(out.indexOf('script-path=scripts/') < 0, 'остался неподставленный относительный путь');
+});
