@@ -4,8 +4,8 @@
 обходит блокировки, экономит платный трафик обходных узлов. Подписка одна,
 узлы раздаёт Cloudflare Worker, выбор внутри группы делает сам Loon.
 
-**Состояние на 2026-08-17:** Worker `v1.10.0`, конфиг `C-draft-41`,
-спидтест `v0.6.4`. Проверить живой Worker: `curl https://<worker>/version`.
+**Состояние на 2026-08-17:** Worker `v1.10.1`, конфиг `C-draft-41`,
+спидтест `v0.6.4`, панель устройства `dash v0.7.0`, админ-панель `p3`. Проверить живой Worker: `curl https://<worker>/version`.
 
 ## Карта репозитория
 
@@ -78,7 +78,7 @@ routehub.conf на устройстве  →  Loon выбирает узел в�
 
 ```bash
 git clone --depth 1 https://github.com/spxload/routehub.git
-node --test "tests/*.test.js"          # 84 теста, CI нет намеренно
+node --test "tests/*.test.js"          # 86 тестов, CI нет намеренно
 npx wrangler deploy --env="" --dry-run # боевое окружение
 npx wrangler deploy --env stash --dry-run
 ```
