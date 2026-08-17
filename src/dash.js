@@ -41,6 +41,8 @@ async function handleRule(req, env, add, tok) {
   return jsonResp({ ok: true, key: key, domains: list });
 }
 
+function ageMin(t) { return t ? Math.round((Date.now() - t) / 60000) : null; }
+
 function nodesForDash(masterLines, state) {
   function pack(slot) {
     const arr = []; let mx = 0;
@@ -62,6 +64,13 @@ function nodesForDash(masterLines, state) {
         med: (it.m.med != null ? it.m.med : it.m.rtt) || 0,
         jit: (it.m.jit == null ? null : it.m.jit),   // v1.9.8: null = сбойный замер, не идеальный джиттер
         bl: (it.m.bl == null ? null : it.m.bl),
+        // v1.10.0: два возраста, потому что замера два. age_min — полный
+        // замер скорости (down, bl): именно он весит 0.40 в балле.
+        // ping_age_min — последний пинг (rtt, jit), он обновляется чаще.
+        // null — отметки нет: запись старше v1.10.0 либо слот переотправлен
+        // из кэша устройства и когда мерили, неизвестно.
+        age_min: ageMin(it.m.ts),
+        ping_age_min: ageMin(it.m.tsp != null ? it.m.tsp : it.m.ts),
         pct: mx > 0 ? Math.round((it.m.down || 0) / mx * 100) : 0,
         score: +(scoreOf(it.m, mx) * 100).toFixed(0),
         voice: voiceOk(it.m),

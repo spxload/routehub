@@ -1,9 +1,11 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.6.3 (2026-08-16)';
+var VERSION = 'speedtest v0.6.4 (2026-08-17)';
 //
 // Тип: cron (весь день, каждые 20 мин). Аргумент: "<key>|<origin>|<opts>".
 //
+// v0.6.4 — ВРЕМЯ ЗАМЕРА НАРУЖУ: buildArr отдаёт ts и tsp из кэша,
+//          сервер перестаёт гадать о свежести слота (парно с Worker v1.10.0).
 // v0.6.3 — ЕДИНЫЙ ТЕСТ-АДРЕС С ГРУППАМИ: пинг-пробы идут на
 //   connectivitycheck.gstatic.com вместо cp.cloudflare.com. ПРИЧИНА: адрес
 //   Cloudflare отвергает часть ПЛАВАЮЩИХ выходных адресов узлов кодом 400 —
@@ -105,11 +107,23 @@ function buildArr(cacheKey) {
   for (var nm in c) {
     if (!c.hasOwnProperty(nm) || !looksLikeNode(nm)) continue;
     var e = c[nm];
-    if ((e.fails || 0) >= MAX_FAILS) { out.push({ name: nm, dead: true }); continue; }
+    // v0.6.4: отдаём ВРЕМЯ ЗАМЕРА. Кэш хранил ts (полный замер) и tsp
+    // (последний пинг) с самого начала, но наружу они не уходили — сервер
+    // видел только факт получения. А приходят оба кэша при каждом свипе,
+    // независимо от сети, поэтому слот, который телефон не мерил ни разу,
+    // выглядел вечно свежим. Две строки снимают догадку целиком.
+    if ((e.fails || 0) >= MAX_FAILS) {
+      var d = { name: nm, dead: true };
+      if (e.ts) d.ts = e.ts;
+      if (e.tsp) d.tsp = e.tsp;
+      out.push(d); continue;
+    }
     if (e.down > 0) {
       var it = { name: nm, down: e.down, rtt: e.rtt, jit: e.jit || 0 };
       if (e.med != null) it.med = e.med;
       if (e.bl != null) it.bl = e.bl;
+      if (e.ts) it.ts = e.ts;
+      if (e.tsp) it.tsp = e.tsp;
       out.push(it);
     }
   }
