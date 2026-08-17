@@ -175,6 +175,39 @@ function cascadeOf(masterLines, state) {
 // ?dev=kN — устройство, по которому считаются каскад, метрики и личный список;
 // по умолчанию первое привязанное.
 
+// v1.10.1: сводка по возрасту замеров, по слоту.
+// Без неё замороженный слот виден только в сыром JSON дашборда и только
+// при разглядывании всего списка узлов. Здесь достаточно одной строки:
+// «сотовая — 0 из 50 с отметкой» читается как «этот слот не мерялся».
+// `no_ts` — узлы, у которых отметки нет: либо запись старше v1.10.0, либо
+// слот приезжает переотправкой кэша устройства и замера не было ни разу.
+function metricsAge(state) {
+  const now = Date.now();
+  function forSlot(slot) {
+    let total = 0, withTs = 0, oldest = null, newest = null;
+    let dead = 0;
+    for (const k in state) {
+      const m = state[k] && state[k][slot];
+      if (!m) continue;
+      // Мёртвые узлы считаем отдельно: дашборд и каскад их отбрасывают
+      // (`nodesForDash`, `cascadeOf`), и если сложить их в `total`, два
+      // числа на одном экране перестанут быть сравнимыми.
+      if (m.dead) { dead++; continue; }
+      total++;
+      if (!m.ts) continue;
+      withTs++;
+      // clampTs пропускает отметку на пять минут вперёд (часы устройства),
+      // поэтому возраст может выйти отрицательным — наружу это не отдаём.
+      const age = Math.max(0, Math.round((now - m.ts) / 60000));
+      if (oldest == null || age > oldest) oldest = age;
+      if (newest == null || age < newest) newest = age;
+    }
+    return { total: total, with_ts: withTs, no_ts: total - withTs, dead: dead,
+      oldest_min: oldest, newest_min: newest };
+  }
+  return { w: forSlot('w'), c: forSlot('c') };
+}
+
 async function handleAdminState(req, url, env) {
   const denied = await adminGate(req, url, env); if (denied) return denied;
   const reg = await loadRegistry(env);
@@ -218,6 +251,7 @@ async function handleAdminState(req, url, env) {
     },
     cascade: cascadeOf(masterLines, state),
     metrics_n: Object.keys(state).length,
+    metrics_age: metricsAge(state),
     mylist: mylist, rkn: rkn,
     devices: devices, storage: storage,
     server_now: new Date().toISOString(),
