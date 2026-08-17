@@ -11,7 +11,7 @@
 
 | Где | Что лежит |
 |---|---|
-| корень | `routehub-worker.js` (роутинг), `routehub.conf` (боевой конфиг), `wrangler.toml`, `README`, `CHANGELOG`, `СТАРТ` |
+| корень | `routehub-worker.js` (роутинг), `routehub.conf` (боевой конфиг), `wrangler.toml`, `README`, `CHANGELOG` + `CHANGELOG_ARCHIVE` |
 | `src/` | ядро Worker'а: `const util store sub ai api dash admin` |
 | `src/clients/` | клиентский слой, пока один — `loon.js` (рендер конфига) |
 | `tests/` | `harness.js` + четыре набора тестов, запуск `node --test "tests/*.test.js"` |
@@ -26,7 +26,7 @@
 
 | Файл | Зачем |
 |---|---|
-| `CHANGELOG.md` | что менялось в Worker'е и конфиге, с причинами |
+| `CHANGELOG.md` | что менялось в Worker'е и конфиге, с причинами (старое — в `CHANGELOG_ARCHIVE.md`) |
 | `docs/ADR-01_СХЕМА_КОНТУРОВ.md` | почему один код, но несколько Worker-сервисов |
 | `docs/ТЕХДОЛГ.md` | что накопилось и в каком порядке разбирать |
 | `docs/ЗАМЕРЫ_И_ВЕСА.md` | почему веса балла не рычаг, а замеры — да |
@@ -67,7 +67,7 @@ routehub.conf на устройстве  →  Loon выбирает узел в�
 | `docs/archive/ЭТАП_K_EGERN.md` и ветка `egern` | исследование закрыто: управления политиками из скрипта у Egern нет |
 | `docs/ДОКУМЕНТАЦИЯ_LOON_RU.md` | перевод версии **3.3.9**, на устройстве 3.5.0 — сверка в `docs/СВЕРКА_LOON_3.5.md` |
 
-Актуальные: `CHANGELOG.md`, `docs/ADR-01_СХЕМА_КОНТУРОВ.md`, `docs/ТЕХДОЛГ.md`,
+Актуальные: `CHANGELOG.md`, `CHANGELOG_ARCHIVE.md`, `docs/ADR-01_СХЕМА_КОНТУРОВ.md`, `docs/ТЕХДОЛГ.md`,
 `docs/ЗАМЕРЫ_И_ВЕСА.md`, `docs/СВЕРКА_LOON_3.5.md`, `docs/ЭТАП_K_STASH.md`,
 `docs/ЭТАП_K_STASH_СТЕНД.md`, `docs/СРАВНЕНИЕ_КЛИЕНТОВ_И_WHITELIST.md`,
 `docs/ЭТАП_F_ЗАМЕТКИ.md`, `docs/КАТАЛОГ_СПИСКОВ.md`.
