@@ -123,6 +123,14 @@ ul.dom li{display:flex;justify-content:space-between;gap:8px;padding:2px 0;
   </div>
 
   <div class="card">
+    <h2>Замеры узлов</h2>
+    <div class="row" id="mage"></div>
+    <div class="dim" style="margin-top:6px">Отметка времени ставится на каждый
+      замер отдельно. Слот, у которого отметок нет ни у одного узла, приходит
+      переотправкой кэша устройства и не мерялся.</div>
+  </div>
+
+  <div class="card">
     <h2>Устройства</h2>
     <div class="grid" id="devs"></div>
   </div>
@@ -174,7 +182,7 @@ ul.dom li{display:flex;justify-content:space-between;gap:8px;padding:2px 0;
 // Ревизия панели. Файл вбирается в бандл Worker'а, поэтому задеплоенный бандл
 // меняется и без правки кода Worker'а; версия Worker'а такие правки не
 // отражает. Поднимать при каждом изменении этого файла.
-var PANEL_REV = 'p2';
+var PANEL_REV = 'p3';
 // Ключ ADMIN_KEY в странице НЕ хранится: он уходит один раз в POST /admin/login,
 // дальше доступ подтверждает cookie rh_adm (HttpOnly, Path=/admin, SameSite=Strict).
 // Скриптам страницы её значение недоступно, отдельного заголовка не требуется —
@@ -546,6 +554,29 @@ function drawSub(s) {
   $('sub').innerHTML = parts.join('');
 }
 
+// Возраст замеров по слотам. Смысл строки: «0 из 50 с отметкой» читается
+// как «этот слот не мерялся ни разу» — устройство переотправляет кэш, а
+// замера не было. Именно так выглядел замороженный сотовый кэш k2.
+// Отметки появились в Worker v1.10.0; на более старых записях их нет,
+// и это тоже честно показано как «без отметки».
+function drawMetricsAge(a) {
+  if (!a) { $('mage').innerHTML = ''; return; }
+  function part(name, x) {
+    if (!x || !x.total) return '<span class="tag dim">' + name + ' — замеров нет</span>';
+    var cls = x.with_ts === 0 ? 'bad' : (x.no_ts > 0 ? 'warn' : 'ok');
+    var t = '<span class="tag">' + name + ' <b class="' + cls + '">' +
+      x.with_ts + ' из ' + x.total + '</b> с отметкой';
+    if (x.with_ts === 0) t += ' — не мерялся, приходит из кэша';
+    else {
+      if (x.oldest_min != null) t += ', самый старый ' + x.oldest_min + ' мин';
+      if (x.no_ts) t += ', без отметки ' + x.no_ts;
+    }
+    if (x.dead) t += ', мёртвых ' + x.dead;
+    return t + '</span>';
+  }
+  $('mage').innerHTML = part('Wi-Fi', a.w) + part('сотовая', a.c);
+}
+
 var FLAG_NAMES = {
   cell_unlim: 'безлимит на сотовой',
   ewma: 'сглаживание EWMA',
@@ -607,6 +638,7 @@ function render(s) {
     (s.rkn ? (' · режим ' + s.rkn.mode) : '');
   drawCascade(s.cascade);
   drawSub(s.sub);
+  drawMetricsAge(s.metrics_age);
   drawDevices(s.devices);
   drawMylist(s.mylist);
   drawStore(s.storage);
