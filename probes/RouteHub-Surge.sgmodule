@@ -1,5 +1,5 @@
-#!name = RouteHub — пробы возможностей Surge (SG1 + SG2)
-#!desc = Две плитки на главном экране: SG1 — опись среды и карта локального HTTP API, SG2 — чтение тел ключевых эндпоинтов. ТОЛЬКО ЧТЕНИЕ: политики не меняются, MITM не включается, через обходные узлы трафик не идёт. Ставится на семь дней пробного периода, потом удаляется.
+#!name = RouteHub — пробы возможностей Surge (SG1 + SG2 + SG3)
+#!desc = Три плитки на главном экране: SG1 — опись среды и карта локального HTTP API, SG2 — чтение тел ключевых эндпоинтов, SG3 — границы возможностей клиента. Узлы подписки НЕ нужны: цель разведки — список приёмов для переноса в Stash, а не работа прокси. ТОЛЬКО ЧТЕНИЕ: политики не меняются, MITM не включается, через обходные узлы трафик не идёт. Ставится на семь дней пробного периода, потом удаляется.
 #!category = RouteHub
 
 # ── КАК ПОЛЬЗОВАТЬСЯ (всё с телефона) ─────────────────────────────────────
@@ -49,6 +49,7 @@
 [Panel]
 RouteHub-SG1 = script-name=RouteHub-SG1, update-interval=-1
 RouteHub-SG2 = script-name=RouteHub-SG2, update-interval=-1
+RouteHub-SG3 = script-name=RouteHub-SG3, update-interval=-1
 
 [Script]
 # SG1 — опись среды и карта путей API. Нажатие на плитку запускает вручную.
@@ -58,6 +59,13 @@ RouteHub-SG1 = type=generic, script-path=https://raw.githubusercontent.com/spxlo
 # состав групп и есть ли среди них smart, сколько видно узлов, что умеет
 # $httpAPI. Ключ обязателен.
 RouteHub-SG2 = type=generic, script-path=https://raw.githubusercontent.com/spxload/routehub/main/probes/routehub-probe-surge2.js, timeout=40, argument=apikey=СВОЙ_КЛЮЧ
+
+# SG3 — «что тут вообще можно»: границы $httpAPI, журнал logbook, функции
+# $utils на реальных адресах, тела /v1/events, /v1/dns, /v1/rules,
+# /v1/scripting, живые потоки WebSocket. Узлы для неё НЕ нужны: цель не
+# проверить работу прокси, а снять список возможностей клиента, который
+# дальше ищется у Stash пробой ST6.
+RouteHub-SG3 = type=generic, script-path=https://raw.githubusercontent.com/spxload/routehub/main/probes/routehub-probe-surge3.js, timeout=40, argument=apikey=СВОЙ_КЛЮЧ
 
 # Ежедневный прогон SG1 в 04:10 — чтобы за семь дней набралась история, если
 # что-то в Surge меняется от версии к версии. Не обязателен: строку можно
