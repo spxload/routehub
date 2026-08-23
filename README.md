@@ -16,7 +16,7 @@
 | `src/clients/` | клиентский слой, пока один — `loon.js` (рендер конфига) |
 | `tests/` | `harness.js` + четыре набора тестов, запуск `node --test "tests/*.test.js"` |
 | `scripts/` | скрипты устройства: speedtest, netwatch, viewer, dash, dashcache, faillog, rkn |
-| `probes/` | разовые пробы: L10 (`routehub-probe-context.js`), Stash |
+| `probes/` | разовые пробы: L10 контекст, L11 хранилище, Stash, Surge |
 | `plugins/` | `.plugin` для Loon и `.stoverride` для Stash |
 | `web/` | `routehub-admin.html`, `routehub-dash.html` |
 | `docs/` | актуальные документы |
@@ -29,6 +29,7 @@
 | `CHANGELOG.md` | что менялось в Worker'е и конфиге, с причинами (старое — в `CHANGELOG_ARCHIVE.md`) |
 | `docs/ADR-01_СХЕМА_КОНТУРОВ.md` | почему один код, но несколько Worker-сервисов |
 | `docs/ADR-02_ГРУППЫ_STASH.md` | как в Stash снимаются пара `-W`/`-C` и дублирование узлов |
+| `docs/ЭТАП_K_SURGE.md` | семь дней пробного Surge: что меряем и зачем |
 | `docs/ТЕХДОЛГ.md` | что накопилось и в каком порядке разбирать |
 | `docs/ЗАМЕРЫ_И_ВЕСА.md` | почему веса балла не рычаг, а замеры — да |
 | `docs/СВЕРКА_LOON_3.5.md` | что подтвердилось в документации Loon, что разошлось |
