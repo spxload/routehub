@@ -370,7 +370,7 @@ function speedBars(seg){
   var top=ms.slice(0,7),max=top[0]&&top[0].down||1,b='';
   for(var i=0;i<top.length;i++){var n=top[i],hp=Math.max(8,Math.round((n.down/max)*100));
     var col=n.score>=70?'var(--ok)':(n.score>=40?'var(--warn)':'var(--bad)');
-    b+='<div class="bar" style="height:'+hp+'%;background:'+col+'" title="'+esc(n.name)+' '+n.down+' Мбит">/</div>'}
+    b+='<div class="bar" style="height:'+hp+'%;background:'+col+'" title="'+esc(n.name)+' '+n.down+' Мбит"></div>'}
   return '<div class="bars">'+b+'</div><div class="sub" style="margin-top:6px">'+(top[0]?top[0].down+' Мбит макс':'')+' · '+top.length+' лучших</div>';
 }
 function rOv(){
@@ -416,7 +416,7 @@ function ageWord(m){
   if(m<60)return m+' мин назад';
   var h=Math.floor(m/60);
   if(h<24)return h+' ч назад';
-  return Math.floor(h/24)+' сут назад'
+  return Math.floor(h/24)+' сут назад';
 }
 // Worker до v1.10.0 полей возраста не отдаёт вовсе. Отличать «поля нет»
 // от «отметки нет» обязательно: иначе при рассинхроне версий панель
@@ -426,7 +426,7 @@ function ageTxt(n){
   if(!hasAge(n))return '';
   var a=ageWord(n.age_min),p=ageWord(n.ping_age_min);
   if(a==null&&p==null)return 'время замера неизвестно';
-  if(a==null)return 'пинг '+p+', скорость не мерилась';
+  if(a==null)return 'пинг '+p+', скорость не мерялась';
   if(p==null||p===a)return 'замер '+a;
   return 'скорость '+a+' · пинг '+p;
 }
@@ -441,12 +441,12 @@ function rNd(){
     if(hasAge(n)){known++;if(n.age_min==null)noTs++}
     var at=ageTxt(n);
     rows+='<div class="row">'+ring(n.score)+'<div class="grow"><div class="nm">'+esc(n.name)+(n.voice?' <span class="chip ok">звонки</span>':'')+'</div><div class="sub">'+n.down+' Мбит · пинг '+n.rtt+' мс · джиттер '+n.jit+' · потери '+n.bl+'‰</div>'+(at?'<div class="sub">'+at+'</div>':'')+'</div></div>'}
-  // Слот, у которого ни у одного узла нет отметки, не мерялся ни разу:
+  // Слот, у которого ни у одного узла нет отметки, не мерялся ни раз:
   // устройство переотправляет кэш, а замера не было. Это не мелочь —
   // именно так выглядел замороженный сотовый кэш k2. Предупреждение
-  // показывается ТОЛЬКО когда возраст вообще известен (known === всем узлам),
+  // показывается ТОЛЬКО когда возраст вообще известен (known === всем),
   // иначе старый Worker поднимал бы ложную тревогу.
-  var warn=(ms.length&&known===ms.length&&noTs===ms.length)?'<div class="hint" style="margin-top:6px">Ни у одного узла нет времени замера: этот набор приходит из кэша устройства и, похоже, не мерился. Проверь, что спидтест отрабатывает в этой сети.</div>':'';
+  var warn=(ms.length&&known===ms.length&&noTs===ms.length)?'<div class="hint" style="margin-top:6px">Ни у одного узла нет времени замера: этот набор приходит из кэша устройства и, похоже, не мерялся. Проверь, что спидтест отрабатывает в этой сети.</div>':'';
   h+=card('Узлы ('+ms.length+')',(rows||'<div class="mut small">нет данных спидтеста — наполнится после ночного теста</div>')+warn);
   return h;
 }
@@ -492,9 +492,9 @@ function rDm(){
   var summary=fail.length?('<div class="stats" style="margin-top:0"><div class="stat"><div class="n" style="color:var(--acc)">'+cHttps+'</div><div class="c">https</div></div><div class="stat"><div class="n" style="color:var(--warn)">'+cHttp+'</div><div class="c">http</div></div><div class="stat"><div class="n" style="color:var(--acc)">'+cMitm+'</div><div class="c">расшифр.</div></div></div>'):'';
   var fh=card('Перехваченные домены · '+fail.length,
     summary+
-    (frows||'<div class="mut small">Пусто. Чтобы поймать домены упавшего сайта: включи плагин <b>RouteHub FailLog</b> и перехват MITM в Loon, открой нужный сайт — домены появятся здесь. Затем жми «＋ список» и выключи перехват.</div>')+
+    (frows||'<div class="mut small">Пусто. Чтобы поймать домены упавшего сайта: включи плагин <b>RouteHub FailLog</b> и перехват MITM в Loon, открой нужный сайт — домены появятся здесь. Затем жми ＋список» и выключи перехват.</div>')+
     (fail.length?'<div class="btns"><a class="b dz" href="http://rh.box/faillog-clear">Очистить</a></div>':'')+
-    '<div class="hint">Метки: <b>https</b>/<b>http</b> — протокол; <b>MITM</b> — соединение расшифровано. «＋ список» — отправить домен в обход (RH-RU). «в списке» — уже добавлен (или покрыт суффиксом).</div>');
+    '<div class="hint">Метки: <b>https</b>/<b>http</b> — протокол; <b>MITM</b> — соединение расшифровано. ＋список» — отправить домен в обход (RH-RU). «в списке» — уже добавлен (или покрыт суффиксом).</div>');
   // --- ДОБАВИТЬ ВРУЧНУЮ ---
   var h=card('Добавить вручную',
     '<form class="addl" action="http://rh.box/add" method="get"><input class="inp" name="d" placeholder="example.ru" autocapitalize="none" autocorrect="off"><button class="b pri" type="submit">Добавить</button></form>'+
