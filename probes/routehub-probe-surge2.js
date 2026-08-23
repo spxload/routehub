@@ -35,7 +35,7 @@
  *   raw=1       не обрезать тела ответов (отчёт станет очень длинным)
  */
 
-var REV = 'SG2';
+var REV = 'SG2b';
 var BUDGET_MS = 25000;
 var T0 = Date.now();
 var rep = { rev: REV, ts: new Date().toISOString(), answers: {}, steps: {}, errors: [] };
@@ -93,18 +93,25 @@ function stepPolicies(next) {
         counts[keys[i]] = Array.isArray(v) ? (v.length + ' шт') : typeof v;
       }
       note('policies_shape', { keys: keys, counts: counts });
-      // Ищем среди значений что-нибудь похожее на список имён узлов.
-      var all = [];
-      for (var k in j) if (Array.isArray(j[k])) all = all.concat(j[k]);
-      rep.answers['узлов_видно'] = all.length;
-      rep.answers['имена_узлов_первые'] = all.slice(0, 12);
-      // Узел подписки узнаётся по флагу страны или по слову VPN в имени.
+      // ИСПРАВЛЕНО 23.08. Первая редакция складывала ВСЕ массивы ответа в
+      // один и объявляла их узлами. В ответе два разных списка — `proxies`
+      // (узлы) и `policy-groups` (группы), — поэтому «узлов 4» на деле были
+      // четырьмя группами при нуле узлов. Теперь они разделены.
+      var nodes = Array.isArray(j.proxies) ? j.proxies : [];
+      var groups = Array.isArray(j['policy-groups']) ? j['policy-groups'] : [];
+      rep.answers['УЗЛОВ'] = nodes.length;
+      rep.answers['групп'] = groups.length;
+      rep.answers['имена_узлов_первые'] = nodes.slice(0, 12);
       var withFlag = 0;
-      for (var m = 0; m < all.length; m++) {
-        var s = String(all[m]);
-        if (/[\uD83C][\uDDE6-\uDDFF]/.test(s) || s.indexOf('VPN') >= 0) withFlag++;
+      for (var m = 0; m < nodes.length; m++) {
+        var nm = String(nodes[m]);
+        if (/[\uD83C][\uDDE6-\uDDFF]/.test(nm) || nm.indexOf('VPN') >= 0) withFlag++;
       }
       rep.answers['узлов_подписки_похоже'] = withFlag;
+      if (!nodes.length) {
+        rep.answers['ВЫВОД_ПО_УЗЛАМ'] = 'подписка не подключена: proxies пуст. ' +
+          'Пока узлов нет, ни smart-группу, ни поддержку VLESS проверить нельзя.';
+      }
     }
     next();
   });
@@ -119,6 +126,7 @@ function stepGroups(next) {
       var names = [];
       try { names = Object.keys(j); } catch (e2) {}
       rep.answers['группы'] = names;
+      rep.answers['группы_имена'] = names;
       // Тип группы читаем через $surge.selectGroupDetails — единственная
       // читающая функция $surge, которую здесь вызываем.
       try {
@@ -144,6 +152,28 @@ function stepGroups(next) {
 }
 
 // ── ВОПРОС 1. Имена хостов в журнале запросов ─────────────────────────────
+// `/v1/policies/detail` в SG1 ответил 400 — не хватало параметра. Имена групп
+// теперь известны, пробуем спросить про каждую. Тип группы — единственный
+// способ убедиться, что `smart` не просто принят разбором, но и создан.
+function stepDetail(names, i, next) {
+  if (!names || i >= names.length || left() < 4000) { next(); return; }
+  var n = names[i];
+  api('/v1/policies/detail?policy_name=' + encodeURIComponent(n), function (r) {
+    if (r && r.status === 200) {
+      rep.steps['detail:' + n] = cut(r.body, 500);
+      var d = json(r.body);
+      var t = d && (d.type || d.policyType || (d.policy && d.policy.type));
+      if (t) {
+        rep.answers['типы_групп'] = rep.answers['типы_групп'] || {};
+        rep.answers['типы_групп'][n] = t;
+      }
+    } else if (r) {
+      rep.steps['detail:' + n] = r.status + ' ' + cut(r.body, 120);
+    }
+    stepDetail(names, i + 1, next);
+  });
+}
+
 function stepRequests(next) {
   api('/v1/requests/recent', function (r, e) {
     if (!r) { err('requests_recent', e); next(); return; }
@@ -152,20 +182,37 @@ function stepRequests(next) {
     var list = j.requests || j.list || (Array.isArray(j) ? j : []);
     var hosts = {}, withHost = 0, failed = [], fields = [];
     try { if (list.length) fields = Object.keys(list[0]); } catch (e2) {}
+    // ИСПРАВЛЕНО 23.08 после первого прогона. Схема записи (её же выгрузила
+    // проба) содержит поле `remoteHost` — первая редакция его не смотрела и
+    // сделала вывод «имена хостов не видны». Вывод был неверен: он говорил о
+    // пробе, а не о Surge. Теперь имя берётся из remoteHost, из URL и из
+    // заголовка Host, в таком порядке.
     for (var i = 0; i < list.length; i++) {
       var q = list[i] || {};
-      var h = q.URL || q.url || q.host || q.remoteAddress || '';
-      // Из URL вытаскиваем только имя хоста — путь и параметры не нужны и
-      // могут содержать личное.
-      var m = String(h).match(/^[a-z]+:\/\/([^\/:?#]+)/i);
-      var name = m ? m[1] : (q.host || '');
-      if (name && !/^\d+\.\d+\.\d+\.\d+$/.test(name)) { withHost++; hosts[name] = (hosts[name] || 0) + 1; }
-      // Незагрузившееся: статус ошибки либо нулевой объём ответа.
-      var st = q.status || q.completed || '';
-      if (/fail|error|reject|timeout/i.test(String(st))) {
-        failed.push((name || h) + ' · ' + st);
+      var name = '';
+      if (q.remoteHost) name = String(q.remoteHost);
+      if (!name && (q.URL || q.url)) {
+        var m = String(q.URL || q.url).match(/^[a-z]+:\/\/([^\/:?#]+)/i);
+        if (m) name = m[1];
+      }
+      if (!name && q.requestHeader) {
+        try {
+          var rh = q.requestHeader;
+          name = (rh.Host || rh.host || '') + '';
+        } catch (e5) {}
+      }
+      name = name.replace(/:\d+$/, '');
+      var isIp = /^\d+\.\d+\.\d+\.\d+$/.test(name) || name.indexOf(':') >= 0;
+      if (name && !isIp) { withHost++; hosts[name] = (hosts[name] || 0) + 1; }
+      // Незагрузившееся: явные флаги записи, а не догадка по строке статуса.
+      if (q.failed || q.rejected) {
+        failed.push((name || q.remoteAddress || '?') +
+          (q.rejected ? ' · отклонено' : ' · сбой') +
+          (q.rule ? ' · правило ' + q.rule : '') +
+          (q.notes ? ' · ' + String(q.notes).slice(0, 60) : ''));
       }
     }
+    rep.answers['адресов_без_имени'] = list.length - withHost;
     var uniq = Object.keys(hosts).sort(function (a, b) { return hosts[b] - hosts[a]; });
     rep.answers['записей_в_журнале'] = list.length;
     rep.answers['поля_записи'] = fields;
@@ -255,11 +302,11 @@ function finish() {
   rep.total_ms = Date.now() - T0;
   var a = rep.answers;
   var lines = [
-    'узлов видно: ' + (a['узлов_видно'] != null ? a['узлов_видно'] : '?') +
-      ', похожих на подписку: ' + (a['узлов_подписки_похоже'] != null ? a['узлов_подписки_похоже'] : '?'),
+    'УЗЛОВ: ' + (a['УЗЛОВ'] != null ? a['УЗЛОВ'] : '?') +
+      ' (похожих на подписку ' + (a['узлов_подписки_похоже'] != null ? a['узлов_подписки_похоже'] : '?') + ')',
     'группы: ' + ((a['группы'] || []).join(', ') || '—'),
-    'smart: ' + (a['smart_группы'] || '?'),
-    'имена хостов в журнале: ' + (a['ИМЕНА_ХОСТОВ_ВИДНЫ'] || '?') +
+    'типы групп: ' + (a['типы_групп'] ? JSON.stringify(a['типы_групп']) : 'не отдал'),
+    'имена хостов: ' + (a['ИМЕНА_ХОСТОВ_ВИДНЫ'] || '?') +
       ' (уникальных ' + (a['уникальных_хостов'] != null ? a['уникальных_хостов'] : '?') + ')',
     '$httpAPI: ' + (a['$httpAPI'] || '?'),
     'SSID из скрипта: ' + (a['SSID_из_скрипта'] || '?'),
@@ -278,12 +325,14 @@ if (!APIKEY) {
   stepNetwork();
   stepPolicies(function () {
     stepGroups(function () {
+      stepDetail(rep.answers['группы_имена'] || [], 0, function () {
       stepRequests(function () {
         stepHttpAPI(function () {
           stepProfile(function () {
             stepSmall(0, finish);
           });
         });
+      });
       });
     });
   });
