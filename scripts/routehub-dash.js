@@ -441,7 +441,7 @@ function rNd(){
     if(hasAge(n)){known++;if(n.age_min==null)noTs++}
     var at=ageTxt(n);
     rows+='<div class="row">'+ring(n.score)+'<div class="grow"><div class="nm">'+esc(n.name)+(n.voice?' <span class="chip ok">звонки</span>':'')+'</div><div class="sub">'+n.down+' Мбит · пинг '+n.rtt+' мс · джиттер '+n.jit+' · потери '+n.bl+'‰</div>'+(at?'<div class="sub">'+at+'</div>':'')+'</div></div>'}
-  // Слот, у которого ни у одного узла нет отметки, не мерялся ни раз:
+  // Слот, у которого ни у одного узла нет отметки, не мерялся ни разу:
   // устройство переотправляет кэш, а замера не было. Это не мелочь —
   // именно так выглядел замороженный сотовый кэш k2. Предупреждение
   // показывается ТОЛЬКО когда возраст вообще известен (known === всем),
@@ -492,9 +492,9 @@ function rDm(){
   var summary=fail.length?('<div class="stats" style="margin-top:0"><div class="stat"><div class="n" style="color:var(--acc)">'+cHttps+'</div><div class="c">https</div></div><div class="stat"><div class="n" style="color:var(--warn)">'+cHttp+'</div><div class="c">http</div></div><div class="stat"><div class="n" style="color:var(--acc)">'+cMitm+'</div><div class="c">расшифр.</div></div></div>'):'';
   var fh=card('Перехваченные домены · '+fail.length,
     summary+
-    (frows||'<div class="mut small">Пусто. Чтобы поймать домены упавшего сайта: включи плагин <b>RouteHub FailLog</b> и перехват MITM в Loon, открой нужный сайт — домены появятся здесь. Затем жми ＋список» и выключи перехват.</div>')+
+    (frows||'<div class="mut small">Пусто. Чтобы поймать домены упавшего сайта: включи плагин <b>RouteHub FailLog</b> и перехват MITM в Loon, открой нужный сайт — домены появятся здесь. Затем жми «＋ список» и выключи перехват.</div>')+
     (fail.length?'<div class="btns"><a class="b dz" href="http://rh.box/faillog-clear">Очистить</a></div>':'')+
-    '<div class="hint">Метки: <b>https</b>/<b>http</b> — протокол; <b>MITM</b> — соединение расшифровано. ＋список» — отправить домен в обход (RH-RU). «в списке» — уже добавлен (или покрыт суффиксом).</div>');
+    '<div class="hint">Метки: <b>https</b>/<b>http</b> — протокол; <b>MITM</b> — соединение расшифровано. «＋ список» — отправить домен в обход (RH-RU). «в списке» — уже добавлен (или покрыт суффиксом).</div>');
   // --- ДОБАВИТЬ ВРУЧНУЮ ---
   var h=card('Добавить вручную',
     '<form class="addl" action="http://rh.box/add" method="get"><input class="inp" name="d" placeholder="example.ru" autocapitalize="none" autocorrect="off"><button class="b pri" type="submit">Добавить</button></form>'+
