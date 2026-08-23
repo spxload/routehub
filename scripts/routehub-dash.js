@@ -19,7 +19,7 @@
 // v0.4.8: кнопка Loon = nsloon-ссылка; убран засев whoosh.bike (+чистка).
 // =============================================================
 
-var VERSION = 'dash v0.6.0';
+var VERSION = 'dash v0.7.0';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -370,7 +370,7 @@ function speedBars(seg){
   var top=ms.slice(0,7),max=top[0]&&top[0].down||1,b='';
   for(var i=0;i<top.length;i++){var n=top[i],hp=Math.max(8,Math.round((n.down/max)*100));
     var col=n.score>=70?'var(--ok)':(n.score>=40?'var(--warn)':'var(--bad)');
-    b+='<div class="bar" style="height:'+hp+'%;background:'+col+'" title="'+esc(n.name)+' '+n.down+' Мбит"></div>'}
+    b+='<div class="bar" style="height:'+hp+'%;background:'+col+'" title="'+esc(n.name)+' '+n.down+' Мбит">/</div>'}
   return '<div class="bars">'+b+'</div><div class="sub" style="margin-top:6px">'+(top[0]?top[0].down+' Мбит макс':'')+' · '+top.length+' лучших</div>';
 }
 function rOv(){
@@ -399,15 +399,55 @@ function rOv(){
   h+=card('Личный список доменов',kv('Под наблюдением',wl.length)+kv('С обходом',on)+'<div class="hint" style="margin-top:4px">Управление — на вкладке «Домены».</div>');
   return h;
 }
+// v0.7.0: возраст замера под каждым узлом. Замеров два — полный (down, bl)
+// и лёгкий пинг (rtt, jit), и они расходятся, поэтому показываем оба, когда
+// расходятся заметно. null означает «отметки нет»: либо запись старше
+// Worker v1.10.0, либо слот приехал переотправкой кэша и не мерялся.
+// Возраст считает Worker в момент ответа, а панель может рисовать из кэша
+// rh_dash — тогда число заморожено на момент записи кэша. Поправка нужна
+// именно в аварии: Loon лежал три часа, а панель бодро пишет «12 мин назад».
+function ageOffset(){
+  return (SRC==='cache'&&L.cache_ts)?Math.max(0,Math.round((Date.now()-L.cache_ts)/60000)):0;
+}
+function ageWord(m){
+  if(m==null)return null;
+  m=m+ageOffset();
+  if(m<1)return 'только что';
+  if(m<60)return m+' мин назад';
+  var h=Math.floor(m/60);
+  if(h<24)return h+' ч назад';
+  return Math.floor(h/24)+' сут назад'
+}
+// Worker до v1.10.0 полей возраста не отдаёт вовсе. Отличать «поля нет»
+// от «отметки нет» обязательно: иначе при рассинхроне версий панель
+// объявит свежие замеры несуществующими.
+function hasAge(n){return ('age_min' in n)||('ping_age_min' in n)}
+function ageTxt(n){
+  if(!hasAge(n))return '';
+  var a=ageWord(n.age_min),p=ageWord(n.ping_age_min);
+  if(a==null&&p==null)return 'время замера неизвестно';
+  if(a==null)return 'пинг '+p+', скорость не мерилась';
+  if(p==null||p===a)return 'замер '+a;
+  return 'скорость '+a+' · пинг '+p;
+}
+
 function rNd(){
   var ms=(W.nodes&&W.nodes[S.seg])||[];
   var h='<div class="card"><div style="display:flex;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden">'+
     '<button class="segb" data-g="wifi" style="flex:1;border:0;padding:8px;font-size:14px;background:'+(S.seg==='wifi'?'var(--acc)':'transparent')+';color:'+(S.seg==='wifi'?'#fff':'var(--mut)')+'">Wi-Fi</button>'+
     '<button class="segb" data-g="cell" style="flex:1;border:0;padding:8px;font-size:14px;background:'+(S.seg==='cell'?'var(--acc)':'transparent')+';color:'+(S.seg==='cell'?'#fff':'var(--mut)')+'">Сотовая</button></div></div>';
-  var rows='';
+  var rows='',noTs=0,known=0;
   for(var i=0;i<ms.length;i++){var n=ms[i];
-    rows+='<div class="row">'+ring(n.score)+'<div class="grow"><div class="nm">'+esc(n.name)+(n.voice?' <span class="chip ok">звонки</span>':'')+'</div><div class="sub">'+n.down+' Мбит · пинг '+n.rtt+' мс · джиттер '+n.jit+' · потери '+n.bl+'‰</div></div></div>'}
-  h+=card('Узлы ('+ms.length+')',rows||'<div class="mut small">нет данных спидтеста — наполнится после ночного теста</div>');
+    if(hasAge(n)){known++;if(n.age_min==null)noTs++}
+    var at=ageTxt(n);
+    rows+='<div class="row">'+ring(n.score)+'<div class="grow"><div class="nm">'+esc(n.name)+(n.voice?' <span class="chip ok">звонки</span>':'')+'</div><div class="sub">'+n.down+' Мбит · пинг '+n.rtt+' мс · джиттер '+n.jit+' · потери '+n.bl+'‰</div>'+(at?'<div class="sub">'+at+'</div>':'')+'</div></div>'}
+  // Слот, у которого ни у одного узла нет отметки, не мерялся ни разу:
+  // устройство переотправляет кэш, а замера не было. Это не мелочь —
+  // именно так выглядел замороженный сотовый кэш k2. Предупреждение
+  // показывается ТОЛЬКО когда возраст вообще известен (known === всем узлам),
+  // иначе старый Worker поднимал бы ложную тревогу.
+  var warn=(ms.length&&known===ms.length&&noTs===ms.length)?'<div class="hint" style="margin-top:6px">Ни у одного узла нет времени замера: этот набор приходит из кэша устройства и, похоже, не мерился. Проверь, что спидтест отрабатывает в этой сети.</div>':'';
+  h+=card('Узлы ('+ms.length+')',(rows||'<div class="mut small">нет данных спидтеста — наполнится после ночного теста</div>')+warn);
   return h;
 }
 function verdict(e){
