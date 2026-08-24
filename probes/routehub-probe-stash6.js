@@ -48,7 +48,7 @@
  * Отчёт — в консоль Stash; сводка уведомлением.
  */
 
-var REV = 'ST6';
+var REV = 'ST6b';
 var BUDGET_MS = 28000;
 var T0 = Date.now();
 var rep = { rev: REV, ts: new Date().toISOString(), answers: {}, steps: {}, errors: [] };
@@ -244,12 +244,14 @@ function finish() {
 }
 
 stepConnections(function () {
-  walk(0, {}, function (map, reached) {
-    rep.answers['карта_путей'] = map;
-    rep.answers['путей_пройдено'] = reached + ' из ' + PATHS.length;
-    wsTry('/logs', function () {
-      wsTry('/connections', function () {
-        wsTry('/traffic', finish);
+  stepDns(function () {
+    walk(0, {}, function (map, reached) {
+      rep.answers['карта_путей'] = map;
+      rep.answers['путей_пройдено'] = reached + ' из ' + PATHS.length;
+      wsTry('/logs', function () {
+        wsTry('/connections', function () {
+          wsTry('/traffic', finish);
+        });
       });
     });
   });
