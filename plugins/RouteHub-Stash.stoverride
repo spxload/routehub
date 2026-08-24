@@ -1,0 +1,59 @@
+name: "RouteHub — стенд Stash: пробы ST7 и ST5"
+desc: "Две пробы по расписанию: ST7 отвечает на главный вопрос проекта (видно ли имя хоста в /connections, то есть нужен ли MITM), ST5 снимает опись среды клиента. ТОЛЬКО ЧТЕНИЕ: политику, правила и узлы не меняет."
+author: "RouteHub"
+category: "RouteHub"
+
+# ============================================================================
+# УСТАНОВКА ОДНОЙ ССЫЛКОЙ — открыть на телефоне:
+# https://link.stash.ws/install-override/cdn.jsdelivr.net/gh/spxload/routehub@main/plugins/RouteHub-Stash.stoverride
+#
+# КАК ЗАПУСКАЕТСЯ. Только расписанием. Плитка на Stash 3.4.1 нажатием не
+# запускает скрипт — проверено 24.08 на этом телефоне; плитка здесь оставлена
+# как табло, она показывает итог последнего прогона.
+# Расписанию нужен ПОДНЯТЫЙ туннель Stash: «Scheduled tasks require Network
+# Extension (VPN) to be connected». Значит Loon на это время выключить.
+#
+# ПОРЯДОК: включить Stash, минуту пользоваться телефоном обычным образом (без
+# трафика `/connections` пуст, и это не поломка), подождать до пяти минут,
+# потом смотреть журнал Stash — строка начинается с [ST7].
+# Отчёт также приходит уведомлением и кладётся в буфер обмена.
+#
+# ПОЧЕМУ ST7, А НЕ ST6. ST6 пыталась снять всё сразу и выпадала в timeout:
+# Stash растягивает таймеры (замер ST5 — бюджет 33 с против 120 с по факту),
+# а принудительного сторожа в ней не было. ST7 задаёт один вопрос, делает два
+# запроса и имеет сторож. Бюджет — 8 секунд.
+#
+# После разведки override удалить: расписание тикает каждые пять минут.
+# ============================================================================
+
+script-providers:
+  rh-st7:
+    url: https://cdn.jsdelivr.net/gh/spxload/routehub@main/probes/routehub-probe-stash7.js
+    interval: 86400
+  rh-st5:
+    url: https://cdn.jsdelivr.net/gh/spxload/routehub@main/probes/routehub-probe-stash.js
+    interval: 86400
+
+cron:
+  script:
+    - name: rh-st7
+      cron: '*/5 * * * *'
+      timeout: 30
+    # ST5 реже: она длиннее и уже отработала, здесь нужна как контроль среды.
+    - name: rh-st5
+      cron: '7,37 * * * *'
+      timeout: 40
+
+tiles:
+  - name: rh-st7
+    interval: 900
+    title: 'RouteHub ST7'
+    content: 'Имя хоста в /connections'
+    icon: 'network'
+    backgroundColor: '#3A3A3C'
+  - name: rh-st5
+    interval: 3600
+    title: 'RouteHub ST5'
+    content: 'Опись среды Stash'
+    icon: 'list.bullet.rectangle'
+    backgroundColor: '#3A3A3C'
