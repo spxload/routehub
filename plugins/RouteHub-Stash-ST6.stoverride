@@ -29,6 +29,20 @@ category: "RouteHub"
 # ПОСЛЕ РАЗВЕДКИ этот override удаляется: он ставит задание каждые пять
 # минут, а нужен один-два прогона.
 
+# ── ПЛИТКА: ручной запуск с главного экрана ───────────────────────────────
+# Плитка объявляется отдельной секцией `tiles` и ссылается на скрипт по
+# ИМЕНИ провайдера. Без неё override ставит только задание по расписанию —
+# кнопки не появляется, и это было упущением первой редакции.
+# `interval: -1` — сама не обновляется, работает только по нажатию: проба
+# читает журнал соединений, дёргать её фоном незачем.
+tiles:
+  - name: routehub-probe-stash6
+    interval: -1
+    title: 'RouteHub ST6'
+    content: 'Нажми, чтобы снять пробу лазеек Stash'
+    icon: 'key.viewfinder'
+    backgroundColor: '#3A3A3C'
+
 script-providers:
   routehub-probe-stash6:
     url: https://raw.githubusercontent.com/spxload/routehub/main/probes/routehub-probe-stash6.js
@@ -37,7 +51,7 @@ script-providers:
 cron:
   script:
     - name: routehub-probe-stash6
-      cron: '*/5 * * * *'
+      cron: '*/30 * * * *'
       timeout: 40
       argument: ''
       debug: false

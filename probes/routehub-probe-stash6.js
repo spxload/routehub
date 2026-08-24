@@ -284,7 +284,26 @@ function finish() {
     $notification.post('RouteHub ' + REV + ' — лазейки Stash', lines[0],
       lines.slice(1).join('\n'), { clipboard: JSON.stringify(rep) });
   } catch (e) {}
-  try { $done(); } catch (e2) {}
+
+  // Плитка Stash рисуется тем, что вернёт `$done`. Пустые поля не
+  // обновляются, поэтому отдаём заголовок и содержимое всегда — и при
+  // запуске плиткой, и по расписанию: лишние поля в cron безвредны.
+  // Цвет несёт смысл: зелёный — имена хостов видны (главный вопрос пробы
+  // закрыт), жёлтый — не видны, серый — смотреть было не на что.
+  var color = '#8E8E93';
+  var a2 = rep.answers['ИМЯ_ХОСТА_ВИДНО'];
+  if (typeof a2 === 'string') {
+    if (a2.indexOf('ДА') === 0) color = '#34C759';
+    else if (a2 === 'НЕТ') color = '#FF9F0A';
+  }
+  try {
+    $done({
+      title: 'RouteHub ' + REV,
+      content: lines.join('\n'),
+      icon: 'key.viewfinder',
+      backgroundColor: color,
+    });
+  } catch (e2) { try { $done(); } catch (e3) {} }
 }
 
 stepConnections(function () {
