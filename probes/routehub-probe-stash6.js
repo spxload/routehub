@@ -173,11 +173,19 @@ function stepConnections(next) {
 }
 
 // ── 3. Вторая волна путей. ТОЛЬКО GET, только безвредные ─────────────────
+// Список пополнен 24.08 по итогам SG3: у Surge нашлись три вещи, которых
+// нет ни в Loon, ни в нашем стенде, и все три стоит поискать здесь.
+//   /v1/dns       — кэш резолвера С ДОМЕНАМИ, цепочкой CNAME и таймингами.
+//                   Готовый журнал доменов без всякого MITM.
+//   /v1/events    — события клиента текстом: почему группа пуста, на каком
+//                   порту слушает прокси. Диагностика, читаемая из скрипта.
+//   /v1/scripting — список скриптов вместе с их параметрами.
 var PATHS = [
   '/connections', '/proxies', '/providers/proxies', '/rules', '/configs',
   '/memory', '/logs', '/traffic', '/group', '/groups/delay',
-  '/providers/rules', '/dns/query?name=example.com&type=A',
-  '/script', '/scripts', '/profile', '/version', '/ui', '/cache',
+  '/providers/rules', '/dns', '/dns/query?name=example.com&type=A',
+  '/dns/cache', '/events', '/event', '/notifications',
+  '/script', '/scripts', '/scripting', '/profile', '/version', '/ui', '/cache',
   '/proxies/DIRECT', '/proxies/GLOBAL'
 ];
 // Намеренно НЕ запрашиваются: у части клиентов они срабатывают на любом методе.
@@ -191,6 +199,41 @@ function walk(i, acc, next) {
     if (r && r.status === 200 && r.body.length < 400) acc[PATHS[i]] += ' · ' + cut(r.body, 200);
     walk(i + 1, acc, next);
   });
+}
+
+// ── 3б. Кэш DNS: у Surge это готовый список доменов ──────────────────────
+// SG3 показала, что Surge отдаёт по `/v1/dns` кэш резолвера с доменом,
+// цепочкой CNAME, адресом сервера и временем ответа. Если Stash отдаёт
+// такое же, задача «журнал доменов» закрывается без MITM и без разбора
+// соединений: резолвер видит имя ДО того, как трафик пошёл.
+function stepDns(next) {
+  var tried = ['/dns', '/dns/cache', '/cache/dns'];
+  function go(i) {
+    if (i >= tried.length || left() < 5000) { next(); return; }
+    get(tried[i], 3000, function (r) {
+      if (r && r.status === 200 && r.body.length > 20) {
+        rep.answers['кэш_DNS_путь'] = tried[i];
+        rep.answers['кэш_DNS_байт'] = r.body.length;
+        var j = json(r.body);
+        var arr = j && (j.dnsCache || j.cache || (Array.isArray(j) ? j : null));
+        if (arr && arr.length) {
+          var doms = [];
+          for (var k = 0; k < arr.length && k < 60; k++) {
+            var d = arr[k] && (arr[k].domain || arr[k].name || arr[k].host);
+            if (d) doms.push(String(d));
+          }
+          rep.answers['ДОМЕНОВ_В_КЭШЕ_DNS'] = arr.length;
+          rep.answers['домены_из_DNS'] = doms;
+          try { rep.answers['поля_записи_DNS'] = Object.keys(arr[0]).sort(); } catch (e) {}
+        } else {
+          note('dns_head', cut(r.body, 500));
+        }
+        next(); return;
+      }
+      go(i + 1);
+    });
+  }
+  go(0);
 }
 
 // ── 4. Живой поток: WebSocket ────────────────────────────────────────────
@@ -234,6 +277,7 @@ function finish() {
     'из Surge есть: ' + ((a['из_Surge_есть_в_Stash'] || []).join(' ') || 'ничего'),
     'из Surge нет: ' + ((a['из_Surge_нет_в_Stash'] || []).join(' ') || '—'),
     'поток /logs: ' + (a['ws/logs'] || '?'),
+    'кэш DNS: ' + (a['ДОМЕНОВ_В_КЭШЕ_DNS'] != null ? (a['ДОМЕНОВ_В_КЭШЕ_DNS'] + ' доменов по ' + a['кэш_DNS_путь']) : 'не найден'),
   ];
   console.log('[' + REV + '] ' + JSON.stringify(rep));
   try {

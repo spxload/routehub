@@ -14,7 +14,7 @@
 | корень | `routehub-worker.js` (роутинг), `routehub.conf` (боевой конфиг), `wrangler.toml`, `README`, `CHANGELOG` + `CHANGELOG_ARCHIVE` |
 | `src/` | ядро Worker'а: `const util store sub ai api dash admin` |
 | `src/clients/` | клиентский слой, пока один — `loon.js` (рендер конфига) |
-| `tests/` | `harness.js` + четыре набора тестов, запуск `node --test "tests/*.test.js"` |
+| `tests/` | `harness.js` + наборы тестов Worker'а и прогон проб в песочнице |
 | `scripts/` | скрипты устройства: speedtest, netwatch, viewer, dash, dashcache, faillog, rkn |
 | `probes/` | разовые пробы: L10 контекст, L11 хранилище, Stash, Surge |
 | `plugins/` | `.plugin` для Loon и `.stoverride` для Stash |
@@ -79,7 +79,7 @@ routehub.conf на устройстве  →  Loon выбирает узел в�
 
 ```bash
 git clone --depth 1 https://github.com/spxload/routehub.git
-node --test "tests/*.test.js"          # 86 тестов, CI нет намеренно
+node --test "tests/*.test.js"          # 92 теста, CI нет намеренно
 npx wrangler deploy --env="" --dry-run # боевое окружение
 npx wrangler deploy --env stash --dry-run
 ```
