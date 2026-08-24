@@ -1,1 +1,5 @@
 .rh-worker-under-test.mjs
+
+# Собирается tools/build-st6-inline.mjs из probes/routehub-probe-stash6.js.
+# В репозитории не хранится: вторая копия скрипта разошлась бы с оригиналом.
+plugins/RouteHub-Stash-ST6-inline.stoverride
