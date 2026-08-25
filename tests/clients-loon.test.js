@@ -7,6 +7,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { T } from './harness.js';
 
+// Клиентские слои лежат в __test под ключами-неймспейсами (T.LOON, T.STASH),
+// а не спредом: у clients/loon.js и clients/stash.js одноимённые функции, и
+// плоский спред дал бы молчаливое затирание — тесты Loon проверяли бы Stash.
+// Проверка ниже — на уровне модуля, чтобы не попасть в счётчик тестов, но
+// упасть громко, если спред вернут.
+assert.equal(T.renderConfig, undefined, 'clients/loon.js снова спредится плоско в __test');
+assert.equal(typeof T.LOON.renderConfig, 'function', 'неймспейс LOON пропал из __test');
+
 test('renderConfig подставляет плейсхолдеры и аргументы скриптов', () => {
   const conf = [
     'Lastdep = https://old.invalid/n,udp=true',
@@ -16,7 +24,7 @@ test('renderConfig подставляет плейсхолдеры и аргум
     'generic script-path=routehub-speedtest.js, tag=RH-Speed, timeout=60',
     'generic script-path=routehub-netwatch.js, tag=RH-Net, timeout=60',
   ].join('\n');
-  const out = T.renderConfig(conf, {
+  const out = T.LOON.renderConfig(conf, {
     key: 'k1',
     base: 'https://w.invalid/t/TOK',
     dev: { cell_unlim: true, ewma: true, auto_refresh: true },
@@ -32,7 +40,7 @@ test('renderConfig подставляет плейсхолдеры и аргум
 });
 
 test('renderConfig без флагов устройства оставляет аргумент пустым, а не undefined', () => {
-  const out = T.renderConfig('generic script-path=routehub-speedtest.js, tag=RH-Speed', {
+  const out = T.LOON.renderConfig('generic script-path=routehub-speedtest.js, tag=RH-Speed', {
     key: 'k2',
     base: 'https://w.invalid/t/T2',
     dev: {},
@@ -46,12 +54,12 @@ test('renderConfig без флагов устройства оставляет �
 
 test('subParamsFromConf сохраняет хвост параметров подписки', () => {
   const conf = 'Lastdep = https://x.invalid/nodes?key=k1,block-quic=false,udp=true,enabled=true\n';
-  assert.equal(T.subParamsFromConf(conf), ',block-quic=false,udp=true,enabled=true');
+  assert.equal(T.LOON.subParamsFromConf(conf), ',block-quic=false,udp=true,enabled=true');
 });
 
 test('subParamsFromConf: строки нет либо параметров нет — запасной дефолт', () => {
-  assert.equal(T.subParamsFromConf('# пусто'), ',udp=true,enabled=true');
-  assert.equal(T.subParamsFromConf('Lastdep = https://x.invalid/n'), ',udp=true,enabled=true');
+  assert.equal(T.LOON.subParamsFromConf('# пусто'), ',udp=true,enabled=true');
+  assert.equal(T.LOON.subParamsFromConf('Lastdep = https://x.invalid/n'), ',udp=true,enabled=true');
 });
 
 // v1.9.9: файлы скриптов переезжают в папки (scripts/, probes/). Подстановка
@@ -63,7 +71,7 @@ test('renderConfig подставляет базу и для путей с па�
     'generic script-path=scripts/routehub-speedtest.js, tag=RH-Speed',
     'generic script-path=probes/routehub-probe-context.js, tag=RH-L10',
   ].join('\n');
-  const out = T.renderConfig(conf, {
+  const out = T.LOON.renderConfig(conf, {
     key: 'k1', base: 'https://w.invalid/t/TOK', dev: {},
     blocks: { filters: '', groups: '' }, subParams: ',udp=true',
     scriptBase: 'https://raw.invalid/repo/',

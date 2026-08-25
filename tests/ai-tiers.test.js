@@ -25,7 +25,7 @@ test('buildAiTiers: DE первой, СНГ исключён, регион ва�
 });
 
 test('AIrest исключает весь СНГ, а не только RU/BY', () => {
-  const blocks = T.aiBlocks([DE, NL]);
+  const blocks = T.LOON.aiBlocks([DE, NL]);
   const line = blocks.filters.split('\n').find((l) => l.indexOf('AIrest') >= 0);
   for (const fl of [RUF, KZ]) assert.ok(line.indexOf(fl) >= 0, 'в исключениях нет ' + fl);
 });
@@ -36,7 +36,7 @@ test('AIeu поднимает одноузловую Европу выше ти�
   // НИЖЕ тира Турции. Теперь между ними стоит региональный остаток AIeu.
   const GB = '\u{1F1EC}\u{1F1E7}';
   const tiers = [DE, NL, US, TR];
-  const blocks = T.aiBlocks(tiers);
+  const blocks = T.LOON.aiBlocks(tiers);
   const cascade = blocks.groups.split('\n').find((l) => l.startsWith('RH-AI-W'));
   const names = cascade.split(', ').filter((s) => s.indexOf('RH-Filter-W-AI') === 0);
   const iEu = names.indexOf('RH-Filter-W-AIeu');
@@ -54,7 +54,7 @@ test('AIeu поднимает одноузловую Европу выше ти�
 });
 
 test('AIrest не пересекается с региональными остатками', () => {
-  const blocks = T.aiBlocks([DE, NL]);
+  const blocks = T.LOON.aiBlocks([DE, NL]);
   const line = blocks.filters.split('\n').find((l) => l.indexOf('W-AIrest') >= 0);
   for (const fl of [RUF, KZ, US, '\u{1F1EC}\u{1F1E7}']) {
     assert.ok(line.indexOf(fl) >= 0, 'в исключениях AIrest нет ' + fl);
