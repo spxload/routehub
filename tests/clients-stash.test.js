@@ -201,7 +201,7 @@ test('CLIENT=stash выбирает слой Stash, регистр и пробе
     const c = T.CLIENTS.pickClient({ CLIENT: v });
     assert.equal(c.id, 'stash');
     assert.equal(c.groups.buildGroups, S.buildGroups);
-    assert.equal(c.config, null, 'у Stash слоя /config пока нет');
+    assert.equal(typeof c.config.renderProfile, 'function', 'слой /config у Stash есть');
   });
 });
 
@@ -235,8 +235,40 @@ test('/config без переменной и с мусорным значени�
   }
 });
 
-test('/config при CLIENT=stash не подставляет синтаксис Loon, а отвечает 501', async () => {
+test('/config при CLIENT=stash отдаёт профиль Stash, а не синтаксис Loon', async () => {
   const r = await configWith('stash');
-  assert.equal(r.status, 501);
-  assert.match(await r.text(), /stash/);
+  assert.equal(r.status, 200);
+  const text = await r.text();
+  assert.ok(text.indexOf('proxy-groups:') >= 0, 'секции proxy-groups нет');
+  assert.ok(text.indexOf('proxy-providers:') >= 0, 'секции proxy-providers нет');
+  assert.ok(text.indexOf('RH-AI = select') < 0, 'просочился синтаксис Loon');
+  assert.ok(text.indexOf('__RH_') < 0, 'плейсхолдеры остались');
+});
+
+// Регрессия: имена в выдаче поставщика и в членах групп обязаны совпадать.
+// Если они разойдутся, Stash молча выбросит членов и МАРШРУТИЗАЦИИ НЕ БУДЕТ,
+// а профиль при этом останется синтаксически верным — отказ тихий. Проверка
+// добавлена после того, как пустые группы были получены живьём на выдаче.
+test('имена узлов в /nodes и в членах групп совпадают, списки не пусты', () => {
+  const lines = Object.keys(NAMES).map(function (k) { return nodeLine(NAMES[k]); });
+  const state = {};
+  const yaml = S.renderNodes(lines, state, {});
+  const fromNodes = [];
+  yaml.split('\n').forEach(function (l) {
+    const m = /^\s*-\s+name:\s+'(.*)'\s*$/.exec(l);
+    if (m) fromNodes.push(m[1].split("''").join("'"));
+  });
+  assert.ok(fromNodes.length > 0, 'поставщик отдал пустой список узлов');
+
+  const inGroups = Object.create(null);
+  S.buildGroups(lines, state, {}).forEach(function (g) {
+    if (!Array.isArray(g.proxies)) return;
+    g.proxies.forEach(function (n) { if (n.indexOf('RH-') !== 0) inGroups[n] = true; });
+  });
+  const members = Object.keys(inGroups);
+  assert.ok(members.length > 0, 'все группы оказались пустыми');
+
+  members.forEach(function (n) {
+    assert.ok(fromNodes.indexOf(n) >= 0, 'член группы отсутствует в /nodes: ' + n);
+  });
 });
