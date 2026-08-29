@@ -19,7 +19,7 @@
 //   src/sub.js   — подписка Lastdep: загрузка, кэш, два набора     (const, store, util)
 //   src/ai.js    — AI-тиеры: РАСЧЁТ страновых каскадов             (const, util)
 //   src/api.js   — /config, /nodes, /speed, /rkn, /status          (все выше)
-//   src/dash.js  — дашборд rh.box и личный список доменов          (const, store, util)
+//   src/dash.js  — дашборд rh.box и личный список доменов       (const, store, util)
 //   src/admin.js — админ-панель                                    (const, store, sub, util)
 //   src/clients/loon.js — синтаксис конфига Loon: AI-блоки, подстановки
 //
@@ -40,6 +40,8 @@ import * as API from './src/api.js';
 import * as DASH from './src/dash.js';
 import * as ADMIN from './src/admin.js';
 import * as LOON from './src/clients/loon.js';
+import * as STASH from './src/clients/stash.js';
+import * as CLIENTS from './src/clients/registry.js';
 
 export default {
   async fetch(req, env) {
@@ -109,4 +111,5 @@ export default {
 // — при плоском спреде последний импорт молча затирал бы предыдущий, и тесты
 // клиента Loon начали бы проверять клиент Stash, продолжая «проходить».
 // Новый клиент добавляется отдельным ключом (STASH), а не спредом.
-export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, LOON };
+// CLIENTS — реестр клиентских слоёв и выбор активного по env.CLIENT (ADR-01).
+export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, LOON, STASH, CLIENTS };
