@@ -5,13 +5,22 @@
 // История версий — CHANGELOG.md в корне репозитория.
 
 import { buildAiTiers } from '../ai.js';
-import { aiBlocks, renderConfig, subParamsFromConf } from '../clients/loon.js';
+import { pickClient } from '../clients/registry.js';
 import { KEY_RE } from '../const.js';
 import { ensureFlags, kvGetJSON, kvPutJSON, loadRegistry, tokenGate } from '../store.js';
 import { getSub } from '../sub.js';
 import { confVersion } from '../util.js';
 
 async function handleConfig(url, env, tok) {
+  // РАЗВИЛКА ПО КЛИЕНТУ (ADR-01). Переменной CLIENT нет или значение
+  // незнакомое — работает Loon: боевой конфиг важнее строгости, см. шапку
+  // clients/registry.js. Проверка стоит первой, чтобы клиент, у которого
+  // слоя /config ещё нет, не ходил в реестр и в подписку впустую.
+  const client = pickClient(env);
+  if (!client.config) {
+    return new Response('client ' + client.id + ': /config не реализован', { status: 501 });
+  }
+
   const key = url.searchParams.get('key') || '';
   if (!KEY_RE.test(key)) return new Response('bad key', { status: 400 });
 
@@ -32,7 +41,7 @@ async function handleConfig(url, env, tok) {
   try { await kvPutJSON(env, 'devices', reg); } catch (e) {}
 
   // Параметры подписки берём ИЗ КОНФИГА ДО переписывания строки Lastdep.
-  const subParams = subParamsFromConf(conf);
+  const subParams = client.config.subParamsFromConf(conf);
   // База со встроенным токеном: скрипты на устройстве строят запрос как
   // ORIGIN + '/путь', поэтому токен доезжает до них без правки самих скриптов.
   const base = url.origin + '/t/' + reg[key].token;
@@ -41,11 +50,11 @@ async function handleConfig(url, env, tok) {
   const masterLines = sub.text.split('\n').filter(Boolean);
   const state = (await kvGetJSON(env, 'metrics:' + key)) || {};
   // Ядро посчитало тиеры; синтаксис конфига — забота клиентского слоя.
-  conf = renderConfig(conf, {
+  conf = client.config.renderConfig(conf, {
     key: key,
     base: base,
     dev: reg[key],
-    blocks: aiBlocks(buildAiTiers(masterLines, state)),
+    blocks: client.config.aiBlocks(buildAiTiers(masterLines, state)),
     subParams: subParams,
     scriptBase: env.CONFIG_URL.replace(/[^/]+$/, ''),
   });
