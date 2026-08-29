@@ -2,8 +2,9 @@
 // КЛИЕНТСКИЙ СЛОЙ STASH, верхний ярус: ГРУППЫ ПОЛИТИК (секция `proxy-groups:`).
 // Разбор ссылок подписки — clients/stash-nodes.js, сериализация YAML —
 // clients/stash-yaml.js, порядок узлов и метка — clients/stash-order.js.
-// Здесь только раскладка по группам и форма членства. Каркас профиля
-// (правила, DNS, поставщик прокси) и выдача узлов в модуль НЕ входят.
+// Здесь раскладка по группам, форма членства и ОБЩИЙ СРЕЗ УЗЛОВ — он же
+// выдача `proxies:` для поставщика прокси (см. nodeSet ниже). Каркас профиля
+// (режим, DNS, поставщик, правила) — clients/stash-profile.js.
 //
 // СХЕМА (ADR-02_ГРУППЫ_STASH.md, вариант В). На каждую функцию — три группы:
 //   RH-X-W  fallback, узлы в порядке композитного балла Wi-Fi
@@ -25,13 +26,17 @@
 // История версий — CHANGELOG.md в корне репозитория.
 
 import { buildAiTiers } from '../ai.js';
+import { parseNodeLink } from './stash-nodes.js';
 import { aiRanker, collect, orderNames, rankAuto, rankCall } from './stash-order.js';
-import { nodeToYaml } from './stash-yaml.js';
+import { nodeToYaml, nodesToYaml } from './stash-yaml.js';
 
 // Имя поставщика прокси по умолчанию — на него ссылается форма членства (Б).
 const PROVIDER = 'RH-Lastdep';
 
-// ── ЧЛЕНСТВО ГРУППЫ: ПЕРЕКЛЮЧАТЕЛЬ ─────────────────────────────────────
+// Тип содержимого выдачи /nodes для Stash: файл поставщика — это YAML.
+const contentType = 'text/yaml; charset=utf-8';
+
+// ── ЧЛЕНСТВО ГРУППЫ: ПЕРЕКЛЮЧАТЕЛЬ ─────────────────────────────────
 // Интерфейс Stash подтвердил, что явный список имён и поставщик прокси
 // сосуществуют в одной группе (СВЕРКА_STASH_ИНТЕРФЕЙС.md, раздел 4), поэтому
 // выбор формы — переключатель, а не догадка:
@@ -55,6 +60,38 @@ function nameFilter(names) {
   return '^(?:' + names.map(reEsc).join('|') + ')$';
 }
 
+// ── ОДИН СРЕЗ УЗЛОВ НА ГРУППЫ И НА ВЫДАЧУ ──────────────────────────────
+// ДОПУЩЕНИЕ, РАДИ КОТОРОГО ЭТО СДЕЛАНО ОДНОЙ ФУНКЦИЕЙ: имя узла в секции
+// `proxies:` обязано совпадать с именем члена группы. Stash сопоставляет их
+// строкой и НЕ сообщает об ошибке — член без описания просто исчезает, группа
+// приезжает короче, чем задумано, и понять это по конфигу нельзя.
+// Поэтому и состав, и имена берутся ИЗ ОДНОГО МЕСТА: collect() задаёт имена и
+// порядок, parseNodeLink — описание. Строка, которую разбор не понял (чужая
+// схема, транспорт не из {tcp, ws}), выбрасывается СРАЗУ, до раскладки по
+// группам: узел, которого нельзя описать, не имеет права быть членом.
+// Равенство двух множеств имён проверяется тестом, а не глазами.
+function nodeSet(masterLines, state, opts) {
+  const o = opts || {};
+  const col = collect(masterLines, state, o.label);
+  const items = [], nodes = [];
+  let skipped = 0;
+  col.items.forEach(function (it) {
+    const node = parseNodeLink(it.line);
+    if (!node) { skipped++; return; }
+    node.name = it.display;             // единственный источник имени
+    items.push(it);
+    nodes.push(node);
+  });
+  return { items: items, nodes: nodes, maxW: col.maxW, maxC: col.maxC, skipped: skipped };
+}
+
+// Готовый файл поставщика прокси: секция `proxies:` и ничего больше.
+// Именно это отдаёт /nodes контуру Stash (src/api/nodes.js). Base64, как у
+// Loon, поставщик не принимает — только Clash-YAML с ключом `proxies:`.
+function renderNodes(masterLines, state, opts) {
+  return nodesToYaml(nodeSet(masterLines, state, opts).nodes);
+}
+
 function childGroup(name, names, membership, provider) {
   const g = { name: name, type: 'fallback' };
   if (membership === 'provider') { g.use = [provider]; g.filter = nameFilter(names); }
@@ -62,7 +99,7 @@ function childGroup(name, names, membership, provider) {
   return g;
 }
 
-// ── СБОРКА ──────────────────────────────────────────────────────────────
+// ── СБОРКА ───────────────────────────────────────────────────────────
 // opts: { membership: 'proxies' | 'provider', provider: <имя>, label: bool }
 // Возвращает массив объектов групп в порядке: родитель, -W, -C — по каждой
 // функции. Так же они идут в routehub.conf, и так же читаются глазами.
@@ -71,7 +108,7 @@ function buildGroups(masterLines, state, opts) {
   const o = opts || {};
   const membership = o.membership === 'provider' ? 'provider' : 'proxies';
   const provider = o.provider || PROVIDER;
-  const col = collect(masterLines, state, o.label);
+  const col = nodeSet(masterLines, state, o);
   const specs = [
     { name: 'RH-AI', rank: aiRanker(buildAiTiers(masterLines || [], state || {})) },
     { name: 'RH-АВТО', rank: rankAuto },
@@ -107,5 +144,5 @@ function renderGroups(masterLines, state, opts) {
   return 'proxy-groups:\n' + groups.map(function (g) { return nodeToYaml(g, 2); }).join('\n') + '\n';
 }
 
-export { PROVIDER, buildGroups, nameFilter, renderGroups };
+export { PROVIDER, buildGroups, childGroup, contentType, nameFilter, nodeSet, renderGroups, renderNodes };
 export { nodeLabel } from './stash-order.js';
