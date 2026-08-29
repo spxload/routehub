@@ -16,6 +16,8 @@ async function handleConfig(url, env, tok) {
   // незнакомое — работает Loon: боевой конфиг важнее строгости, см. шапку
   // clients/registry.js. Проверка стоит первой, чтобы клиент, у которого
   // слоя /config ещё нет, не ходил в реестр и в подписку впустую.
+  // У Loon и Stash слой есть; 501 остаётся для СЛЕДУЮЩЕГО клиента, которого
+  // заведут в реестре раньше, чем напишут ему рендер.
   const client = pickClient(env);
   if (!client.config) {
     return new Response('client ' + client.id + ': /config не реализован', { status: 501 });
@@ -30,13 +32,23 @@ async function handleConfig(url, env, tok) {
   ensureFlags(reg);
   reg[key].last_config_ts = new Date().toISOString();
 
-  // Обход кэша: no-store (кэш Workers) + ?t=now (CDN GitHub считает ресурс новым)
-  const cfgUrl = env.CONFIG_URL + (env.CONFIG_URL.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
-  const cr = await fetch(cfgUrl, { headers: { 'User-Agent': 'routehub-worker' }, cache: 'no-store' });
-  if (!cr.ok) throw new Error('config fetch ' + cr.status);
-  let conf = await cr.text();
-  const cv = confVersion(conf);
-  if (cv && reg[key].conf_ver !== cv) reg[key].conf_ver = cv;
+  // ШАБЛОН НУЖЕН НЕ ВСЕМ. Loon правит готовый routehub.conf из репозитория;
+  // профиль Stash собирается кодом целиком, и файла по CONFIG_URL для него
+  // нет — поход за ним кончился бы 404 и пятисоткой на устройстве.
+  // Признак объявляет сам клиентский слой (usesTemplate), а не эта функция.
+  let conf = '';
+  if (client.config.usesTemplate !== false) {
+    // Обход кэша: no-store (кэш Workers) + ?t=now (CDN GitHub считает ресурс новым)
+    const cfgUrl = env.CONFIG_URL + (env.CONFIG_URL.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
+    const cr = await fetch(cfgUrl, { headers: { 'User-Agent': 'routehub-worker' }, cache: 'no-store' });
+    if (!cr.ok) throw new Error('config fetch ' + cr.status);
+    conf = await cr.text();
+    const cv = confVersion(conf);
+    if (cv && reg[key].conf_ver !== cv) reg[key].conf_ver = cv;
+  } else if (client.config.VERSION && reg[key].conf_ver !== client.config.VERSION) {
+    // Версию профиля объявляет сам слой — иначе в панели у стенда пусто.
+    reg[key].conf_ver = client.config.VERSION;
+  }
   // Одна запись реестра на запрос (раньше при смене C-draft писалось дважды).
   try { await kvPutJSON(env, 'devices', reg); } catch (e) {}
 
@@ -57,9 +69,14 @@ async function handleConfig(url, env, tok) {
     blocks: client.config.aiBlocks(buildAiTiers(masterLines, state)),
     subParams: subParams,
     scriptBase: env.CONFIG_URL.replace(/[^/]+$/, ''),
+    // Клиенту, который собирает профиль сам, нужны исходные данные, а не
+    // только посчитанные блоки. Loon эти поля игнорирует.
+    masterLines: masterLines,
+    state: state,
   });
 
-  return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  const ct = client.config.contentType || 'text/plain; charset=utf-8';
+  return new Response(conf, { headers: { 'Content-Type': ct } });
 }
 
 export { handleConfig };

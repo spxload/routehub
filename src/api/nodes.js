@@ -4,6 +4,7 @@
 // порог 15 КБ. Логика НЕ менялась — только раскладка по файлам.
 // История версий — CHANGELOG.md в корне репозитория.
 
+import { pickClient } from '../clients/registry.js';
 import { KEY_RE } from '../const.js';
 import { kvGetJSON, kvPutJSON, loadRegistry, tokenGate } from '../store.js';
 import { fetchUpstream, getSub, renderNodesBoth } from '../sub.js';
@@ -22,11 +23,22 @@ async function handleNodes(url, env, tok) {
   const sub = await getSub(env, false);
   const masterLines = sub.text.split('\n').filter(Boolean);
   const state = (await kvGetJSON(env, 'metrics:' + key)) || {};
-  const out = renderNodesBoth(masterLines, state, showRtt);
   const headers = {};
   for (const k in (sub.meta || {})) { if (sub.meta[k]) headers[k] = String(sub.meta[k]); }
-  headers['Content-Type'] = 'text/plain; charset=utf-8';
   headers['Cache-Control'] = 'no-store';
+  // РАЗВИЛКА ПО КЛИЕНТУ (ADR-01). Развилка стоит здесь, а не в src/sub.js:
+  // renderNodesBoth — боевой путь Loon, его формат (два набора 🛜/📱, base64)
+  // менять нельзя. У Stash поставщик прокси принимает ТОЛЬКО Clash-YAML с
+  // ключом `proxies:` — ни base64, ни сырой список ссылок он не читает.
+  // Имена узлов в этой выдаче обязаны совпадать с именами членов групп из
+  // /config: и то, и другое строит clients/stash.js nodeSet().
+  const client = pickClient(env);
+  if (client.nodes) {
+    headers['Content-Type'] = client.nodes.contentType || 'text/yaml; charset=utf-8';
+    return new Response(client.nodes.renderNodes(masterLines, state, {}), { headers: headers });
+  }
+  const out = renderNodesBoth(masterLines, state, showRtt);
+  headers['Content-Type'] = 'text/plain; charset=utf-8';
   return new Response(utf8ToB64(out), { headers: headers });
 }
 

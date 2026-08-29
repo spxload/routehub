@@ -12,20 +12,24 @@
 // не будет: неизвестное имя клиента увидит тот, кто заводит стенд, по тому,
 // что стенд отвечает как Loon.
 //
-// ЧТО В ЗАПИСИ. config — модуль, умеющий отдать /config для этого клиента
-// (у Stash его ещё нет: каркас профиля и правила делаются отдельно, см.
-// ADR-02); groups — модуль, собирающий группы политик. Поля, которых у
-// клиента нет, стоят null, и вызывающий обязан это проверить.
+// ЧТО В ЗАПИСИ. config — модуль, умеющий отдать /config для этого клиента;
+// groups — модуль, собирающий группы политик; nodes — модуль, подменяющий
+// формат выдачи /nodes. Поля, которых у клиента нет, стоят null, и вызывающий
+// обязан это проверить.
+// nodes = null у Loon читается как «боевое поведение /nodes» (base64 из
+// src/sub.js) и трогать его нельзя; у Stash поставщик прокси принимает только
+// Clash-YAML с ключом `proxies:`, поэтому слой есть.
 // История версий — CHANGELOG.md в корне репозитория.
 
 import * as LOON from './loon.js';
 import * as STASH from './stash.js';
+import * as STASH_PROFILE from './stash-profile.js';
 
 const DEFAULT_CLIENT = 'loon';
 
 const CLIENTS = {
-  loon: { id: 'loon', config: LOON, groups: null },
-  stash: { id: 'stash', config: null, groups: STASH },
+  loon: { id: 'loon', config: LOON, groups: null, nodes: null },
+  stash: { id: 'stash', config: STASH_PROFILE, groups: STASH, nodes: STASH },
 };
 
 // Имя активного клиента. Регистр и пробелы вокруг значения не важны:
