@@ -10,12 +10,16 @@
 // stash.wiki/en/rules/rule-types): DOMAIN-SUFFIX, IP-CIDR (+ no-resolve),
 // GEOIP, PROTOCOL, FINAL -> MATCH.
 //
-// ЧТО НЕ ПЕРЕНЕСЕНО и почему — docs/ЭТАП_K_STASH_ПРАВИЛА.md. Коротко:
-// секция [Remote Rule] (одиннадцать удалённых наборов Loon-формата — на них
-// держатся РКН-whitelist, банки, Telegram и блокировка рекламы), [Host],
-// [URL Rewrite], [Script], [Plugin], [MITM]. Ни одна из них не превращается
-// в правило Stash сама собой, и придумывать им замену в профиль нельзя —
-// профиль поедет на устройство.
+// СЕКЦИЯ [Remote Rule] ПЕРЕНЕСЕНА отдельным модулем clients/stash-sets.js:
+// одиннадцать удалённых наборов плюс личный список становятся поставщиками
+// правил (`rule-providers:`) и строками `RULE-SET,<набор>,<политика>`. Эти
+// строки вставляются НИЖЕ локальных правил и ВЫШЕ MATCH — ровно так, как в
+// боевом конфиге, где [Rule] идёт целиком до [Remote Rule].
+//
+// ЧТО НЕ ПЕРЕНЕСЕНО и почему — docs/ЭТАП_K_STASH_ПРАВИЛА.md, раздел 3.2:
+// [Host], [URL Rewrite], [Script], [Plugin], [MITM]. Ни одна из них не
+// превращается в правило Stash сама собой, и придумывать им замену в профиль
+// нельзя — профиль поедет на устройство.
 //
 // PROCESS-NAME в Stash есть, но ТОЛЬКО для macOS: на iOS неприменимо.
 // SCRIPT,<имя>,POLICY принимает выражение на PYTHON (script.shortcuts), не
@@ -54,7 +58,10 @@ function rule(parts) { return parts.join(','); }
 
 // Итоговый список строк `rules:`. MATCH обязан быть последним и ровно один:
 // это единственное правило без условия, всё после него недостижимо.
-function buildRules() {
+//   remote — строки RULE-SET из clients/stash-sets.js. Отдельный аргумент, а
+//   не импорт: так порядок «локальные -> наборы -> MATCH» виден в одном
+//   месте, а список наборов остаётся проверяемым сам по себе.
+function buildRules(remote) {
   const out = [];
   PERSONAL.forEach(function (r) { out.push(rule(r)); });
   // Apple Push: норма DIRECT, whitelist -> обход (Apple под whitelist не идёт).
@@ -71,6 +78,9 @@ function buildRules() {
   PROXY_SUFFIX.forEach(function (d) { out.push(rule(['DOMAIN-SUFFIX', d, P_AUTO])); });
   // Российские IP: то, что не поймали домены.
   out.push(rule(['GEOIP', 'RU', P_RU]));
+  // Удалённые наборы: в боевом конфиге [Remote Rule] стоит после [Rule]
+  // целиком, поэтому здесь они идут ниже всех локальных правил.
+  (remote || []).forEach(function (r) { out.push(String(r)); });
   out.push(rule(['MATCH', P_MAIN]));
   return out;
 }

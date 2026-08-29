@@ -18,9 +18,8 @@
 //     Так подтвердил интерфейс Stash; документация описывает другой путь —
 //     include-all + filter. Если имена не разрешатся, переключить сборку в
 //     форму «Б» (opts.membership = 'provider') — она уже реализована.
-//  2. benchmark-url / benchmark-timeout заданы У ПОСТАВЩИКА. Документация
-//     описывает их на уровне УЗЛА; интерфейс показывает переопределение у
-//     поставщика. Узлам их не пишем сознательно (clients/stash-nodes.js).
+//  2. Тест поставщика НЕ ПЕРЕОПРЕДЕЛЯЕТСЯ: ключи benchmark-* сняты, см.
+//     комментарий у TEST_URL ниже.
 //  3. «Слабый DIRECT»: RH-RU — fallback с DIRECT первым, обход вторым.
 //     В Loon проверено, что fallback пробивает DIRECT и уходит дальше при
 //     whitelist. Для Stash это НЕ проверено.
@@ -31,11 +30,12 @@
 import { PROVIDER, buildGroups, childGroup, nodeSet } from './stash.js';
 import { orderNames } from './stash-order.js';
 import { buildRules } from './stash-rules.js';
+import { buildProviders, buildSetRules } from './stash-sets.js';
 import { nodeToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
 // (поле conf_ver) и в первой строке самого профиля.
-const VERSION = 'S-draft-1';
+const VERSION = 'S-draft-2';
 
 // Поставщик прокси. interval — как часто Stash перечитывает файл узлов;
 // 600 с выбрано потому, что ПОРЯДОК членов групп меняется перевыдачей
@@ -43,7 +43,13 @@ const VERSION = 'S-draft-1';
 const PROVIDER_PATH = './providers/rh-lastdep.yaml';
 const PROVIDER_INTERVAL = 600;
 // Адрес и тайм-аут проверки — из [General] боевого конфига: proxy-test-url
-// и test-timeout (секунды, как их и ждёт benchmark-timeout).
+// и test-timeout (секунды). В ПРОФИЛЬ НЕ ПОПАДАЮТ. Раньше писались как
+// benchmark-url / benchmark-timeout у поставщика, но эти имена придуманы по
+// аналогии с Clash: документация Stash для поставщика прокси знает только
+// url, path, interval, filter, headers. Возможность в приложении есть (экран
+// поставщика, «Переопределить параметры теста производительности»), имён
+// ключей мы не знаем — до проверки на стенде работает умолчание Stash.
+// Константы оставлены готовыми, не удалять: docs/ЭТАП_K_STASH_ПРАВИЛА.md, р. 5.
 const TEST_URL = 'http://connectivitycheck.gstatic.com/generate_204';
 const TEST_TIMEOUT = 3;
 
@@ -103,8 +109,6 @@ function renderProfile(ctx) {
     url: String(o.base || '') + '/nodes?key=' + String(o.key || ''),
     path: PROVIDER_PATH,
     interval: PROVIDER_INTERVAL,
-    'benchmark-url': TEST_URL,
-    'benchmark-timeout': TEST_TIMEOUT,
   };
   const groups = profileGroups(lines, state, o);
   const out = [
@@ -118,10 +122,12 @@ function renderProfile(ctx) {
     '',
     yBlock({ 'proxy-providers': prov }, 0),
     '',
+    yBlock({ 'rule-providers': buildProviders(o.base, o.key) }, 0),
+    '',
     'proxy-groups:',
     groups.map(function (g) { return nodeToYaml(g, 2); }).join('\n'),
     '',
-    yBlock({ rules: buildRules() }, 0),
+    yBlock({ rules: buildRules(buildSetRules()) }, 0),
     '',
   ];
   return out.join('\n');
