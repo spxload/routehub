@@ -19,7 +19,7 @@
 //   src/sub.js   — подписка Lastdep: загрузка, кэш, два набора     (const, store, util)
 //   src/ai.js    — AI-тиеры: РАСЧЁТ страновых каскадов             (const, util)
 //   src/api.js   — /config, /nodes, /speed, /rkn, /status          (все выше)
-//   src/dash.js  — дашборд rh.box и личный список доменов       (const, store, util)
+//   src/dash.js  — дашборд rh.box и личный список доменов          (const, store, util)
 //   src/admin.js — админ-панель                                    (const, store, sub, util)
 //   src/clients/loon.js — синтаксис конфига Loon: AI-блоки, подстановки
 //
