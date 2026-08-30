@@ -16,6 +16,10 @@
 // ПОЧЕМУ ПЕСОЧНИЦА, А НЕ import. Пробы — не модули: это ES5-скрипты для
 // движка клиента, с `$`-объектами из его окружения. `node:vm` даёт ровно
 // такой контекст.
+//
+// СПИСОК ВЕДЁТСЯ РУКАМИ, и это уже подводило: ST7 отработала на устройстве
+// 24.08, а в списке её не было — то есть боевая проба тестом не покрывалась.
+// Завёл пробу — добавь строку сюда.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,6 +32,8 @@ const PROBES = [
   'probes/routehub-probe-context.js',
   'probes/routehub-probe-store.js',
   'probes/routehub-probe-stash6.js',
+  'probes/routehub-probe-stash7.js',
+  'probes/routehub-probe-stash8.js',
   'probes/routehub-probe-surge.js',
   'probes/routehub-probe-surge2.js',
   'probes/routehub-probe-surge3.js',
@@ -43,6 +49,8 @@ const BODY = JSON.stringify({
   'policy-groups': ['G1'],
   requests: [{ remoteHost: 'example.com', failed: false, rejected: false }],
   events: [{ content: 'test' }],
+  providers: { 'rh-wl-domains': { behavior: 'classical', ruleCount: 3 } },
+  rules: [{ type: 'RuleSet', payload: 'rh-wl-domains', proxy: 'DIRECT' }],
   mode: 'rule',
 });
 
