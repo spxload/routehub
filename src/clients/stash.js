@@ -60,6 +60,19 @@ function nameFilter(names) {
   return '^(?:' + names.map(reEsc).join('|') + ')$';
 }
 
+// ── ЗАМЕР ЗАДЕРЖКИ ЯДРОМ ─────────────────────────────────────────────
+// Stash меряет задержку сам (метод по умолчанию — HTTP HEAD) и делит
+// результат между всеми группами, где узел состоит
+// (stash.wiki/en/proxy-protocols/proxy-benchmark). Ключи ставятся НА УЗЕЛ,
+// не на группу и не на поставщика: у поставщика их нет, и попытка задать
+// их там была ошибкой S-draft-1, снятой в S-draft-2.
+//
+// Адрес — тот же, что у групп боевого Loon и у спидтеста (v1.9.8): проект
+// уже отбраковал cp.cloudflare.com как ненадёжный. Один адрес на все замеры
+// делает задержку ядра Stash и наш rtt сопоставимыми — это и проверяет ST9.
+const BENCH_URL = 'http://connectivitycheck.gstatic.com/generate_204';
+const BENCH_TIMEOUT = 3;
+
 // ── ОДИН СРЕЗ УЗЛОВ НА ГРУППЫ И НА ВЫДАЧУ ──────────────────────────────
 // ДОПУЩЕНИЕ, РАДИ КОТОРОГО ЭТО СДЕЛАНО ОДНОЙ ФУНКЦИЕЙ: имя узла в секции
 // `proxies:` обязано совпадать с именем члена группы. Stash сопоставляет их
@@ -79,6 +92,23 @@ function nodeSet(masterLines, state, opts) {
     const node = parseNodeLink(it.line);
     if (!node) { skipped++; return; }
     node.name = it.display;             // единственный источник имени
+    // ПРАВИЛО 1 ПРОЕКТА, ИСПОЛНЕННОЕ РОДНЫМ СРЕДСТВОМ. Обходные узлы стоят
+    // в каждой рабочей группе (17 из 70), а группа с умолчанием interval
+    // 600 с гоняет замер по всем членам. То есть профиль без этой строки
+    // тратил бы платный трафик каждые десять минут — уже не «пробы не
+    // трогают обход», а постоянная утечка. `benchmark-disabled: true`
+    // выключает замер конкретного узла у самого ядра.
+    // ЦЕНА, КОТОРУЮ НАДО ПРОВЕРИТЬ ПРОБОЙ: как fallback относится к члену
+    // без результата замера. Ожидание — считает доступным и берёт, когда
+    // все предыдущие отпали (обход у нас и есть последний запас). Если
+    // Stash считает такой узел мёртвым, обход не возьмётся никогда, и это
+    // ломает whitelist-сценарий. Проверяет ST9 полями alive/history.
+    if (it.tag === 'bypass') {
+      node['benchmark-disabled'] = true;
+    } else {
+      node['benchmark-url'] = BENCH_URL;
+      node['benchmark-timeout'] = BENCH_TIMEOUT;
+    }
     items.push(it);
     nodes.push(node);
   });
@@ -144,5 +174,5 @@ function renderGroups(masterLines, state, opts) {
   return 'proxy-groups:\n' + groups.map(function (g) { return nodeToYaml(g, 2); }).join('\n') + '\n';
 }
 
-export { PROVIDER, buildGroups, childGroup, contentType, nameFilter, nodeSet, renderGroups, renderNodes };
+export { BENCH_TIMEOUT, BENCH_URL, PROVIDER, buildGroups, childGroup, contentType, nameFilter, nodeSet, renderGroups, renderNodes };
 export { nodeLabel } from './stash-order.js';

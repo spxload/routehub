@@ -41,6 +41,7 @@ import * as DASH from './src/dash.js';
 import * as ADMIN from './src/admin.js';
 import * as LOON from './src/clients/loon.js';
 import * as STASH from './src/clients/stash.js';
+import * as STASH_PROFILE from './src/clients/stash-profile.js';
 import * as CLIENTS from './src/clients/registry.js';
 
 export default {
@@ -111,5 +112,7 @@ export default {
 // — при плоском спреде последний импорт молча затирал бы предыдущий, и тесты
 // клиента Loon начали бы проверять клиент Stash, продолжая «проходить».
 // Новый клиент добавляется отдельным ключом (STASH), а не спредом.
+// STASH_PROFILE — каркас профиля (группы, DNS, версия S-draft). Отдельным
+// ключом по той же причине: у него свои renderConfig и aiBlocks.
 // CLIENTS — реестр клиентских слоёв и выбор активного по env.CLIENT (ADR-01).
-export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, LOON, STASH, CLIENTS };
+export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, LOON, STASH, STASH_PROFILE, CLIENTS };

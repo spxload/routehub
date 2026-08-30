@@ -11,7 +11,8 @@
 // Порядок ключей в YAML фиксирован — иначе файл поставщика будет выглядеть
 // изменившимся при каждой перевыдаче одного и того же состава.
 const KEY_ORDER = ['name', 'type', 'server', 'port', 'uuid', 'tls', 'sni', 'flow',
-  'client-fingerprint', 'alpn', 'network', 'ws-opts', 'reality-opts'];
+  'client-fingerprint', 'alpn', 'network', 'ws-opts', 'reality-opts',
+  'benchmark-url', 'benchmark-timeout', 'benchmark-disabled'];
 
 // Скаляр. Числа и логические — как есть, строки — в одинарных кавычках с
 // удвоением кавычки внутри (единственное экранирование, которое YAML требует

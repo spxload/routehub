@@ -272,3 +272,57 @@ test('имена узлов в /nodes и в членах групп совпад
     assert.ok(fromNodes.indexOf(n) >= 0, 'член группы отсутствует в /nodes: ' + n);
   });
 });
+
+// ── ЗАМЕР ЗАДЕРЖКИ ЯДРОМ (S-draft-3) ────────────────────────────────
+// Правило 1 проекта («обходные узлы не тестировать — платный трафик») до
+// S-draft-3 держалось только на дисциплине проб. Но обходные узлы стоят
+// членами КАЖДОЙ рабочей группы, а группа с умолчанием interval 600 с гоняет
+// замер по всем членам, — то есть профиль тратил бы платный трафик каждые
+// десять минут сам, без всяких проб. Теперь правило исполняет само ядро:
+// у обходного узла `benchmark-disabled: true`, у остальных — свой адрес
+// теста. Тест сторожит обе половины: появление адреса у обходного узла и
+// исчезновение его у обычного одинаково означают утечку.
+test('обходной узел помечен benchmark-disabled и без адреса теста', () => {
+  const yaml = S.renderNodes(LINES, STATE, {});
+  const blocks = yaml.split(/\n(?=\s*- name:)/);
+  let seenBypass = 0, seenNormal = 0;
+  blocks.forEach(function (b) {
+    if (b.indexOf('name:') < 0) return;
+    const bypass = b.indexOf('Обход') >= 0;
+    if (bypass) {
+      seenBypass++;
+      assert.ok(b.indexOf('benchmark-disabled: true') >= 0,
+        'у обходного узла нет benchmark-disabled — ядро будет жечь платный трафик');
+      assert.ok(b.indexOf('benchmark-url') < 0,
+        'обходному узлу задан адрес теста — замер через него пойдёт');
+    } else {
+      seenNormal++;
+      assert.ok(b.indexOf('benchmark-url:') >= 0, 'у обычного узла нет адреса теста');
+      assert.ok(b.indexOf('benchmark-timeout:') >= 0, 'у обычного узла нет тайм-аута теста');
+      assert.ok(b.indexOf('benchmark-disabled') < 0,
+        'обычному узлу выключили замер — сортировать будет нечем');
+    }
+  });
+  assert.ok(seenBypass > 0, 'в наборе не оказалось обходного узла — тест ничего не проверил');
+  assert.ok(seenNormal > 0, 'в наборе не оказалось обычного узла — тест ничего не проверил');
+});
+
+// Адрес теста — тот же, что у групп боевого Loon и у спидтеста. Разные
+// адреса сделали бы задержку ядра Stash и наш rtt несопоставимыми, а именно
+// их сравнение и есть открытый хвост 8.
+test('адрес теста узла совпадает с адресом проекта', () => {
+  const yaml = S.renderNodes(LINES, STATE, {});
+  assert.ok(yaml.indexOf('connectivitycheck.gstatic.com/generate_204') >= 0,
+    'у узлов чужой адрес теста');
+  assert.ok(yaml.indexOf('cp.cloudflare.com') < 0,
+    'вернулся адрес, отбракованный проектом в v1.9.8');
+});
+
+// Второй рубеж поверх benchmark-disabled: пока группа обхода не нужна, ядро
+// по ней вообще не ходит.
+test('группа обхода помечена lazy', () => {
+  const groups = T.STASH_PROFILE.profileGroups(LINES, STATE, {});
+  const bypass = groups.filter(function (g) { return g.name === 'RH-Обход'; })[0];
+  assert.ok(bypass, 'группы RH-Обход нет вовсе');
+  assert.equal(bypass.lazy, true, 'у RH-Обход нет lazy — ядро будет её тестировать вхолостую');
+});

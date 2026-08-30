@@ -1,7 +1,8 @@
 /*
  * RouteHub — ПРОБА STASH ST9. Один вопрос, по схеме ST7 и ST8.
  * ===========================================================================
- * ВОПРОС: можно ли на Stash собрать метрики узлов без того, чего у Stash нет.
+ * ВОПРОС: можно ли на Stash собрать метрики узлов без того, чего у Stash нет,
+ * и не сломал ли `benchmark-disabled` у обходных узлов их подхват.
  *
  * ПОЧЕМУ ИМЕННО ЭТОТ. Профиль Stash уже отдаётся стендом, но сортировки по
  * композитному баллу на нём НЕТ: балл кормит `scripts/routehub-speedtest.js`,
@@ -44,8 +45,9 @@ var REV = 'ST9';
 var T0 = Date.now();
 var BUDGET_MS = 14000;                // настоящие миллисекунды, через Date.now()
 var PROBE_N = 3;                      // сколько узлов мерить задержкой
-var DELAY_URL = 'http://cp.cloudflare.com/generate_204';
+var DELAY_URL = 'http://connectivitycheck.gstatic.com/generate_204';
 var DELAY_MS = 2000;                  // бюджет ядру на один замер
+var BYPASS_N = 3;                     // сколько обходных узлов ОПИСАТЬ (не мерить)
 
 var rep = { rev: REV, ts: new Date().toISOString(), ans: {}, err: [] };
 var G = (typeof globalThis !== 'undefined') ? globalThis : this;
@@ -142,6 +144,27 @@ function stepProxies(next) {
       // Есть ли у ядра СВОЯ история задержек — тогда часть замера уже сделана.
       rep.ans.история_у_ядра = Array.isArray(node0.history) ? node0.history.length : 'нет';
     }
+
+    // ЧЕТВЁРТЫЙ ВОПРОС, добавлен вместе с S-draft-3. Обходным узлам профиль
+    // ставит `benchmark-disabled: true`, чтобы ядро не жгло платный трафик
+    // замером каждые 600 с. Цена неизвестна: как fallback относится к члену
+    // БЕЗ результата замера. Ожидание — считает доступным и берёт последним;
+    // опасение — считает мёртвым, и тогда обход не возьмётся никогда, то
+    // есть whitelist-сценарий сломан. Проба НЕ МЕРЯЕТ обходные узлы (правило
+    // 1), а только читает, что о них думает ядро.
+    var byp = {}, seenB = 0;
+    for (var b = 0; b < members.length && seenB < BYPASS_N; b++) {
+      var bn = members[b];
+      if (!isBypass(bn)) continue;
+      var bp = map[bn];
+      if (!bp) continue;
+      seenB++;
+      byp[bn] = {
+        alive: (bp.alive !== undefined ? bp.alive : (bp.Alive !== undefined ? bp.Alive : '?')),
+        история: Array.isArray(bp.history) ? bp.history.length : 'нет',
+      };
+    }
+    rep.ans.обходные_глазами_ядра = seenB ? byp : 'в группе их нет';
     next();
   });
 }
@@ -222,6 +245,7 @@ function finish() {
     'членов RH-AI-W: ' + (a.членов_RH_AI_W != null ? a.членов_RH_AI_W : '?') +
       ', записей в /proxies: ' + (a.записей_в_proxies != null ? a.записей_в_proxies : '?'),
     'задержка: ' + JSON.stringify(a.задержка || {}),
+    'обход глазами ядра: ' + JSON.stringify(a.обходные_глазами_ядра || {}),
     'Stash ' + (a.stash || '?') + ', ' + rep.ms + ' мс',
   ];
   console.log('[' + REV + '] ' + JSON.stringify(rep));

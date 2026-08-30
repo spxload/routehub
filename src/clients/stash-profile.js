@@ -24,10 +24,16 @@
 //     В Loon проверено, что fallback пробивает DIRECT и уходит дальше при
 //     whitelist. Для Stash это НЕ проверено.
 //  4. Группам не задан ни url теста, ни interval: по документации они не
-//     обязательны, значение по умолчанию 600 с.
+//     обязательны, значение по умолчанию 600 с. ЗАМЕР ЖИВЁТ НА УЗЛЕ
+//     (`benchmark-url`/`benchmark-timeout` в clients/stash.js), а не на
+//     группе: результат узла ядро делит между всеми группами, где узел
+//     состоит, поэтому дублировать настройку по группам незачем.
+//  5. `lazy: true` у RH-Обход: пока группа не используется, ядро не гоняет
+//     по ней замер. Обходные узлы вдобавок помечены `benchmark-disabled`,
+//     так что это второй рубеж, а не единственный.
 // История версий — CHANGELOG.md в корне репозитория.
 
-import { PROVIDER, buildGroups, childGroup, nodeSet } from './stash.js';
+import { BENCH_TIMEOUT, BENCH_URL, PROVIDER, buildGroups, childGroup, nodeSet } from './stash.js';
 import { orderNames } from './stash-order.js';
 import { buildRules } from './stash-rules.js';
 import { buildProviders, buildSetRules } from './stash-sets.js';
@@ -35,23 +41,23 @@ import { nodeToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
 // (поле conf_ver) и в первой строке самого профиля.
-const VERSION = 'S-draft-2';
+const VERSION = 'S-draft-3';
 
 // Поставщик прокси. interval — как часто Stash перечитывает файл узлов;
 // 600 с выбрано потому, что ПОРЯДОК членов групп меняется перевыдачей
 // конфига, а состав — перевыдачей файла поставщика (ADR-02, трейд-офф).
 const PROVIDER_PATH = './providers/rh-lastdep.yaml';
 const PROVIDER_INTERVAL = 600;
-// Адрес и тайм-аут проверки — из [General] боевого конфига: proxy-test-url
-// и test-timeout (секунды). В ПРОФИЛЬ НЕ ПОПАДАЮТ. Раньше писались как
-// benchmark-url / benchmark-timeout у поставщика, но эти имена придуманы по
-// аналогии с Clash: документация Stash для поставщика прокси знает только
-// url, path, interval, filter, headers. Возможность в приложении есть (экран
-// поставщика, «Переопределить параметры теста производительности»), имён
-// ключей мы не знаем — до проверки на стенде работает умолчание Stash.
-// Константы оставлены готовыми, не удалять: docs/ЭТАП_K_STASH_ПРАВИЛА.md, р. 5.
-const TEST_URL = 'http://connectivitycheck.gstatic.com/generate_204';
-const TEST_TIMEOUT = 3;
+// Адрес и тайм-аут проверки. S-draft-3: ТЕПЕРЬ ПОПАДАЮТ В ПРОФИЛЬ — но на
+// УЗЕЛ, а не на поставщика. У поставщика прокси документация Stash знает
+// только url, path, interval, filter, headers, и попытка задать там
+// benchmark-* была ошибкой S-draft-1. На уровне узла ключи `benchmark-url` и
+// `benchmark-timeout` документированы прямо
+// (stash.wiki/en/proxy-protocols/proxy-benchmark), их и ставит nodeSet.
+// Значения живут в clients/stash.js рядом с местом применения; здесь
+// переэкспортируются под прежними именами, чтобы не ломать тесты и ссылки.
+const TEST_URL = BENCH_URL;
+const TEST_TIMEOUT = BENCH_TIMEOUT;
 
 // DNS. Перенос [General]: dns-server = system,1.1.1.1,77.88.8.8 и
 // doh-server = cloudflare,google. Раскладка по секциям Stash: DoH — рабочие
@@ -80,6 +86,11 @@ function serviceGroups(masterLines, state, opts) {
   const bypass = names.length
     ? childGroup(G_BYPASS, names, o.membership, o.provider || PROVIDER)
     : { name: G_BYPASS, type: 'fallback', proxies: ['DIRECT'] };
+  // Пока группа не нужна, ядро её не тестирует — документированное `lazy`
+  // (stash.wiki/en/proxy-protocols/proxy-groups). Для группы, целиком
+  // состоящей из платных узлов, это ровно то поведение, которого требует
+  // правило 1 проекта.
+  bypass.lazy = true;
   return [
     // FINAL: прочий иностранный. Норма — DIRECT, под whitelist Диана
     // переключает на RH-АВТО руками (в Loon то же самое, тип select).
