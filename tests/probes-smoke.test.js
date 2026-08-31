@@ -36,6 +36,7 @@ const PROBES = [
   'probes/routehub-probe-stash8.js',
   'probes/routehub-probe-stash9.js',
   'probes/routehub-probe-stash10.js',
+  'probes/routehub-probe-stash11.js',
   'probes/routehub-probe-surge.js',
   'probes/routehub-probe-surge2.js',
   'probes/routehub-probe-surge3.js',
@@ -45,7 +46,12 @@ const PROBES = [
 // настоящих замеров: у Stash `/connections` отдаёт {connections:[…]},
 // у Surge `/v1/policies` — {proxies:[],policy-groups:[…]}.
 const BODY = JSON.stringify({
-  connections: [{ id: '1', rule: 'FINAL', chains: ['DIRECT'], metadata: { host: 'example.com' } }],
+  // Счётчики байт и цепочка добавлены для ST11: она ищет в записи именно их,
+  // и без них ветка разбора в тесте не выполнялась бы вовсе.
+  downloadTotal: 12345, uploadTotal: 678,
+  connections: [{ id: '1', rule: 'FINAL', ruleType: 'DOMAIN-SUFFIX',
+    chain: ['узел', 'RH-АВТО-C'], download: 29810000, upload: 66440,
+    chains: ['DIRECT'], metadata: { host: 'example.com' } }],
   dnsCache: [{ domain: 'example.com', data: ['93.184.216.34'] }],
   proxies: [],
   'policy-groups': ['G1'],
@@ -97,7 +103,7 @@ function makeSandbox(state) {
     },
     $httpAPI: (m, p, b, cb) => setTimeout(() => cb(JSON.parse(BODY)), 1),
     // У ответа ЕСТЬ заголовки: ST10 спрашивает у контроллера про CORS, и без
-    // них ветка разбора заголовков в тесте не выполнялась бы вовсе.
+    // них ветка разбора заголовков в тесте не выполнялась бы.
     // Методы head/options заведены потому, что предзапрос — это OPTIONS.
     // put/patch/delete подставлены НАРОЧНО падающими: если проба однажды
     // начнёт писать в боевую маршрутизацию, тест это покажет, а не пропустит

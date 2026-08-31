@@ -1,4 +1,4 @@
-name: "RouteHub — пробы ST8, ST9, ST10"
+name: "RouteHub — пробы ST8, ST9, ST10, ST11"
 desc: "Три пробы Stash по расписанию. ТОЛЬКО ЧТЕНИЕ: политику, правила, узлы и конфиг не меняют."
 author: "RouteHub"
 category: "RouteHub"
@@ -44,6 +44,9 @@ script-providers:
   rh-st10:
     url: https://raw.githubusercontent.com/spxload/routehub/stash-client/probes/routehub-probe-stash10.js
     interval: 86400
+  rh-st11:
+    url: https://raw.githubusercontent.com/spxload/routehub/stash-client/probes/routehub-probe-stash11.js
+    interval: 86400
 
 cron:
   script:
@@ -62,4 +65,13 @@ cron:
     # принимает ли секрет параметром адреса. Секрет в выгрузку не попадает.
     - name: rh-st10
       cron: '12,42 * * * *'
+      timeout: 40
+    # ST11 — что лежит в записи /connections: есть ли счётчики байт и
+    # пиковой скорости, и КАКАЯ ДОЛЯ соединений идёт через наши правила, а
+    # какая мимо них через GLOBAL. Второй вопрос важнее первого.
+    # ПРОГОНЯТЬ ПОСЛЕ ЗАМЕТНОГО ТРАФИКА: на пустом наборе соединений считать
+    # нечего. Имена хостов и значения правил проба НЕ выгружает — только
+    # типы и количества.
+    - name: rh-st11
+      cron: '17,47 * * * *'
       timeout: 40
