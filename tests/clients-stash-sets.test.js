@@ -83,9 +83,18 @@ const EXPECT = [
     url: 'rule/Clash/OverseasAI/OverseasAI.list', behavior: 'classical', format: 'text' },
   { set: 'rh-telegram', policy: 'RH-АВТО', conf: 'Loon/Telegram/Telegram.list',
     url: 'rule/Clash/Telegram/Telegram_No_Resolve.yaml', behavior: 'classical', format: 'yaml' },
+  // ОТКЛЮЧЁН в профиле Stash 31.08 по замеру ST8 (ruleCount 0 на 81 758
+  // строках), но в [Remote Rule] боевого конфига Loon он ОСТАЁТСЯ — там он
+  // работает. Поэтому строка не удалена: сверку «перенос повторяет боевой
+  // конфиг» она обслуживает по-прежнему, а из сверки поставщиков Stash
+  // исключается признаком `off`. Так расхождение видно как СОЗНАТЕЛЬНОЕ, а не
+  // теряется молча — потерянный набор и отключённый снаружи неразличимы.
   { set: 'rh-refilter', policy: 'RH-АВТО', conf: 'rules/domains_refilter.list',
-    url: 'rules/domains_refilter.list', behavior: 'classical', format: 'text' },
+    url: 'rules/domains_refilter.list', behavior: 'classical', format: 'text', off: true },
 ];
+
+// Наборы, которые ДОЛЖНЫ быть в профиле Stash: все, кроме отключённых.
+const EXPECT_ON = EXPECT.filter(function (e) { return !e.off; });
 
 // ── РАЗБОР ВЫДАЧИ ───────────────────────────────────────────────────────
 // Разбирать профиль ГОТОВЫМ парсером здесь нечем: зависимостей у проекта
@@ -140,14 +149,25 @@ test('эталон читается: в боевом конфиге 24 лока�
   });
 });
 
-test('все одиннадцать наборов и личный список есть в rule-providers, порядок как в [Remote Rule]', () => {
-  assert.equal(PROV.order.length, EXPECT.length);
-  assert.deepEqual(PROV.order, EXPECT.map(function (e) { return e.set; }));
+test('в rule-providers ровно включённые наборы, порядок как в [Remote Rule]', () => {
+  assert.equal(PROV.order.length, EXPECT_ON.length);
+  assert.deepEqual(PROV.order, EXPECT_ON.map(function (e) { return e.set; }));
+});
+
+// Отключённый набор не должен просочиться обратно ни поставщиком, ни
+// правилом: 2,4 МБ в сутки ради нуля правил — та трата, ради снятия которой
+// его и отключили.
+test('отключённого набора нет ни в поставщиках, ни в правилах', () => {
+  EXPECT.filter(function (e) { return e.off; }).forEach(function (e) {
+    assert.equal(PROV.order.indexOf(e.set), -1, 'вернулся отключённый поставщик: ' + e.set);
+    assert.equal(SETRULES.filter(function (r) { return r.indexOf(',' + e.set + ',') > 0; }).length, 0,
+      'вернулось правило отключённого набора: ' + e.set);
+  });
 });
 
 test('у каждого набора заданы behavior и format, и оба из допустимых значений', () => {
   const BEH = ['domain', 'ipcidr', 'classical'], FMT = ['yaml', 'text'];
-  EXPECT.forEach(function (e) {
+  EXPECT_ON.forEach(function (e) {
     const p = PROV.map[e.set];
     assert.ok(p, 'нет поставщика ' + e.set);
     assert.ok(BEH.indexOf(p.behavior) >= 0, e.set + ': behavior ' + p.behavior);
@@ -160,7 +180,7 @@ test('у каждого набора заданы behavior и format, и оба 
 });
 
 test('URL набора ведёт туда, куда решено, а расширение пути следует формату', () => {
-  EXPECT.forEach(function (e) {
+  EXPECT_ON.forEach(function (e) {
     const p = PROV.map[e.set];
     assert.ok(p.url.indexOf(e.url) >= 0, e.set + ': url ' + p.url);
     assert.equal(p.path, './rules/' + e.set + (e.format === 'yaml' ? '.yaml' : '.list'), e.set + ': path');
@@ -174,7 +194,7 @@ test('личный список берёт URL из base и key, как в Loon'
 });
 
 test('интервал обновления: сутки у внешних наборов, 60 с у личного списка', () => {
-  EXPECT.forEach(function (e) {
+  EXPECT_ON.forEach(function (e) {
     assert.equal(PROV.map[e.set].interval, e.set === 'rh-mylist' ? 60 : 86400, e.set);
   });
 });
@@ -188,11 +208,11 @@ test('наборы стоят ниже всех локальных правил 
   const last = RULES.length - 1 - RULES.slice().reverse().findIndex(function (r) { return r.indexOf('RULE-SET,') === 0; });
   assert.equal(first, CONF_LOCAL.length - 1, 'наборы начались не там, где кончились локальные правила');
   assert.equal(last, RULES.length - 2, 'между последним набором и MATCH что-то вклинилось');
-  assert.deepEqual(SETRULES, EXPECT.map(function (e) { return 'RULE-SET,' + e.set + ',' + e.policy; }));
+  assert.deepEqual(SETRULES, EXPECT_ON.map(function (e) { return 'RULE-SET,' + e.set + ',' + e.policy; }));
 });
 
 test('RULE-SET ссылается только на существующее имя поставщика', () => {
-  assert.equal(SETRULES.length, EXPECT.length);
+  assert.equal(SETRULES.length, EXPECT_ON.length);
   SETRULES.forEach(function (r) {
     const parts = r.split(',');
     assert.ok(Object.prototype.hasOwnProperty.call(PROV.map, parts[1]), 'нет поставщика ' + parts[1]);

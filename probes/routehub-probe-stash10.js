@@ -178,22 +178,55 @@ function walk(i, cb) {
 function stepPaths(next) { walk(0, function () { rep.ans.пути = pathRes; next(); }); }
 
 // ── ВЕРДИКТ ──────────────────────────────────────────────────────
+// РАЗБОР ПЕРЕПИСАН 31.08 ПО ПЕРВОМУ ЖЕ ЗАМЕРУ. Первая редакция решала по
+// одному признаку — принимается ли секрет параметром адреса, — и на живых
+// данных недооценила ответ: секрет параметром не принимается (401), но
+// ПРЕДЗАПРОС вернул 200 с `Access-Control-Allow-Headers: Authorization`,
+// то есть панель, шлющая секрет заголовком, разрешена. Решающий признак —
+// предзапрос, а токен в адресе лишь говорит, обойдётся ли панель без него.
+// Отдельно важен `Allow-Methods`: если там только GET, панель возможна
+// ТОЛЬКО НА ЧТЕНИЕ — переключить узел из браузера не выйдет.
+function corsCount(x) { return (x && typeof x === 'object' && x['есть']) || 0; }
+function corsField(x, name) {
+  var f = x && typeof x === 'object' && x['поля'];
+  return (f && f[name]) ? String(f[name]) : '';
+}
+
 function verdict() {
   var a = rep.ans;
   if (a.заголовки_видны === 'НЕТ') {
     return 'НЕЯСНО: скрипту не видны заголовки ответа, про CORS сказать нечего';
   }
-  var c = a.cors && a.cors['есть'];
-  var tok = String(a.токен_в_адресе || '').indexOf('принимается') > 0 &&
-            String(a.токен_в_адресе || '').indexOf('не принимается') < 0;
-  if (!c) {
+  var onGet = corsCount(a.cors), onPre = corsCount(a.предзапрос_cors);
+  if (!onGet && !onPre) {
     return 'НЕТ: контроллер не отдаёт CORS — чужая страница до него дойдёт, ' +
       'но прочитать ответ не сможет. Браузерная панель закрыта окончательно.';
   }
-  if (tok) return 'ДА: есть CORS и секрет принимается параметром адреса — ' +
-    'панель экосистемы Clash по http должна заработать как есть';
-  return 'ЧАСТИЧНО: CORS есть, но секрет параметром адреса не принимается — ' +
-    'панели понадобится заголовок Authorization, а значит рабочий предзапрос';
+  var tokLine = String(a.токен_в_адресе || '');
+  var tok = tokLine.indexOf('не принимается') < 0 && tokLine.indexOf('принимается') > 0;
+  var preOk = String(a.предзапрос || '').indexOf('HTTP 2') === 0;
+  var hdrOk = corsField(a.предзапрос_cors, 'access-control-allow-headers')
+    .toLowerCase().indexOf('authorization') >= 0;
+  var methods = corsField(a.предзапрос_cors, 'access-control-allow-methods').toUpperCase();
+  var writeOk = methods.indexOf('PUT') >= 0 || methods.indexOf('*') >= 0;
+  var scope = writeOk ? 'чтение и управление' : 'ТОЛЬКО ЧТЕНИЕ (в предзапросе нет PUT)';
+  a.область_панели = scope;
+
+  if (tok) {
+    return 'ДА: CORS есть и секрет принимается параметром адреса — панель по http ' +
+      'заработает как есть, область: ' + scope;
+  }
+  if (preOk && hdrOk) {
+    return 'ДА, С ОГОВОРКОЙ: секрет параметром адреса не принимается, но предзапрос ' +
+      'разрешает заголовок Authorization — панель по http заработает, если шлёт секрет ' +
+      'заголовком. Область: ' + scope;
+  }
+  if (preOk) {
+    return 'ЧАСТИЧНО: предзапрос отвечает, но Authorization в нём не разрешён — ' +
+      'панели нечем передать секрет';
+  }
+  return 'ЧАСТИЧНО: CORS на обычном запросе есть, предзапрос не отвечает — ' +
+    'панель с заголовком Authorization до контроллера не дойдёт';
 }
 
 var FINISHED = false;
@@ -209,6 +242,7 @@ function finish() {
     'CORS: ' + JSON.stringify(a.cors || {}),
     'предзапрос: ' + JSON.stringify(a.предзапрос || '?'),
     'токен в адресе: ' + (a.токен_в_адресе || '?'),
+    'область панели: ' + (a.область_панели || '?'),
     'Stash ' + (a.stash || '?') + ', ' + rep.ms + ' мс',
   ];
   console.log('[' + REV + '] ' + JSON.stringify(rep));
