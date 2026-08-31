@@ -8,6 +8,18 @@ import { KEY_RE } from '../const.js';
 import { kvGetJSON, kvPutJSON, kvPutManyJSON, loadRegistry, tokenGate } from '../store.js';
 import { classifyNet, jsonResp } from '../util.js';
 
+// Страница-проба смешанного содержимого. Отдаётся БЕЗ ключа и БЕЗ токена
+// намеренно: в ней нет ни данных, ни секретов, а весь смысл — чтобы её можно
+// было открыть в Safari на телефоне в один шаг. Диагностика, не маршрутизация:
+// страница ничего не меняет ни в Stash, ни в конфиге.
+// Вопрос, на который она отвечает, — ADR-04, раздел 4: пускает ли WebKit
+// запрос со страницы по https на http://127.0.0.1:9090.
+function handleMixed(MIXED_HTML) {
+  return new Response(MIXED_HTML, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
+}
+
 function handleWhoami(req) {
   const cf = req.cf || {};
   const ip = req.headers.get('CF-Connecting-IP') || '';
@@ -57,4 +69,4 @@ async function handleRkn(req, env, tok) {
   return jsonResp({ ok: true, key: key, mode: mode });
 }
 
-export { handleRkn, handleStatus, handleWhoami };
+export { handleMixed, handleRkn, handleStatus, handleWhoami };

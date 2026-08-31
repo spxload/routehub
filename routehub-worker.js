@@ -30,6 +30,7 @@
 // =============================================================
 
 import ADMIN_HTML from './web/routehub-admin.html';
+import MIXED_HTML from './web/routehub-mixed.html';
 
 import * as CONST from './src/const.js';
 import * as UTIL from './src/util.js';
@@ -71,6 +72,8 @@ export default {
       // v1.9.8: /version — проверка деплоя одной командой, без панели и ключа.
       // Версия не секрет, а раньше её можно было увидеть только в /admin.
       if (req.method === 'GET' && url.pathname === '/version') return UTIL.jsonResp({ worker: CONST.WORKER_VER });
+      // Диагностическая страница, без ключа и токена: см. api/misc.js.
+      if (req.method === 'GET' && url.pathname === '/mixed') return API.handleMixed(MIXED_HTML);
       if (req.method === 'GET' && url.pathname === '/config') return await API.handleConfig(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/nodes') return await API.handleNodes(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/refresh') return await API.handleRefresh(url, env, tok);

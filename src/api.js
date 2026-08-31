@@ -1,6 +1,6 @@
 // routehub — модуль api.js (фасад)
 // Боевые эндпоинты устройства: /config, /nodes, /speed, /rkn, /status.
-// Разделён из routehub-worker.js 2026-08-15 (v1.9.5). Логика не менялась.
+// Разделён из routehub-worker.js 2026-08-15 (v1.9.5). Логика не менялacь.
 // Синтаксис конфига с 2026-08-16 (v1.9.6) — в clients/loon.js, здесь только
 // сбор контекста. История версий — CHANGELOG.md в корне репозитория.
 //
@@ -10,11 +10,11 @@
 //   api/config.js — /config
 //   api/nodes.js  — /nodes, /refresh
 //   api/speed.js  — /speed
-//   api/misc.js   — /whoami, /status, /rkn
+//   api/misc.js   — /whoami, /status, /rkn, /mixed
 
 import { handleConfig } from './api/config.js';
-import { handleRkn, handleStatus, handleWhoami } from './api/misc.js';
+import { handleMixed, handleRkn, handleStatus, handleWhoami } from './api/misc.js';
 import { handleNodes, handleRefresh } from './api/nodes.js';
 import { handleSpeed } from './api/speed.js';
 
-export { handleConfig, handleNodes, handleRefresh, handleRkn, handleSpeed, handleStatus, handleWhoami };
+export { handleConfig, handleMixed, handleNodes, handleRefresh, handleRkn, handleSpeed, handleStatus, handleWhoami };
