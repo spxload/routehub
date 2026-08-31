@@ -35,6 +35,7 @@ const PROBES = [
   'probes/routehub-probe-stash7.js',
   'probes/routehub-probe-stash8.js',
   'probes/routehub-probe-stash9.js',
+  'probes/routehub-probe-stash10.js',
   'probes/routehub-probe-surge.js',
   'probes/routehub-probe-surge2.js',
   'probes/routehub-probe-surge3.js',
@@ -54,6 +55,15 @@ const BODY = JSON.stringify({
   rules: [{ type: 'RuleSet', payload: 'rh-wl-domains', proxy: 'DIRECT' }],
   mode: 'rule',
 });
+
+// Заголовки ответа подставного контроллера. Форма взята из того, что ищет
+// ST10: если контроллер Stash CORS отдаёт, поля называются именно так.
+const RESP_HEADERS = {
+  'Content-Type': 'application/json',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+};
 
 function makeSandbox(state) {
   const done = { called: false, value: undefined };
@@ -86,9 +96,20 @@ function makeSandbox(state) {
       setOutboundMode: () => { throw new Error('проба не должна менять режим'); },
     },
     $httpAPI: (m, p, b, cb) => setTimeout(() => cb(JSON.parse(BODY)), 1),
+    // У ответа ЕСТЬ заголовки: ST10 спрашивает у контроллера про CORS, и без
+    // них ветка разбора заголовков в тесте не выполнялась бы вовсе.
+    // Методы head/options заведены потому, что предзапрос — это OPTIONS.
+    // put/patch/delete подставлены НАРОЧНО падающими: если проба однажды
+    // начнёт писать в боевую маршрутизацию, тест это покажет, а не пропустит
+    // (то же соглашение, что у пишущих функций $surge выше).
     $httpClient: {
-      get: (opts, cb) => setTimeout(() => cb(null, { status: 200 }, BODY), 1),
-      post: (opts, cb) => setTimeout(() => cb(null, { status: 200 }, '{}'), 1),
+      get: (opts, cb) => setTimeout(() => cb(null, { status: 200, headers: RESP_HEADERS }, BODY), 1),
+      head: (opts, cb) => setTimeout(() => cb(null, { status: 200, headers: RESP_HEADERS }, ''), 1),
+      options: (opts, cb) => setTimeout(() => cb(null, { status: 204, headers: RESP_HEADERS }, ''), 1),
+      post: (opts, cb) => setTimeout(() => cb(null, { status: 200, headers: RESP_HEADERS }, '{}'), 1),
+      put: () => { throw new Error('проба не должна писать в маршрутизацию'); },
+      patch: () => { throw new Error('проба не должна писать в маршрутизацию'); },
+      delete: () => { throw new Error('проба не должна писать в маршрутизацию'); },
     },
     WebSocket: function () {
       // Сразу закрываемся: пробы обязаны это пережить и пойти дальше.
