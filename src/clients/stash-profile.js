@@ -14,10 +14,23 @@
 //
 // ДОПУЩЕНИЯ, КОТОРЫЕ ЗАКРЫВАЕТ ТОЛЬКО СТЕНД (полностью — в
 // docs/ЭТАП_K_STASH_ПРАВИЛА.md, раздел 3):
-//  1. Группа ссылается на узлы поставщика ПО ИМЕНИ (форма членства «А»).
-//     Так подтвердил интерфейс Stash; документация описывает другой путь —
-//     include-all + filter. Если имена не разрешатся, переключить сборку в
-//     форму «Б» (opts.membership = 'provider') — она уже реализована.
+//  1. ⛔ ДОПУЩЕНИЕ ОПРОВЕРГНУТО НА УСТРОЙСТВЕ 31.08. Стояло: «группа
+//     ссылается на узлы поставщика ПО ИМЕНИ (форма членства А)». Stash
+//     отверг профиль целиком: «proxy group[0]: '<имя узла>' not found».
+//     Поставщик при этом РАБОТАЕТ — карточка подписки в приложении собрана
+//     из заголовка subscription-userinfo нашей выдачи /nodes. То есть Stash
+//     просто не ищет членов группы среди узлов поставщика: к ним ведёт
+//     только `use:` + `filter`.
+//     Форму Б не включили, потому что она теряет ПОРЯДОК: фильтр — это
+//     регулярное выражение, порядок членов из него не следует, и -W с -C
+//     стали бы одинаковыми, а ради их различия схема и затевалась (ADR-02).
+//     S-draft-4: узлы описываются В ПРОФИЛЕ, поставщик из профиля убран.
+//     ПОБОЧНОЕ СЛЕДСТВИЕ, которое стоило увидеть раньше: поставщик и не мог
+//     освежать ПОРЯДОК — порядок живёт в `proxy-groups`, то есть в профиле,
+//     и обновляется только вместе с ним. Поставщик освежал лишь ОПИСАНИЯ
+//     узлов, значит отказом от него потерян только состав, но не порядок.
+//     Код формы Б оставлен: opts.membership = 'provider' возвращает
+//     поставщика в профиль. Пригодится, если найдётся способ задать порядок.
 //  2. Тест поставщика НЕ ПЕРЕОПРЕДЕЛЯЕТСЯ: ключи benchmark-* сняты, см.
 //     комментарий у TEST_URL ниже.
 //  3. «Слабый DIRECT»: RH-RU — fallback с DIRECT первым, обход вторым.
@@ -37,11 +50,11 @@ import { BENCH_TIMEOUT, BENCH_URL, PROVIDER, buildGroups, childGroup, nodeSet } 
 import { orderNames } from './stash-order.js';
 import { buildRules } from './stash-rules.js';
 import { buildProviders, buildSetRules } from './stash-sets.js';
-import { nodeToYaml, yBlock } from './stash-yaml.js';
+import { nodeToYaml, nodesToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
 // (поле conf_ver) и в первой строке самого профиля.
-const VERSION = 'S-draft-3';
+const VERSION = 'S-draft-4';
 
 // Поставщик прокси. interval — как часто Stash перечитывает файл узлов;
 // 600 с выбрано потому, что ПОРЯДОК членов групп меняется перевыдачей
@@ -115,13 +128,18 @@ function renderProfile(ctx) {
   const provider = o.provider || PROVIDER;
   const lines = o.masterLines || [];
   const state = o.state || {};
+  // Узлы В ПРОФИЛЕ (см. пункт 1 шапки). Берутся тем же nodeSet, что и выдача
+  // /nodes, — значит имена в `proxies:` и имена членов групп заведомо одни и
+  // те же, и тихий отказ по расхождению имён невозможен по построению.
+  const set = nodeSet(lines, state, o);
+  const groups = profileGroups(lines, state, o);
+  const useProvider = (o.membership === 'provider');
   const prov = {};
   prov[provider] = {
     url: String(o.base || '') + '/nodes?key=' + String(o.key || ''),
     path: PROVIDER_PATH,
     interval: PROVIDER_INTERVAL,
   };
-  const groups = profileGroups(lines, state, o);
   const out = [
     '# RouteHub — профиль Stash, ' + VERSION,
     '# Собран Worker\'ом для ключа ' + String(o.key || '') + '. Правки в этом файле',
@@ -131,7 +149,7 @@ function renderProfile(ctx) {
     '',
     yBlock({ dns: { 'default-nameserver': DNS_BOOT, nameserver: DNS_MAIN } }, 0),
     '',
-    yBlock({ 'proxy-providers': prov }, 0),
+    useProvider ? yBlock({ 'proxy-providers': prov }, 0) : nodesToYaml(set.nodes).replace(/\n$/, ''),
     '',
     yBlock({ 'rule-providers': buildProviders(o.base, o.key) }, 0),
     '',

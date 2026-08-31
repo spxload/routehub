@@ -211,9 +211,27 @@ test('без аргумента buildRules наборов не добавляе�
   assert.equal(bare.filter(function (r) { return r.indexOf('RULE-SET,') === 0; }).length, 0);
 });
 
-test('ключей benchmark-* в профиле больше нет', () => {
-  assert.equal(TEXT.indexOf('benchmark'), -1, 'benchmark-* вернулись в выдачу');
-  const prox = TEXT.split('proxy-providers:')[1].split('rule-providers:')[0];
-  assert.deepEqual(prox.match(/^ {4}([\w-]+):/gm).map(function (s) { return s.trim(); }),
-    ['url:', 'path:', 'interval:'], 'у поставщика прокси лишний ключ');
+// S-draft-3: ключи benchmark-* документированы НА УЗЛЕ и там их место.
+// S-draft-4: узлы переехали в профиль, поэтому теперь они там и видны.
+// Тест переписан дважды и оба раза — вслед за замером, а не вместо него:
+// сначала benchmark-* сняли у ПОСТАВЩИКА (там их документация не знает),
+// потом вернули на УЗЕЛ (там знает). Сторожим именно это различие.
+test('benchmark-* стоят у узлов и только у них', () => {
+  const head = TEXT.split('proxy-groups:')[0];
+  assert.ok(head.indexOf('proxies:') >= 0, 'узлов в профиле нет');
+  assert.ok(head.indexOf('benchmark-url:') >= 0, 'у узлов пропал адрес теста');
+  assert.ok(head.indexOf('benchmark-disabled: true') >= 0,
+    'у обходных узлов пропал выключенный замер — платный трафик');
+  const tail = TEXT.split('proxy-groups:').slice(1).join('proxy-groups:');
+  assert.equal(tail.indexOf('benchmark'), -1,
+    'benchmark-* просочились в группы или правила — их место на узле');
+});
+
+// S-draft-4, замер на устройстве 31.08: Stash НЕ ищет членов группы среди
+// узлов поставщика и отвергает такой профиль целиком. Поэтому в основной
+// форме поставщика в профиле быть не должно, а узлы — должны.
+test('в основной форме профиль несёт узлы, а не поставщика прокси', () => {
+  assert.ok(TEXT.indexOf('proxies:') >= 0, 'секции proxies нет');
+  assert.equal(TEXT.indexOf('proxy-providers:'), -1,
+    'вернулся поставщик прокси — Stash отвергнет профиль с явными именами');
 });

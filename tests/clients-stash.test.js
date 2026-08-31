@@ -240,7 +240,7 @@ test('/config при CLIENT=stash отдаёт профиль Stash, а не с�
   assert.equal(r.status, 200);
   const text = await r.text();
   assert.ok(text.indexOf('proxy-groups:') >= 0, 'секции proxy-groups нет');
-  assert.ok(text.indexOf('proxy-providers:') >= 0, 'секции proxy-providers нет');
+  assert.ok(text.indexOf('proxies:') >= 0, 'секции proxies нет');
   assert.ok(text.indexOf('RH-AI = select') < 0, 'просочился синтаксис Loon');
   assert.ok(text.indexOf('__RH_') < 0, 'плейсхолдеры остались');
 });
@@ -325,4 +325,61 @@ test('группа обхода помечена lazy', () => {
   const bypass = groups.filter(function (g) { return g.name === 'RH-Обход'; })[0];
   assert.ok(bypass, 'группы RH-Обход нет вовсе');
   assert.equal(bypass.lazy, true, 'у RH-Обход нет lazy — ядро будет её тестировать вхолостую');
+});
+
+// ── РЕГРЕССИЯ НА ОТКАЗ, ПОЛУЧЕННЫЙ НА УСТРОЙСТВЕ 31.08 ──────────────
+// Stash отверг профиль целиком: «proxy group[0]: '<имя узла>' not found».
+// Причина: члены групп были заданы именами, а сами узлы приезжали
+// ПОСТАВЩИКОМ, и среди узлов поставщика Stash членов группы не ищет.
+// Поставщик при этом работал — карточка подписки в приложении собиралась из
+// заголовка subscription-userinfo нашей выдачи /nodes, то есть отказ был не
+// в загрузке, а в разрешении имён.
+// Тест кодирует ровно это: КАЖДЫЙ член КАЖДОЙ группы обязан разрешаться
+// внутри самого профиля — среди его узлов, среди других групп или как
+// встроенная политика. Проверка идёт по отрендеренному тексту, а не по
+// структурам в памяти, потому что на устройство едет именно текст.
+test('каждый член каждой группы разрешается внутри профиля', () => {
+  const text = T.STASH_PROFILE.renderConfig(null, {
+    key: 'k1', base: 'https://w.invalid/t/T', masterLines: LINES, state: STATE,
+  });
+
+  const head = text.split('proxy-groups:')[0];
+  const nodes = Object.create(null);
+  head.split('\n').forEach(function (l) {
+    const m = /^\s*-\s+name:\s+'(.*)'\s*$/.exec(l);
+    if (m) nodes[m[1].split("''").join("'")] = true;
+  });
+  assert.ok(Object.keys(nodes).length > 0, 'в профиле нет ни одного узла');
+
+  const groups = T.STASH_PROFILE.profileGroups(LINES, STATE, {});
+  const names = Object.create(null);
+  groups.forEach(function (g) { names[g.name] = true; });
+
+  const unresolved = [];
+  groups.forEach(function (g) {
+    (g.proxies || []).forEach(function (m) {
+      if (nodes[m] || names[m] || m === 'DIRECT' || m === 'REJECT') return;
+      unresolved.push(g.name + ' -> ' + m);
+    });
+  });
+  assert.deepEqual(unresolved, [],
+    'Stash отвергнет профиль: член группы не разрешается внутри него');
+});
+
+// Обратная сторона той же правки: пока членство задано именами, поставщика
+// прокси в профиле быть НЕ ДОЛЖНО — иначе те же имена приедут из двух
+// источников. Форма Б включается явно и возвращает поставщика.
+test('форма членства и источник узлов согласованы', () => {
+  const byName = T.STASH_PROFILE.renderConfig(null, {
+    key: 'k1', base: 'https://w.invalid/t/T', masterLines: LINES, state: STATE,
+  });
+  assert.ok(byName.indexOf('\nproxies:') >= 0, 'узлов в профиле нет');
+  assert.equal(byName.indexOf('proxy-providers:'), -1, 'лишний поставщик при явных именах');
+
+  const byProvider = T.STASH_PROFILE.renderConfig(null, {
+    key: 'k1', base: 'https://w.invalid/t/T', masterLines: LINES, state: STATE,
+    membership: 'provider',
+  });
+  assert.ok(byProvider.indexOf('proxy-providers:') >= 0, 'в форме Б пропал поставщик');
+  assert.ok(byProvider.indexOf('use:') >= 0, 'в форме Б группы не ссылаются на поставщика');
 });
