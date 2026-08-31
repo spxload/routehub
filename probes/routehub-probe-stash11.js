@@ -48,8 +48,8 @@ try {
 } catch (e) { rep.err.push('нет $environment'); }
 CTRL = String(CTRL).replace(/\/+$/, '');
 
-function get(path, cb) {
-  var o = { url: CTRL + path, timeout: 4 };
+function get(path, sec, cb) {
+  var o = { url: CTRL + path, timeout: sec };
   if (AUTH) o.headers = { Authorization: AUTH };
   var done = false;
   function once(b, e) { if (done) return; done = true; cb(b, e); }
@@ -58,6 +58,55 @@ function get(path, cb) {
       once(e ? null : body, e ? String(e) : (r && r.status >= 400 ? 'HTTP ' + r.status : null));
     });
   } catch (e2) { once(null, String(e2)); }
+}
+
+// ── ДОБЫЧА /connections: ТРИ СПОСОБА ─────────────────────────────────
+// ПОЧЕМУ НЕ ОДИН ЗАПРОС. Первый прогон 31.08 в 19:17 вернул
+// «Get http://127.0.0.1:9090/connections: EOF» за 308 мс — соединение
+// закрылось БЕЗ ответа. При этом ST10 тремя часами раньше тот же путь
+// прочитала: 33 015 байт. Значит путь живой, а отказ зависит от состояния —
+// вероятнее всего от РАЗМЕРА выдачи: после двух минут видео соединений
+// накапливается заметно больше, и тело растёт. EOF это не таймаут (тот у
+// Stash выглядит как «context deadline exceeded», см. /logs в ST10), а
+// обрыв, поэтому просто ждать дольше бессмысленно — но попробовать стоит,
+// и стоит иметь запасной путь.
+// Способы идут по возрастанию непохожести на предыдущий, и КАЖДЫЙ
+// записывается в отчёт: даже неудачная попытка говорит, чем именно
+// контроллер отвечает на большую выдачу.
+var attempts = [];
+
+function note(way, ok, detail) {
+  attempts.push(way + ': ' + (ok ? 'ДА' : 'нет') + (detail ? ' — ' + detail : ''));
+}
+
+// Способ 3 (запасной): тот же путь потоком. В экосистеме Clash
+// `/connections` умеет отдавать снимок первым сообщением WebSocket. Если
+// обрыв связан с телом обычного ответа, поток может пройти там, где GET нет.
+function connByWs(cb) {
+  var done = false;
+  function fin(body, why) { if (done) return; done = true; note('поток ws', !!body, why); cb(body); }
+  var ws;
+  try { ws = new G.WebSocket(CTRL.replace(/^http/, 'ws') + '/connections'); }
+  catch (e) { fin(null, 'конструктор: ' + String(e).slice(0, 60)); return; }
+  ws.onmessage = function (m) { try { ws.close(); } catch (e) {} fin(m && m.data, 'снимок получен'); };
+  ws.onerror = function () { try { ws.close(); } catch (e) {} fin(null, 'ошибка потока'); };
+  ws.onclose = function () { fin(null, 'закрылся без сообщений'); };
+  setTimeout(function () { try { ws.close(); } catch (e) {} fin(null, 'таймаут'); }, 2500);
+}
+
+function fetchConnections(cb) {
+  get('/connections', 5, function (b1, e1) {
+    note('GET, 5 с', !!b1, e1 || (b1 ? String(b1).length + ' б' : ''));
+    if (b1) { cb(b1); return; }
+    // Вторая попытка с большим запасом: если дело всё-таки во времени.
+    setTimeout(function () {
+      get('/connections', 10, function (b2, e2) {
+        note('GET, 10 с', !!b2, e2 || (b2 ? String(b2).length + ' б' : ''));
+        if (b2) { cb(b2); return; }
+        connByWs(cb);
+      });
+    }, 400);
+  });
 }
 
 // Имя ключа и ТИП значения — без самого значения. Числа отдаём: они не
@@ -99,8 +148,9 @@ function findCounters(o) {
 }
 
 function stepConn(next) {
-  get('/connections', function (body, e) {
-    if (e || !body) { rep.ans.connections = 'не ответил: ' + (e || 'пусто'); next(); return; }
+  fetchConnections(function (body) {
+    rep.ans.способы_добычи = attempts;
+    if (!body) { rep.ans.connections = 'не дался ни одним способом'; next(); return; }
     var d = null;
     try { d = JSON.parse(body); } catch (e2) {
       rep.ans.connections = 'не разобрался, ' + String(body).length + ' б';
@@ -125,7 +175,7 @@ function stepConn(next) {
 
     // ── ГЛАВНОЕ: работают ли правила ───────────────────────────────
     // Значения правил и хостов НЕ выгружаются: только счёт по типам.
-    var byType = {}, norule = 0, viaGlobal = 0, viaOurs = 0, other = 0;
+    var byType = {}, norule = 0, viaGlobal = 0, viaOurs = 0, direct = 0, other = 0;
     for (var i = 0; i < list.length; i++) {
       var c = list[i] || {};
       var t = String(c.ruleType || c.rule || c.RuleType || '').toUpperCase() || '(нет поля)';
@@ -135,11 +185,20 @@ function stepConn(next) {
       var chs = Array.isArray(ch) ? ch.join('|') : String(ch || '');
       if (chs.indexOf('GLOBAL') >= 0) viaGlobal++;
       else if (chs.indexOf('RH-') >= 0) viaOurs++;
+      // DIRECT считается ОТДЕЛЬНО, и это добавлено 31.08 не для полноты.
+      // Правило `MATCH,RH-Главный` ведёт в `select`, первый член которого —
+      // DIRECT. Значит всё, что не поймано правилами, уходит напрямую, а не
+      // через узел. Именно так объясняется «YouTube не работает по
+      // правилам»: видео шло через прокси, а API плеера — напрямую из РФ.
+      // Много DIRECT при просмотре видео = дыра в правилах, а не поломка.
+      // Имена хостов при этом по-прежнему НЕ выгружаются: только счёт.
+      else if (chs.indexOf('DIRECT') >= 0 || chs === '') direct++;
       else other++;
     }
     rep.ans.правил_по_типам = byType;
     rep.ans.без_правила = norule;
     rep.ans.через_GLOBAL = viaGlobal;
+    rep.ans.напрямую_DIRECT = direct;
     rep.ans.через_наши_группы = viaOurs;
     rep.ans.через_прочее = other;
     next();
@@ -170,8 +229,26 @@ function stepTraffic(next) {
   setTimeout(function () { try { ws.close(); } catch (e) {} fin('таймаут потока'); }, 2500);
 }
 
+function stepMode(next) {
+  get('/configs', 3, function (body, e) {
+    if (e || !body) { rep.ans.режим_ядра = 'не ответил: ' + (e || 'пусто'); next(); return; }
+    var d = null; try { d = JSON.parse(body); } catch (e2) {}
+    rep.ans.режим_ядра = (d && (d.mode || d.Mode)) || 'поля mode нет';
+    next();
+  });
+}
+
 function verdict() {
   var a = rep.ans;
+  // Режим ядра спрашивается ПЕРВЫМ делом и попадает в вердикт, потому что
+  // 31.08 «Правило: NO-RULE» и цепочка через GLOBAL были приняты за поломку
+  // правил, а объяснялись выбранным вручную глобальным режимом. Отличить
+  // «правила не сработали» от «правила выключены» обязана проба, а не память.
+  var m = String(a.режим_ядра || '').toLowerCase();
+  if (m && m.indexOf('rule') < 0) {
+    return 'РЕЖИМ ЯДРА «' + a.режим_ядра + '», НЕ ПО ПРАВИЛАМ — про маршрутизацию ' +
+      'по правилам эта выгрузка не говорит ничего. Вернуть режим и прогнать заново.';
+  }
   if (typeof a.соединений !== 'number' || !a.соединений) {
     return 'НЕТ ДАННЫХ: соединений в выдаче нет, прогнать после заметного трафика';
   }
@@ -180,10 +257,13 @@ function verdict() {
   for (var k in cnt) { haveBytes = true; break; }
   if (!haveBytes) { for (var k2 in cntM) { haveBytes = true; break; } }
 
-  var ours = a.через_наши_группы || 0, glob = a.через_GLOBAL || 0;
+  var ours = a.через_наши_группы || 0, glob = a.через_GLOBAL || 0, dir = a.напрямую_DIRECT || 0;
   var routing;
   if (ours === 0 && glob > 0) routing = 'ПРАВИЛА НЕ РАБОТАЮТ: всё идёт через GLOBAL';
-  else if (ours > 0 && glob === 0) routing = 'правила работают: всё через наши группы';
+  else if (ours === 0 && dir > 0) routing = 'ВСЁ НАПРЯМУЮ: ни одно соединение не ушло в наши группы';
+  else if (ours > 0 && dir > ours) routing = 'ДЫРА В ПРАВИЛАХ: напрямую ' + dir +
+    ' против ' + ours + ' через наши группы';
+  else if (ours > 0 && glob === 0) routing = 'правила работают: наши ' + ours + ', напрямую ' + dir;
   else if (ours > 0 && glob > 0) routing = 'смешанно: наши ' + ours + ', GLOBAL ' + glob;
   else routing = 'по цепочкам судить не вышло';
 
@@ -199,9 +279,11 @@ function finish() {
   var a = rep.ans;
   var lines = [
     a.ВЕРДИКТ,
+    'режим ядра: ' + (a.режим_ядра || '?'),
     'соединений: ' + (a.соединений != null ? a.соединений : '?') +
       ', без правила ' + (a.без_правила != null ? a.без_правила : '?'),
     'цепочки: наши ' + (a.через_наши_группы != null ? a.через_наши_группы : '?') +
+      ', DIRECT ' + (a.напрямую_DIRECT != null ? a.напрямую_DIRECT : '?') +
       ', GLOBAL ' + (a.через_GLOBAL != null ? a.через_GLOBAL : '?') +
       ', прочее ' + (a.через_прочее != null ? a.через_прочее : '?'),
     'счётчики: ' + JSON.stringify(a.счётчики_в_записи || {}),
@@ -228,4 +310,4 @@ setTimeout(function () {
   if (!FINISHED) { rep.err.push('сторож: бюджет ' + BUDGET_MS + ' мс исчерпан'); finish(); }
 }, Math.round(BUDGET_MS / 3.6));
 
-stepConn(function () { stepTraffic(finish); });
+stepMode(function () { stepConn(function () { stepTraffic(finish); }); });

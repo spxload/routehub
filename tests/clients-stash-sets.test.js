@@ -199,14 +199,48 @@ test('интервал обновления: сутки у внешних наб
   });
 });
 
-test('локальные правила профиля построчно повторяют [Rule] боевого конфига', () => {
-  assert.deepEqual(RULES.filter(function (r) { return r.indexOf('RULE-SET,') < 0; }), CONF_LOCAL);
+// СОЗНАТЕЛЬНЫЕ ДОПОЛНЕНИЯ к [Rule]. Профиль Stash имеет право отличаться от
+// боевого конфига Loon, но только явно: молча разошедшийся перенос — это
+// ровно та ошибка, ради поимки которой сверка и заведена. Поэтому каждая
+// лишняя строка перечисляется здесь поимённо, и тест требует, чтобы строк
+// было ИМЕННО СТОЛЬКО и ИМЕННО ТАКИХ.
+// 31.08: инфраструктура YouTube (PROXY_EXTRA в clients/stash-rules.js) —
+// в боевом [Rule] её нет, разбор в шапке модуля.
+const LOCAL_EXTRA = ['ytimg.com', 'ggpht.com', 'youtu.be',
+  'youtube-nocookie.com', 'youtubei.googleapis.com']
+  .map(function (d) { return 'DOMAIN-SUFFIX,' + d + ',RH-АВТО'; });
+
+// Локальные правила профиля минус сознательные дополнения.
+function localMinusExtra(list) {
+  return list.filter(function (r) { return LOCAL_EXTRA.indexOf(r) < 0; });
+}
+
+test('локальные правила профиля повторяют [Rule] боевого конфига плюс явные дополнения', () => {
+  const local = RULES.filter(function (r) { return r.indexOf('RULE-SET,') < 0; });
+  assert.deepEqual(localMinusExtra(local), CONF_LOCAL,
+    'перенос разошёлся с боевым конфигом сверх объявленных дополнений');
+  LOCAL_EXTRA.forEach(function (r) {
+    assert.ok(local.indexOf(r) >= 0, 'пропало объявленное дополнение: ' + r);
+  });
+  assert.equal(local.length, CONF_LOCAL.length + LOCAL_EXTRA.length,
+    'лишних локальных правил больше, чем объявлено');
+});
+
+// Дополнения обязаны стоять ВЫШЕ удалённых наборов и выше MATCH: иначе их
+// перехватит набор рекламы или GEOIP, и правка окажется бессмысленной.
+test('дополнения стоят среди локальных правил, а не после наборов', () => {
+  const firstSet = RULES.findIndex(function (r) { return r.indexOf('RULE-SET,') === 0; });
+  LOCAL_EXTRA.forEach(function (r) {
+    const i = RULES.indexOf(r);
+    assert.ok(i >= 0 && i < firstSet, 'дополнение уехало ниже наборов: ' + r);
+  });
 });
 
 test('наборы стоят ниже всех локальных правил и выше MATCH — как [Remote Rule] после [Rule]', () => {
   const first = RULES.findIndex(function (r) { return r.indexOf('RULE-SET,') === 0; });
   const last = RULES.length - 1 - RULES.slice().reverse().findIndex(function (r) { return r.indexOf('RULE-SET,') === 0; });
-  assert.equal(first, CONF_LOCAL.length - 1, 'наборы начались не там, где кончились локальные правила');
+  assert.equal(first, CONF_LOCAL.length + LOCAL_EXTRA.length - 1,
+    'наборы начались не там, где кончились локальные правила');
   assert.equal(last, RULES.length - 2, 'между последним набором и MATCH что-то вклинилось');
   assert.deepEqual(SETRULES, EXPECT_ON.map(function (e) { return 'RULE-SET,' + e.set + ',' + e.policy; }));
 });
@@ -227,7 +261,7 @@ test('MATCH ровно один и последний', () => {
 
 test('без аргумента buildRules наборов не добавляет — RULE-SET не встроен в правила', () => {
   const bare = buildRules();
-  assert.deepEqual(bare, CONF_LOCAL);
+  assert.deepEqual(localMinusExtra(bare), CONF_LOCAL);
   assert.equal(bare.filter(function (r) { return r.indexOf('RULE-SET,') === 0; }).length, 0);
 });
 
