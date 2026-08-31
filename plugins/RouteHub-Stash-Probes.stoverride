@@ -34,19 +34,28 @@ category: "RouteHub"
 # ГДЕ СМОТРЕТЬ ВЫГРУЗКУ. Два канала: уведомление (полный отчёт кладётся в
 # буфер обмена) и «Журналы → Журналы сценариев» в приложении.
 
+# ⚠️ ИНТЕРВАЛ 300 С, А НЕ СУТКИ — И ЭТО ВАЖНО. Выгрузка ST11 от 31.08, 21:17
+# пришла со СТАРОЙ редакции скрипта: в ней не было полей, добавленных двумя
+# часами раньше. Причина — `interval: 86400`: Stash держит скачанный скрипт
+# сутки и правку просто не видит. Для боевого скрипта это правильно, для
+# ПРОБЫ — нет: проба живёт короткими итерациями «поправил — прогнал».
+# Пять минут выбраны как компромисс: свежесть есть, а качать по 15 КБ раз в
+# пять минут дешевле, чем разбирать выгрузку неизвестной редакции.
+# ПОСЛЕ ПРОГОНА OVERRIDE ВЫКЛЮЧИТЬ — тогда и трафик, и побудки прекратятся.
+
 script-providers:
   rh-st8:
     url: https://raw.githubusercontent.com/spxload/routehub/stash-client/probes/routehub-probe-stash8.js
-    interval: 86400
+    interval: 300
   rh-st9:
     url: https://raw.githubusercontent.com/spxload/routehub/stash-client/probes/routehub-probe-stash9.js
-    interval: 86400
+    interval: 300
   rh-st10:
     url: https://raw.githubusercontent.com/spxload/routehub/stash-client/probes/routehub-probe-stash10.js
-    interval: 86400
+    interval: 300
   rh-st11:
     url: https://raw.githubusercontent.com/spxload/routehub/stash-client/probes/routehub-probe-stash11.js
-    interval: 86400
+    interval: 300
 
 cron:
   script:

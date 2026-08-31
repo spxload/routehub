@@ -47,6 +47,9 @@ try {
   rep.ans.stash = ($environment && $environment['stash-version']) || '?';
 } catch (e) { rep.err.push('нет $environment'); }
 CTRL = String(CTRL).replace(/\/+$/, '');
+// Секрет отдельно от заголовка: для WebSocket заголовок задать нельзя, там
+// он идёт параметром адреса. В отчёт НЕ КЛАДЁТСЯ.
+var SECRET = String(AUTH).replace(/^\s*Bearer\s+/i, '');
 
 function get(path, sec, cb) {
   var o = { url: CTRL + path, timeout: sec };
@@ -86,7 +89,10 @@ function connByWs(cb) {
   var done = false;
   function fin(body, why) { if (done) return; done = true; note('поток ws', !!body, why); cb(body); }
   var ws;
-  try { ws = new G.WebSocket(CTRL.replace(/^http/, 'ws') + '/connections'); }
+  try {
+    ws = new G.WebSocket(CTRL.replace(/^http/, 'ws') + '/connections' +
+      (SECRET ? ('?token=' + encodeURIComponent(SECRET)) : ''));
+  }
   catch (e) { fin(null, 'конструктор: ' + String(e).slice(0, 60)); return; }
   ws.onmessage = function (m) { try { ws.close(); } catch (e) {} fin(m && m.data, 'снимок получен'); };
   ws.onerror = function () { try { ws.close(); } catch (e) {} fin(null, 'ошибка потока'); };
@@ -136,15 +142,42 @@ var BYTES = ['upload', 'download', 'uploadTotal', 'downloadTotal', 'up', 'down',
   'uploadSpeed', 'downloadSpeed', 'maxUploadSpeed', 'maxDownloadSpeed',
   'uploadCurrent', 'downloadCurrent', 'bytesSent', 'bytesReceived'];
 
+// ⚠️ ИСПРАВЛЕНО 31.08 ПО ПЕРВОМУ ЖЕ УДАЧНОМУ ПРОГОНУ. Первая редакция брала
+// только ЧИСЛА и потому объявила «счётчиков нет», хотя они были: у Stash
+// `upload` и `download` — это ОБЪЕКТЫ вида {current, last, max, total}.
+// Ложноотрицательный вердикт хуже отсутствия вердикта, поэтому теперь
+// разбираются обе формы, и вложенные числа выводятся целиком: `total` — это
+// накопленный объём, `max` — пиковая скорость, ради которой всё затевалось.
 function findCounters(o) {
   var hit = {};
+  if (!o || typeof o !== 'object') return hit;
   for (var k in o) {
-    var lk = String(k).toLowerCase();
+    var lk = String(k).toLowerCase(), v = o[k], known = false;
     for (var i = 0; i < BYTES.length; i++) {
-      if (lk === BYTES[i].toLowerCase() && typeof o[k] === 'number') { hit[k] = o[k]; break; }
+      if (lk === BYTES[i].toLowerCase()) { known = true; break; }
+    }
+    if (!known) continue;
+    if (typeof v === 'number') { hit[k] = v; continue; }
+    if (v && typeof v === 'object') {
+      var sub = {}, any = false;
+      for (var kk in v) { if (typeof v[kk] === 'number') { sub[kk] = v[kk]; any = true; } }
+      if (any) hit[k] = sub;
     }
   }
   return hit;
+}
+
+// Тайминги соединения. Найдены той же выгрузкой: metadata.tracing — объект
+// {ruleEvaluate, dnsQuery, connect}. `connect` это время установки
+// соединения, то есть задержка, снятая на РЕАЛЬНОМ трафике, а не пробой.
+// Значение для сборщика метрик ровно то же, что у счётчиков: цифры уже
+// посчитаны клиентом, платить за них не надо.
+function findTracing(c) {
+  var t = (c && c.tracing) || (c && c.metadata && c.metadata.tracing);
+  if (!t || typeof t !== 'object') return 'нет';
+  var out = {};
+  for (var k in t) out[k] = (typeof t[k] === 'number') ? t[k] : (typeof t[k]);
+  return out;
 }
 
 function stepConn(next) {
@@ -167,6 +200,19 @@ function stepConn(next) {
     // Состав ОДНОЙ записи: имена и типы, без значений.
     rep.ans.состав_записи = shape(list[0]);
     rep.ans.счётчики_в_записи = findCounters(list[0]);
+    rep.ans.тайминги_в_записи = findTracing(list[0]);
+    // Сумма по всем соединениям: показывает, на скольких из них счётчики
+    // непустые, — одна запись могла попасться свежей и нулевой.
+    var withBytes = 0, maxSeen = 0;
+    for (var q = 0; q < list.length; q++) {
+      var cc = findCounters(list[q]);
+      var dn = cc.download;
+      if (dn && typeof dn === 'object' && dn.total) withBytes++;
+      else if (typeof dn === 'number' && dn) withBytes++;
+      if (dn && typeof dn === 'object' && typeof dn.max === 'number' && dn.max > maxSeen) maxSeen = dn.max;
+    }
+    rep.ans.соединений_со_счётчиком = withBytes;
+    rep.ans.пиковая_скорость_байт_с = maxSeen;
     // Вложенный metadata, если он есть отдельным объектом.
     if (list[0] && typeof list[0].metadata === 'object' && list[0].metadata) {
       rep.ans.состав_metadata = shape(list[0].metadata);
@@ -211,7 +257,12 @@ function stepConn(next) {
 function stepTraffic(next) {
   var done = false;
   function fin(v) { if (done) return; done = true; rep.ans.поток_traffic = v; next(); }
-  var url = CTRL.replace(/^http/, 'ws') + '/traffic';
+  // ТОКЕН В АДРЕСЕ ОБЯЗАТЕЛЕН. Первые два прогона дали «ошибка потока»,
+  // и причина, скорее всего, в авторизации: заголовки в WebSocket из JS
+  // задать нельзя, а без них контроллер отвечает 401. Замер ST4 открывал
+  // поток именно как `ws://…/traffic?token=`. Секрет в отчёт не попадает.
+  var url = CTRL.replace(/^http/, 'ws') + '/traffic' +
+    (SECRET ? ('?token=' + encodeURIComponent(SECRET)) : '');
   var ws;
   try { ws = new G.WebSocket(url); }
   catch (e) { fin('конструктор упал: ' + String(e).slice(0, 80)); return; }
@@ -256,6 +307,7 @@ function verdict() {
   var haveBytes = false;
   for (var k in cnt) { haveBytes = true; break; }
   if (!haveBytes) { for (var k2 in cntM) { haveBytes = true; break; } }
+  var peak = a.пиковая_скорость_байт_с || 0;
 
   var ours = a.через_наши_группы || 0, glob = a.через_GLOBAL || 0, dir = a.напрямую_DIRECT || 0;
   var routing;
@@ -267,7 +319,9 @@ function verdict() {
   else if (ours > 0 && glob > 0) routing = 'смешанно: наши ' + ours + ', GLOBAL ' + glob;
   else routing = 'по цепочкам судить не вышло';
 
-  return (haveBytes ? 'СЧЁТЧИКИ ЕСТЬ' : 'СЧЁТЧИКОВ НЕТ') + '; ' + routing;
+  return (haveBytes
+    ? ('СЧЁТЧИКИ ЕСТЬ' + (peak ? ', пик ' + Math.round(peak / 1024) + ' КБ/с' : ''))
+    : 'СЧЁТЧИКОВ НЕТ') + '; ' + routing;
 }
 
 var FINISHED = false;
@@ -287,6 +341,8 @@ function finish() {
       ', GLOBAL ' + (a.через_GLOBAL != null ? a.через_GLOBAL : '?') +
       ', прочее ' + (a.через_прочее != null ? a.через_прочее : '?'),
     'счётчики: ' + JSON.stringify(a.счётчики_в_записи || {}),
+    'тайминги: ' + JSON.stringify(a.тайминги_в_записи || '?') +
+      ', со счётчиком ' + (a.соединений_со_счётчиком != null ? a.соединений_со_счётчиком : '?'),
     'Stash ' + (a.stash || '?') + ', ' + rep.ms + ' мс',
   ];
   console.log('[' + REV + '] ' + JSON.stringify(rep));
