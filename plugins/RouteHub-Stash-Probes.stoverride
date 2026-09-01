@@ -56,6 +56,9 @@ script-providers:
   rh-st11:
     url: https://raw.githubusercontent.com/spxload/routehub/stash-client/probes/routehub-probe-stash11.js
     interval: 300
+  rh-st12:
+    url: https://raw.githubusercontent.com/spxload/routehub/stash-client/probes/routehub-probe-stash12.js
+    interval: 300
 
 cron:
   script:
@@ -83,4 +86,13 @@ cron:
     # типы и количества.
     - name: rh-st11
       cron: '17,47 * * * *'
+      timeout: 40
+    # ST12 — сплошная опись среды С ХАРАКТЕРИСТИКАМИ: что каждое имя из себя
+    # представляет, а не только что оно есть. НИЧЕГО НЕ ВЫЗЫВАЕТ, только
+    # читает свойства: среди тысячи имён заведомо есть пишущие, а перебор с
+    # вызовами — не разведка, а лотерея. Строки выгружаются длиной, не
+    # значением: в среде лежит секрет контроллера.
+    # Выгрузка длинная — читать в «Журналы → Журналы сценариев».
+    - name: rh-st12
+      cron: '22,52 * * * *'
       timeout: 40
