@@ -201,6 +201,29 @@ function stepConn(next) {
     rep.ans.состав_записи = shape(list[0]);
     rep.ans.счётчики_в_записи = findCounters(list[0]);
     rep.ans.тайминги_в_записи = findTracing(list[0]);
+    // ⚠️ ПЕРВАЯ ЗАПИСЬ НЕ ПОКАЗАТЕЛЬНА, и прогоны 01.09 это показали: у
+    // list[0] счётчики были 306 и 172 байта при пике 2,2 МБ/с по всему
+    // набору, а тайминги — по единице, чего у соединения через туннель быть
+    // не может. Причина простая: свежее соединение ещё ничего не передало.
+    // Поэтому ниже идёт СВОДКА ПО ВСЕМ записям, а поля `*_в_записи`
+    // остаются только как образец ФОРМЫ, не как значения.
+    var tsum = {};
+    for (var w = 0; w < list.length; w++) {
+      var tr = findTracing(list[w]);
+      if (!tr || typeof tr !== 'object') continue;
+      for (var tk in tr) {
+        if (typeof tr[tk] !== 'number') continue;
+        if (!tsum[tk]) tsum[tk] = [];
+        tsum[tk].push(tr[tk]);
+      }
+    }
+    var tout = {};
+    for (var tk2 in tsum) {
+      var arr = tsum[tk2].sort(function (a, b) { return a - b; });
+      tout[tk2] = { мин: arr[0], медиана: arr[Math.floor(arr.length / 2)],
+                    макс: arr[arr.length - 1], записей: arr.length };
+    }
+    rep.ans.тайминги_сводка = tout;
     // Сумма по всем соединениям: показывает, на скольких из них счётчики
     // непустые, — одна запись могла попасться свежей и нулевой.
     var withBytes = 0, maxSeen = 0;
@@ -341,7 +364,7 @@ function finish() {
       ', GLOBAL ' + (a.через_GLOBAL != null ? a.через_GLOBAL : '?') +
       ', прочее ' + (a.через_прочее != null ? a.через_прочее : '?'),
     'счётчики: ' + JSON.stringify(a.счётчики_в_записи || {}),
-    'тайминги: ' + JSON.stringify(a.тайминги_в_записи || '?') +
+    'тайминги мин/мед/макс: ' + JSON.stringify(a.тайминги_сводка || '?') +
       ', со счётчиком ' + (a.соединений_со_счётчиком != null ? a.соединений_со_счётчиком : '?'),
     'Stash ' + (a.stash || '?') + ', ' + rep.ms + ' мс',
   ];
