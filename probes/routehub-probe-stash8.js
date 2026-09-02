@@ -53,6 +53,14 @@ var WANT = [
 // профиль опасен, остальное неважно.
 var CRITICAL = ['rh-wl-domains', 'rh-wl-mobile', 'rh-wl-ips'];
 
+// Наборы, которым БЫТЬ ПУСТЫМИ — НОРМА, потому что пуст сам источник.
+// `rh-mylist` это личный список Дианы: пока в нём нет доменов, Worker отдаёт
+// заголовок и ноль строк. Без этой оговорки вердикт вечно висел бы на
+// «ЧАСТИЧНО», и настоящая потеря набора терялась бы среди ложных тревог —
+// проба, которая всегда немного жалуется, перестаёт быть сигналом.
+var MAY_BE_EMPTY = ['rh-mylist'];
+function mayBeEmpty(n) { return MAY_BE_EMPTY.indexOf(n) >= 0; }
+
 var CTRL = 'http://127.0.0.1:9090', AUTH = '';
 try {
   CTRL = ($environment && $environment['controller-url']) || CTRL;
@@ -115,7 +123,9 @@ function stepProviders(next) {
       var n = countOf(p);
       var beh = p.behavior || p.behaviour || '?';
       tab[nm] = (n === null ? '?' : n) + ' пр., ' + beh;
-      if (n === 0) { empty.push(nm); } else { ok.push(nm); }
+      if (n === 0 && !mayBeEmpty(nm)) { empty.push(nm); }
+      else if (n === 0) { tab[nm] += ' (пуст источник — норма)'; ok.push(nm); }
+      else { ok.push(nm); }
     }
     rep.ans.наборы = tab;
     rep.ans.доехали = ok.length;

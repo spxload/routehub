@@ -58,24 +58,17 @@ const AI_SUFFIX = [
 // YouTube и соцсети — на прокси (заблокировано в РФ либо деградирует).
 const PROXY_SUFFIX = ['youtube.com', 'googlevideo.com', 'instagram.com'];
 
-// ⚠️ ЭТИХ СТРОК В БОЕВОМ [Rule] НЕТ — расхождение СОЗНАТЕЛЬНОЕ, заведено
-// 31.08 по жалобе «YouTube не работает по правилам, в глобальном режиме
-// работает».
-// РАЗБОР. Из всей инфраструктуры YouTube правилами закрыты только
-// `youtube.com` и `googlevideo.com` — то есть страница и само видео. Всё
-// остальное падает в `MATCH,RH-Главный`, а `RH-Главный` — это `select`, и
-// первый его член DIRECT. Значит запросы к API плеера и к статике уходили
-// НАПРЯМУЮ из РФ, где YouTube замедляют: видео качать было через что, а
-// начать воспроизведение нечем. В глобальном режиме через узел идёт ВСЁ,
-// поэтому там и работало. Симптом объясняется полностью.
-// Домены взяты точечно. `googleapis.com` целиком брать НЕЛЬЗЯ — под него
-// попадёт масса несвязанного, поэтому только поддомен API YouTube.
-// СТАТУС: гипотеза, подтверждаемая на устройстве за минуту — вернуть режим
-// по правилам и открыть YouTube. Не подтвердится — строки снять.
-// В БОЕВОЙ routehub.conf НЕ ПЕРЕНОСИТСЯ БЕЗ СОГЛАСИЯ ДИАНЫ, хотя дыра там
-// та же: правка боевого конфига — её решение.
-const PROXY_EXTRA = ['ytimg.com', 'ggpht.com', 'youtu.be',
-  'youtube-nocookie.com', 'youtubei.googleapis.com'];
+// ⛔ СНЯТО 02.09. Здесь стояли пять доменов инфраструктуры YouTube
+// (`ytimg.com`, `ggpht.com`, `youtu.be`, `youtube-nocookie.com`,
+// `youtubei.googleapis.com`), добавленных 31.08 как подпорка: YouTube не
+// работал по правилам, потому что всё, кроме самой страницы и видео,
+// уходило DIRECT через `MATCH,RH-Главный`.
+// Подпорка больше не нужна: набор `rh-youtube` (179 правил, доехал целиком —
+// замер ST8 от 02.09) покрывает ВСЕ пять точными правилами, проверено
+// поимённо. Держать одно и то же в двух местах — значит однажды получить
+// расхождение между ними.
+// Заодно этим восстановлено ЗЕРКАЛО: локальные правила профиля Stash снова
+// построчно повторяют [Rule] боевого конфига, без объявленных дополнений.
 
 // Личные исключения Дианы: домены, которым нужен обход даже под whitelist
 // РКН. Список ведётся руками; в Loon он стоит первым в [Rule], здесь тоже.
@@ -103,8 +96,6 @@ function buildRules(remote) {
   // DeepSeek: норма DIRECT, whitelist -> обход.
   out.push(rule(['DOMAIN-SUFFIX', 'deepseek.com', P_RU]));
   PROXY_SUFFIX.forEach(function (d) { out.push(rule(['DOMAIN-SUFFIX', d, P_AUTO])); });
-  // Инфраструктура YouTube, которой в боевом [Rule] нет — см. PROXY_EXTRA.
-  PROXY_EXTRA.forEach(function (d) { out.push(rule(['DOMAIN-SUFFIX', d, P_AUTO])); });
   // Российские IP: то, что не поймали домены.
   out.push(rule(['GEOIP', 'RU', P_RU]));
   // Удалённые наборы: в боевом конфиге [Remote Rule] стоит после [Rule]
@@ -114,4 +105,4 @@ function buildRules(remote) {
   return out;
 }
 
-export { AI_SUFFIX, PERSONAL, PROXY_EXTRA, PROXY_SUFFIX, P_AI, P_AUTO, P_CALL, P_MAIN, P_RU, buildRules };
+export { AI_SUFFIX, PERSONAL, PROXY_SUFFIX, P_AI, P_AUTO, P_CALL, P_MAIN, P_RU, buildRules };
