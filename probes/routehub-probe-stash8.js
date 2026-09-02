@@ -37,11 +37,17 @@ var G = (typeof globalThis !== 'undefined') ? globalThis : this;
 // Имена ровно те, что кладёт src/clients/stash-sets.js. Держатся списком,
 // потому что набор, которого ядро не знает, и набор, который мы неверно
 // назвали, снаружи выглядят одинаково.
+// 02.09: `rh-refilter` снят (Stash брал его пустым, 81 758 строк), вместо
+// него точечные `rh-discord` и `rh-youtube` плюс эксперимент на порог
+// `rh-rkn-domains` — тот же список голыми доменами, вдвое меньше по байтам
+// при том же числе строк. Его `ruleCount` и есть ответ на вопрос, во что
+// упирается Stash: в строки или в объём.
 var WANT = [
   'rh-ads', 'rh-ads-domains', 'rh-mylist',
   'rh-wl-domains', 'rh-wl-mobile', 'rh-wl-ips',
   'rh-ru-banks', 'rh-apple', 'rh-banks-cbr',
-  'rh-ai-catchall', 'rh-telegram', 'rh-refilter',
+  'rh-ai-catchall', 'rh-telegram',
+  'rh-discord', 'rh-youtube', 'rh-rkn-domains',
 ];
 // Три набора, дающие ЖЁСТКИЙ DIRECT под whitelist. Если не доехали они —
 // профиль опасен, остальное неважно.

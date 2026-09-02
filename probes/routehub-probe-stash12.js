@@ -66,6 +66,12 @@ var STD = ('Object Function Array Number Boolean String Symbol Date Promise RegE
 var isStd = {};
 for (var si = 0; si < STD.length; si++) isStd[STD[si]] = true;
 
+// Собственные имена пробы — их в отчёте быть не должно.
+var MINE = {};
+('REV T0 BUDGET_MS LIST_CAP rep G STD isStd si WORDS describe inner stepScan ' +
+ 'verdict finish FINISHED MINE collectNames').split(' ')
+  .forEach(function (n) { MINE[n] = 1; });
+
 var WORDS = ['proxy', 'policy', 'config', 'network', 'dns', 'rule', 'node',
   'traffic', 'speed', 'bench', 'tun', 'vpn', 'stash', 'script', 'group',
   'delay', 'connect', 'store', 'log'];
@@ -105,10 +111,39 @@ function inner(o) {
   return out;
 }
 
+// ⚠️ ИСПРАВЛЕНО 02.09 ПО ПЕРВОМУ ЖЕ ПРОГОНУ. Первая редакция перебирала
+// среду через `for...in` и насчитала 241 имя против 1066 у описи ST1/ST5.
+// Причина: `for...in` видит только ПЕРЕЧИСЛИМЫЕ свойства, а встроенные
+// глобали объявлены неперечислимыми и потому пропускались целиком. Опись,
+// которая пропускает большую часть, хуже отсутствия описи — она создаёт
+// ложное впечатление полноты. Теперь берётся объединение
+// `Object.getOwnPropertyNames` по самому объекту И ПО ЦЕПОЧКЕ ПРОТОТИПОВ
+// (у браузерной среды половина имён живёт на прототипе), плюс `for...in`
+// как страховка на случай экзотики.
+function collectNames() {
+  var seen = {}, out = [];
+  function add(list) {
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i];
+      if (!Object.prototype.hasOwnProperty.call(seen, n)) { seen[n] = 1; out.push(n); }
+    }
+  }
+  try { add(Object.getOwnPropertyNames(G)); } catch (e) { rep.err.push('getOwnPropertyNames упал'); }
+  try {
+    var proto = Object.getPrototypeOf(G), depth = 0;
+    while (proto && depth < 6) {
+      add(Object.getOwnPropertyNames(proto));
+      proto = Object.getPrototypeOf(proto);
+      depth++;
+    }
+  } catch (e2) { rep.err.push('обход прототипов упал'); }
+  try { var forIn = []; for (var k in G) forIn.push(k); add(forIn); }
+  catch (e3) { rep.err.push('for-in упал'); }
+  return out;
+}
+
 function stepScan(next) {
-  var all = [];
-  try { for (var k in G) all.push(k); }
-  catch (e) { rep.err.push('перебор globalThis упал: ' + String(e).slice(0, 60)); }
+  var all = collectNames();
   rep.ans.имён_всего = all.length;
 
   var byType = {}, nonStd = [], dollars = {}, hits = {};
@@ -124,6 +159,10 @@ function stepScan(next) {
       continue;
     }
     if (isStd[name]) continue;
+    // Собственные переменные пробы тоже попадают в globalThis (`var` на
+    // верхнем уровне создаёт свойство). В первом прогоне они оказались в
+    // выдаче наравне с находками — это шум, который проба создаёт сама.
+    if (MINE[name]) continue;
     nonStd.push(name);
 
     var low = name.toLowerCase();

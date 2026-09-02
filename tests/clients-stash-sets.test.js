@@ -93,8 +93,25 @@ const EXPECT = [
     url: 'rules/domains_refilter.list', behavior: 'classical', format: 'text', off: true },
 ];
 
-// Наборы, которые ДОЛЖНЫ быть в профиле Stash: все, кроме отключённых.
-const EXPECT_ON = EXPECT.filter(function (e) { return !e.off; });
+// СОЗНАТЕЛЬНО ДОБАВЛЕННЫЕ наборы, которых в [Remote Rule] боевого конфига
+// НЕТ. Перечисляются поимённо по той же причине, что и дополнения к
+// правилам: профиль Stash имеет право отличаться от боевого конфига, но
+// только явно. Молча разошедшийся перенос — ровно та ошибка, ради поимки
+// которой сверка заведена.
+// 02.09: Discord и YouTube точечными файлами вместо отключённого refilter
+// (в нём Discord и лежал), плюс эксперимент на порог `rh-rkn-domains`.
+const EXTRA_SETS = [
+  { set: 'rh-discord', policy: 'RH-АВТО', behavior: 'classical', format: 'text',
+    url: 'rules/domains_discord.list' },
+  { set: 'rh-youtube', policy: 'RH-АВТО', behavior: 'classical', format: 'text',
+    url: 'rules/domains_youtube.list' },
+  { set: 'rh-rkn-domains', policy: 'RH-АВТО', behavior: 'domain', format: 'text',
+    url: 'domains_all.lst' },
+];
+
+// Наборы, которые ДОЛЖНЫ быть в профиле Stash: перенесённые из боевого
+// конфига (кроме отключённых) плюс объявленные дополнения.
+const EXPECT_ON = EXPECT.filter(function (e) { return !e.off; }).concat(EXTRA_SETS);
 
 // ── РАЗБОР ВЫДАЧИ ───────────────────────────────────────────────────────
 // Разбирать профиль ГОТОВЫМ парсером здесь нечем: зависимостей у проекта
