@@ -289,8 +289,10 @@ test('benchmark-* стоят у узлов и только у них', () => {
   const head = TEXT.split('proxy-groups:')[0];
   assert.ok(head.indexOf('proxies:') >= 0, 'узлов в профиле нет');
   assert.ok(head.indexOf('benchmark-url:') >= 0, 'у узлов пропал адрес теста');
-  assert.ok(head.indexOf('benchmark-disabled: true') >= 0,
-    'у обходных узлов пропал выключенный замер — платный трафик');
+  // S-draft-5: `benchmark-disabled` снят у всех узлов — на устройстве такой
+  // узел не работал вовсе. Правило 1 держит интервал замера у групп.
+  assert.equal(head.indexOf('benchmark-disabled'), -1,
+    'вернулся benchmark-disabled — обходные узлы перестанут работать');
   const tail = TEXT.split('proxy-groups:').slice(1).join('proxy-groups:');
   assert.equal(tail.indexOf('benchmark'), -1,
     'benchmark-* просочились в группы или правила — их место на узле');

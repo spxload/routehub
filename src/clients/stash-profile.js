@@ -46,7 +46,7 @@
 //     так что это второй рубеж, а не единственный.
 // История версий — CHANGELOG.md в корне репозитория.
 
-import { BENCH_TIMEOUT, BENCH_URL, PROVIDER, buildGroups, childGroup, nodeSet } from './stash.js';
+import { BENCH_TIMEOUT, BENCH_URL, GROUP_INTERVAL, PROVIDER, buildGroups, childGroup, nodeSet } from './stash.js';
 import { orderNames } from './stash-order.js';
 import { buildRules } from './stash-rules.js';
 import { buildProviders, buildSetRules } from './stash-sets.js';
@@ -54,7 +54,7 @@ import { nodeToYaml, nodesToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
 // (поле conf_ver) и в первой строке самого профиля.
-const VERSION = 'S-draft-4';
+const VERSION = 'S-draft-5';
 
 // Поставщик прокси. interval — как часто Stash перечитывает файл узлов;
 // 600 с выбрано потому, что ПОРЯДОК членов групп меняется перевыдачей
@@ -98,18 +98,20 @@ function serviceGroups(masterLines, state, opts) {
   // а единственный член, который заведомо существует.
   const bypass = names.length
     ? childGroup(G_BYPASS, names, o.membership, o.provider || PROVIDER)
-    : { name: G_BYPASS, type: 'fallback', proxies: ['DIRECT'] };
-  // Пока группа не нужна, ядро её не тестирует — документированное `lazy`
-  // (stash.wiki/en/proxy-protocols/proxy-groups). Для группы, целиком
-  // состоящей из платных узлов, это ровно то поведение, которого требует
-  // правило 1 проекта.
-  bypass.lazy = true;
+    : { name: G_BYPASS, type: 'fallback', proxies: ['DIRECT'], interval: GROUP_INTERVAL };
+  // ⛔ S-draft-5 (03.09): `lazy` СНЯТ вместе с `benchmark-disabled` у узлов.
+  // Он вводился вторым рубежом под то же правило 1, а обход в итоге не
+  // работал вовсе (см. комментарий в clients/stash.js). Пока причина не
+  // подтверждена окончательно, оба недокументированных-для-нашего-случая
+  // ключа снимаются разом: разбирать, какой из двух виноват, имеет смысл
+  // только после того, как обход заработает хоть в каком-то виде.
+  // Правило 1 исполняется интервалом замера (GROUP_INTERVAL, час).
   return [
     // FINAL: прочий иностранный. Норма — DIRECT, под whitelist Диана
     // переключает на RH-АВТО руками (в Loon то же самое, тип select).
     { name: G_MAIN, type: 'select', proxies: ['DIRECT', 'RH-АВТО'] },
     // РФ-сервисы и GEOIP-RU: норма DIRECT, whitelist -> обход.
-    { name: G_RU, type: 'fallback', proxies: ['DIRECT', G_BYPASS] },
+    { name: G_RU, type: 'fallback', proxies: ['DIRECT', G_BYPASS], interval: GROUP_INTERVAL },
     bypass,
   ];
 }

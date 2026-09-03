@@ -94,21 +94,31 @@ function nodeSet(masterLines, state, opts) {
     node.name = it.display;             // единственный источник имени
     // ПРАВИЛО 1 ПРОЕКТА, ИСПОЛНЕННОЕ РОДНЫМ СРЕДСТВОМ. Обходные узлы стоят
     // в каждой рабочей группе (17 из 70), а группа с умолчанием interval
-    // 600 с гоняет замер по всем членам. То есть профиль без этой строки
-    // тратил бы платный трафик каждые десять минут — уже не «пробы не
-    // трогают обход», а постоянная утечка. `benchmark-disabled: true`
-    // выключает замер конкретного узла у самого ядра.
-    // ЦЕНА, КОТОРУЮ НАДО ПРОВЕРИТЬ ПРОБОЙ: как fallback относится к члену
-    // без результата замера. Ожидание — считает доступным и берёт, когда
-    // все предыдущие отпали (обход у нас и есть последний запас). Если
-    // Stash считает такой узел мёртвым, обход не возьмётся никогда, и это
-    // ломает whitelist-сценарий. Проверяет ST9 полями alive/history.
-    if (it.tag === 'bypass') {
-      node['benchmark-disabled'] = true;
-    } else {
-      node['benchmark-url'] = BENCH_URL;
-      node['benchmark-timeout'] = BENCH_TIMEOUT;
-    }
+    // 600 с гоняет замер по всем членам.
+    //
+    // ⛔ S-draft-5 (03.09): `benchmark-disabled` С ОБХОДНЫХ УЗЛОВ СНЯТ.
+    // Замер на устройстве: обходные узлы НЕ РАБОТАЛИ ВОВСЕ — ни задержки
+    // при ручном тесте (даже не таймаут, а пусто), ни интернета, причём
+    // при ручном выборе узла в ГЛОБАЛЬНОМ режиме и БЕЗ whitelist. То есть
+    // ни `fallback`, ни правила, ни сеть тут ни при чём. Конвертер тоже
+    // оправдан: обходной tcp-узел выходит структурно ИДЕНТИЧНЫМ рабочему
+    // обычному (различаются только sni и fp), а 52 обычных узла при этом
+    // меряются и качают. Единственное, чем профиль отличал обходной узел
+    // от рабочего, — эта строка. Ключ документирован только для
+    // `relay`-групп, а был применён на узле: ровно тот случай, про который
+    // у проекта есть правило «недокументированные параметры не в боевой
+    // контур без проверки».
+    //
+    // ПРАВИЛО 1 ТЕПЕРЬ ИСПОЛНЯЕТСЯ ИНТЕРВАЛОМ, А НЕ ОТКЛЮЧЕНИЕМ ЗАМЕРА.
+    // Прежняя тревога («2 400 запросов в сутки через обход») считала
+    // ЗАПРОСЫ, а не БАЙТЫ. Замер ядра — HTTP HEAD на generate_204, порядка
+    // килобайта: при `interval` 3600 с (см. childGroup) это около 0,4 МБ
+    // в сутки на все 16 обходных узлов вместе. Для сравнения, наш активный
+    // замер скорости тратит около 200 МБ в сутки на обычных узлах. Обход
+    // был выключен ради экономии, которой там нет, ценой неработающего
+    // обхода — то есть ценой всего whitelist-сценария.
+    node['benchmark-url'] = BENCH_URL;
+    node['benchmark-timeout'] = BENCH_TIMEOUT;
     items.push(it);
     nodes.push(node);
   });
@@ -122,8 +132,15 @@ function renderNodes(masterLines, state, opts) {
   return nodesToYaml(nodeSet(masterLines, state, opts).nodes);
 }
 
+// Период замера у рабочих групп. Умолчание Stash — 600 с; S-draft-5 поднял
+// до часа, потому что замер снова идёт и по обходным узлам (см. nodeSet).
+// Час выбран так, чтобы платный трафик остался пренебрежимым (порядка 0,4 МБ
+// в сутки на все обходные узлы), а живость узлов всё же обновлялась: у
+// `fallback` есть и вторая, событийная проверка — при отказе текущего члена.
+const GROUP_INTERVAL = 3600;
+
 function childGroup(name, names, membership, provider) {
-  const g = { name: name, type: 'fallback' };
+  const g = { name: name, type: 'fallback', interval: GROUP_INTERVAL };
   if (membership === 'provider') { g.use = [provider]; g.filter = nameFilter(names); }
   else g.proxies = names;
   return g;
@@ -174,5 +191,5 @@ function renderGroups(masterLines, state, opts) {
   return 'proxy-groups:\n' + groups.map(function (g) { return nodeToYaml(g, 2); }).join('\n') + '\n';
 }
 
-export { BENCH_TIMEOUT, BENCH_URL, PROVIDER, buildGroups, childGroup, contentType, nameFilter, nodeSet, renderGroups, renderNodes };
+export { BENCH_TIMEOUT, BENCH_URL, GROUP_INTERVAL, PROVIDER, buildGroups, childGroup, contentType, nameFilter, nodeSet, renderGroups, renderNodes };
 export { nodeLabel } from './stash-order.js';
