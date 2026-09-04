@@ -39,11 +39,19 @@
 
 var REV = 'ST14';
 var T0 = Date.now();
-var BUDGET_MS = 40000;
-var CTRL_SEC = 5;
+var BUDGET_MS = 60000;
+var CTRL_SEC = 5;                  // обычный запрос к контроллеру
+// ⛔ ДЕФЕКТ ПЕРВОЙ РЕДАКЦИИ, найденный прогонами 04.09. Клиентский тайм-аут
+// был равен серверному (5 с и 5000 мс), и проба рубила СВОЙ ЖЕ запрос ровно
+// на 5008–5017 мс: в выгрузке это выглядело как `статус: 0` и
+// «context deadline exceeded», а вердикт объявлял «ОБХОД МОЛЧИТ». Молчала
+// проба. Тот же узел в соседних прогонах отвечал за 144–605 мс.
+// ПРАВИЛО: клиентский тайм-аут обязан быть С ЗАПАСОМ больше серверного —
+// иначе измеряется не узел, а собственное терпение.
+var DELAY_MS = 10000;              // сколько ядру на один замер
+var DELAY_CTRL_SEC = 20;           // сколько ждём ответа контроллера
 var BYPASS_N = 3;
 var NORMAL_N = 1;
-var DELAY_MS = 5000;
 var DELAY_URL = 'http://connectivitycheck.gstatic.com/generate_204';
 var BYPASS = 'Обход';
 var POOL = 'RH-АВТО-W';
@@ -61,8 +69,8 @@ try {
 } catch (e) { rep.err.push('нет $environment'); }
 CTRL = String(CTRL).replace(/\/+$/, '');
 
-function get(path, cb) {
-  var o = { url: CTRL + path, timeout: CTRL_SEC };
+function get(path, cb, sec) {
+  var o = { url: CTRL + path, timeout: sec || CTRL_SEC };
   if (AUTH) o.headers = { Authorization: AUTH };
   var done = false;
   function once(b, st, e) { if (done) return; done = true; cb(b, st, e); }
@@ -126,6 +134,11 @@ function measure(i, next) {
     var wall = Date.now() - t0;
     var rec = { обход: it.b, статус: st, стенка_мс: wall };
     if (e) rec.ошибка_запроса = e;
+    // Обрыв по НАШЕМУ тайм-ауту — это не «узел молчит», а «проба не
+    // дождалась». Смешивать эти два исхода нельзя: именно так первая
+    // редакция и объявляла живой узел мёртвым.
+    if (!body && e && (String(e).indexOf('Client.Timeout') >= 0 ||
+        String(e).indexOf('deadline') >= 0)) rec.не_дождались = true;
     if (body) {
       var d = null;
       try { d = JSON.parse(body); } catch (e2) { d = null; }
@@ -138,23 +151,29 @@ function measure(i, next) {
     }
     out[shortName(it.n)] = rec;
     measure(i + 1, next);
-  });
+  }, DELAY_CTRL_SEC);
 }
 
 function verdict() {
   if (rep.ans.ВЕРДИКТ) return rep.ans.ВЕРДИКТ;
-  var okB = 0, badB = 0, okN = 0, badN = 0, texts = [];
+  var okB = 0, badB = 0, waitB = 0, okN = 0, badN = 0, texts = [];
   for (var k in out) {
     var r = out[k];
     var ok = (r.задержка != null && r.задержка > 0);
-    if (r.обход) { if (ok) okB++; else { badB++; if (r.ответ) texts.push(r.ответ); } }
-    else { if (ok) okN++; else badN++; }
+    if (r.обход) {
+      if (ok) okB++;
+      else if (r.не_дождались) waitB++;
+      else { badB++; if (r.ответ) texts.push(r.ответ); }
+    } else { if (ok) okN++; else badN++; }
   }
-  rep.ans.итог = { обход_ответил: okB, обход_молчит: badB, рабочий_ответил: okN, рабочий_молчит: badN };
+  rep.ans.итог = { обход_ответил: okB, обход_отказал: badB, не_дождались: waitB,
+                   рабочий_ответил: okN, рабочий_молчит: badN };
   if (!okN && !badN) return 'НЕПОЛНО: рабочий узел не измерен, сравнивать не с чем';
-  if (badN && badB) return 'СЕТЬ: молчат и рабочий, и обходные — дело не в описании узла, а в подключении';
-  if (okB) return 'ОБХОД ОТВЕТИЛ (' + okB + ' из ' + (okB + badB) + ') — прежний отказ не воспроизвёлся';
-  return 'ОБХОД МОЛЧИТ при живом рабочем узле — причина в ответе ядра: ' +
+  if (badN && (badB || waitB)) return 'СЕТЬ: молчат и рабочий, и обходные — дело не в описании узла, а в подключении';
+  if (okB) return 'ОБХОД ЖИВ (' + okB + ' из ' + (okB + badB + waitB) +
+    '), отказало ' + badB + ', не дождались ' + waitB;
+  if (waitB && !badB) return 'НЕОПРЕДЕЛЁННО: ни один обходной не успел в тайм-аут — поднять DELAY_CTRL_SEC';
+  return 'ОБХОД ОТКАЗАЛ при живом рабочем узле — ответ ядра: ' +
     (texts.length ? texts[0] : 'тело пустое');
 }
 
@@ -179,8 +198,8 @@ function finish() {
       { clipboard: JSON.stringify(rep) });
   } catch (e2) {}
   var color = '#FF9F0A';
-  if (a.ВЕРДИКТ.indexOf('ОБХОД ОТВЕТИЛ') === 0) color = '#34C759';
-  else if (a.ВЕРДИКТ.indexOf('ОБХОД МОЛЧИТ') === 0) color = '#FF3B30';
+  if (a.ВЕРДИКТ.indexOf('ОБХОД ЖИВ') === 0) color = '#34C759';
+  else if (a.ВЕРДИКТ.indexOf('ОБХОД ОТКАЗАЛ') === 0) color = '#FF3B30';
   try {
     $done({ title: 'RouteHub ' + REV, content: lines.join('\n'),
             icon: 'bolt.horizontal.circle', backgroundColor: color });
@@ -189,7 +208,7 @@ function finish() {
 
 GUARD = setTimeout(function () {
   if (!FINISHED) { rep.err.push('сторож: цепочка не завершилась'); finish(); }
-}, 60000);
+}, 90000);
 
 stepList(function () { measure(0, finish); });
 // конец файла — хвостовой страж (вывод 49)
