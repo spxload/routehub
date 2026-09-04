@@ -72,6 +72,17 @@ function nameFilter(names) {
 // делает задержку ядра Stash и наш rtt сопоставимыми — это и проверяет ST9.
 const BENCH_URL = 'http://connectivitycheck.gstatic.com/generate_204';
 const BENCH_TIMEOUT = 3;
+// ОТДЕЛЬНЫЙ ТАЙМ-АУТ ДЛЯ ОБХОДА — по замеру ST14 (04.09).
+// Обходные узлы кратно медленнее рабочих, и трёх секунд им мало не «в
+// теории», а по числам: рабочий узел ответил за 70 мс, живой обходной — за
+// 729 мс (по стенке 1128 мс), то есть в десять раз дольше; полевой замер
+// 11.08 давал обходу 388–505 мс против 89–99 у обычных узлов. Отсюда и
+// жалоба «делаешь ещё раз — таймаут у других узлов»: замер ходит около
+// порога, и попадание в него случайно.
+// Десять секунд выбраны как заведомый запас над наблюдённым максимумом, а не
+// как круглое число: при 729 мс медианы даже пятикратный выброс укладывается.
+// Цена нулевая — тайм-аут тратится только на узлах, которые и так молчат.
+const BENCH_TIMEOUT_BYPASS = 10;
 
 // ── ОДИН СРЕЗ УЗЛОВ НА ГРУППЫ И НА ВЫДАЧУ ──────────────────────────────
 // ДОПУЩЕНИЕ, РАДИ КОТОРОГО ЭТО СДЕЛАНО ОДНОЙ ФУНКЦИЕЙ: имя узла в секции
@@ -118,7 +129,7 @@ function nodeSet(masterLines, state, opts) {
     // был выключен ради экономии, которой там нет, ценой неработающего
     // обхода — то есть ценой всего whitelist-сценария.
     node['benchmark-url'] = BENCH_URL;
-    node['benchmark-timeout'] = BENCH_TIMEOUT;
+    node['benchmark-timeout'] = (it.tag === 'bypass') ? BENCH_TIMEOUT_BYPASS : BENCH_TIMEOUT;
     items.push(it);
     nodes.push(node);
   });
@@ -191,5 +202,5 @@ function renderGroups(masterLines, state, opts) {
   return 'proxy-groups:\n' + groups.map(function (g) { return nodeToYaml(g, 2); }).join('\n') + '\n';
 }
 
-export { BENCH_TIMEOUT, BENCH_URL, GROUP_INTERVAL, PROVIDER, buildGroups, childGroup, contentType, nameFilter, nodeSet, renderGroups, renderNodes };
+export { BENCH_TIMEOUT, BENCH_TIMEOUT_BYPASS, BENCH_URL, GROUP_INTERVAL, PROVIDER, buildGroups, childGroup, contentType, nameFilter, nodeSet, renderGroups, renderNodes };
 export { nodeLabel } from './stash-order.js';

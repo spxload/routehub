@@ -54,7 +54,7 @@ import { nodeToYaml, nodesToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
 // (поле conf_ver) и в первой строке самого профиля.
-const VERSION = 'S-draft-5';
+const VERSION = 'S-draft-6';
 
 // Поставщик прокси. interval — как часто Stash перечитывает файл узлов;
 // 600 с выбрано потому, что ПОРЯДОК членов групп меняется перевыдачей
