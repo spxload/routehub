@@ -54,7 +54,16 @@ function parents(net) {
   return m;
 }
 
-const TRACE = 'fl=12a34\nh=www.cloudflare.com\nip=203.0.113.77\nts=1.0\nloc=DE\nwarp=off\n';
+const trace = (loc, ip) => 'fl=12a34\nh=www.cloudflare.com\nip=' + (ip || '203.0.113.77') +
+  '\nts=1.0\nloc=' + (loc || 'DE') + '\nwarp=off\n';
+const TRACE = trace('DE', '203.0.113.77');
+// Разные выходы у разных узлов — так и есть на устройстве, и на этом стоит
+// проверка «работает ли пиновка вообще».
+const GEO_BY_NODE = (url, node) => ({
+  status: 200,
+  body: trace(node === N3 ? 'TR' : 'DE',
+    node === N1 ? '203.0.113.7' : node === N2 ? '198.51.100.7' : '192.0.2.7'),
+});
 const ROBOTS = 'User-agent: *\nDisallow: /api\n';
 
 // svc/geo: (url, node) -> {status, body} | {status:0} | {silent:true}
@@ -66,10 +75,12 @@ function run(opts = {}) {
     pool = 'RH-AI-W',
     proxies = null,
     svc = () => ({ status: 200, body: ROBOTS }),
-    geo = () => ({ status: 200, body: TRACE }),
+    geo = GEO_BY_NODE,
     controller = null,
+    store = {},
+    noStore = false,
   } = opts;
-  const state = { done: null, note: null, ctl: [], pinned: [], late: 0 };
+  const state = { done: null, note: null, ctl: [], pinned: [], late: 0, store: store };
 
   function respond(o, cb) {
     const url = String(o.url || '');
@@ -114,6 +125,13 @@ function run(opts = {}) {
       'stash-version': '3.4.1',
     },
     $notification: { post: (t, s, b, o) => { state.note = { t, s, b, clip: (o && o.clipboard) || null }; } },
+    $persistentStore: noStore ? {
+      read: () => { throw new Error('хранилище недоступно'); },
+      write: () => { throw new Error('хранилище недоступно'); },
+    } : {
+      read: (k) => (store.hasOwnProperty(k) ? store[k] : null),
+      write: (v, k) => { store[k] = v; return true; },
+    },
     $httpClient: {
       get: respond,
       head: respond,
@@ -152,19 +170,49 @@ test('предохранитель узла стоит позже клиентс
     'измеряется терпение пробы, а не узел');
 });
 
-test('сторож срабатывает позже худшего честного прогона и раньше бюджета', () => {
+test('сторож срабатывает позже худшего ПАТОЛОГИЧЕСКОГО пути и раньше бюджета', () => {
   const guard = num('GUARD_MS'), budget = num('BUDGET_MS');
-  const worst = (num('CTRL_SEC') + num('NODES_N') * num('SVC_SEC')) * 1000;
-  assert.ok(guard > worst, 'сторож ' + guard + ' мс рубит штатный прогон (' + worst + ' мс)');
+  // Считать надо не по честным ответам, а по предохранителям: именно этот
+  // путь длиннее, и именно его сторож не должен рубить.
+  const worst = num('CTRL_SEC') * 1000 + num('NODES_N') * num('NODE_WATCH_MS');
+  assert.ok(guard > worst,
+    'сторож ' + guard + ' мс рубит прогон, идущий по предохранителям (' + worst + ' мс): ' +
+    'усечение не попадёт даже в «не успели»');
   assert.ok(budget > guard, 'бюджет меньше сторожа — сторож станет основным путём выхода');
 });
 
-test('резерв на узел покрывает растянутый предохранитель', () => {
-  // setTimeout у Stash в фоне растягивается втрое-вчетверо (ST5). Резерв,
-  // посчитанный по честным секундам, пустил бы пробу в последний узел, на
-  // который у неё нет времени, и прогон умер бы по timeout задания cron.
-  assert.ok(num('NODE_COST_MS') >= num('NODE_WATCH_MS') * 2,
-    'резерв на узел меньше удвоенного предохранителя');
+test('резерв на узел покрывает предохранитель, растянутый втрое', () => {
+  // setTimeout у Stash в фоне растягивается втрое-вчетверо (ST5), и в фоне
+  // проба как раз и работает.
+  assert.ok(num('NODE_COST_MS') >= num('NODE_WATCH_MS') * 3,
+    'резерв ' + num('NODE_COST_MS') + ' меньше утроенного предохранителя');
+});
+
+test('все адреса пробы покрыты правилом AI — иначе второй рубеж дырявый', async () => {
+  // ⛔ Прежде адрес страны стоял на нейтральном хосте «чтобы сервис не отказал
+  // по стране». Такой хост не ловится ни одним правилом AI, доезжает до
+  // MATCH,RH-Главный, а тот через RH-АВТО заканчивается ОБХОДНЫМИ узлами.
+  // То есть при молча отвалившейся пиновке один из шести запросов уходил бы
+  // по платному трафику мимо рубежа, который смотрит на RH-AI.
+  const { AI_SUFFIX } = await import('../src/clients/stash-rules.js');
+  const urls = [];
+  const re = /url: '([^']+)'|var GEO_URL = '([^']+)'/g;
+  let m;
+  while ((m = re.exec(CODE))) urls.push(m[1] || m[2]);
+  assert.ok(urls.length >= 6, 'адреса пробы не найдены в исходнике: ' + urls.join(', '));
+  for (const u of urls) {
+    const host = new URL(u).hostname;
+    const covered = AI_SUFFIX.some((d) => host === d || host.endsWith('.' + d));
+    assert.ok(covered, 'хост ' + host + ' не покрыт ни одним правилом AI: при отказе пиновки ' +
+      'запрос уйдёт по RH-Главный и может попасть на обходной узел');
+  }
+});
+
+test('timeout задания cron не меньше бюджета пробы', () => {
+  const yaml = fs.readFileSync(path.join(ROOT, 'plugins/RouteHub-Stash-ST15.stoverride'), 'utf8');
+  const to = Number(/timeout:\s*(\d+)/.exec(yaml)[1]) * 1000;
+  assert.ok(to >= num('BUDGET_MS'),
+    'cron обрывает прогон (' + to + ' мс) раньше собственного бюджета пробы (' + num('BUDGET_MS') + ' мс) — вывода не будет');
 });
 
 // ── ПРАВИЛО 1 ────────────────────────────────────────────────────────
@@ -284,10 +332,52 @@ test('403 от бот-защиты помечается как бот-защит
     'бот-защита выдана за страновой запрет — вердикт отправит менять узел зря');
 });
 
-test('редирект — это «ОТВЕТИЛ», а не отказ', async () => {
-  const st = run({ svc: () => ({ status: 301, body: '' }) });
+test('редирект — это «ОТВЕТИЛ», даже когда у него есть тело', async () => {
+  // ⛔ Проверка правдоподобия, применённая к 3xx, объявляла подменой обычный
+  // редирект CDN со страницей nginx — а прогон, где так ответил один адрес на
+  // всех узлах, звал чинить исправный туннель.
+  const st = run({ svc: () => ({ status: 301, body: '<html><head><title>301 Moved Permanently</title></head></html>' }) });
   const rep = await settle(st);
-  assert.equal(rep.ans.узлы[S1].сервисы.Claude.итог, 'ОТВЕТИЛ', '3xx засчитан как отказ');
+  assert.equal(rep.ans.узлы[S1].сервисы.Claude.итог, 'ОТВЕТИЛ', '3xx с телом засчитан как подмена');
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('ЧИСТЫ ВСЕ') === 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+});
+
+test('200 с пустым телом — не robots.txt', async () => {
+  const st = run({ svc: () => ({ status: 200, body: '' }) });
+  const rep = await settle(st);
+  const r = rep.ans.узлы[S1].сервисы.ChatGPT;
+  assert.equal(r.итог, 'ПОДМЕНА', 'пустой ответ засчитан успехом: ' + r.итог);
+  assert.ok(String(r.вид).indexOf('пустое тело') >= 0, 'причина не названа: ' + r.вид);
+});
+
+test('200 с капчей помечается бот-защитой, а не «не опознан»', async () => {
+  const st = run({ svc: () => ({ status: 200, body: '<title>Just a moment...</title>' }) });
+  const rep = await settle(st);
+  const r = rep.ans.узлы[S1].сервисы.ChatGPT;
+  assert.equal(r.итог, 'ПОДМЕНА');
+  assert.equal(r.вид, 'бот-защита', 'капча в 200 не опознана: ' + r.вид);
+});
+
+test('200 со страновой заглушкой помечается страной', async () => {
+  const st = run({ svc: () => ({ status: 200, body: '<p>This service is not available in your region.</p>' }) });
+  const rep = await settle(st);
+  assert.equal(rep.ans.узлы[S1].сервисы.ChatGPT.вид, 'страна');
+});
+
+test('настоящий большой robots.txt — это ответ с пометкой размера, не подмена', async () => {
+  const bigReal = 'User-agent: *\n' + 'Disallow: /a\n'.repeat(3000);
+  const st = run({ svc: () => ({ status: 200, body: bigReal }) });
+  const rep = await settle(st);
+  const r = rep.ans.узлы[S1].сервисы.ChatGPT;
+  assert.equal(r.итог, 'ОТВЕТИЛ', 'длинный, но настоящий robots.txt объявлен подменой');
+  assert.ok(r.крупно > 20000, 'размер не помечен');
+});
+
+test('временный отказ с текстом причины сохраняет вид', async () => {
+  const st = run({ svc: () => ({ status: 503, body: 'unsupported_country' }) });
+  const rep = await settle(st);
+  assert.equal(rep.ans.узлы[S1].сервисы.ChatGPT.итог, 'ВРЕМЕННО');
+  assert.equal(rep.ans.узлы[S1].сервисы.ChatGPT.вид, 'страна');
 });
 
 test('только временные отказы — узел не порочится, вердикт не зовёт чинить туннель', async () => {
@@ -321,6 +411,180 @@ test('один сервис молчит на всех узлах — подоз
   assert.ok(rep.ans.ВЕРДИКТ.indexOf('проверить адрес') >= 0,
     'подсказку видно только в JSON, а не в вердикте: ' + rep.ans.ВЕРДИКТ);
   assert.ok(st.done.content.indexOf('проверить адрес') >= 0, 'подсказки нет в видимом тексте');
+});
+
+// ── ЧТО ПОКАЗАЛИ ОДИННАДЦАТЬ ПРОГОНОВ 06.09 ──────────────────────────
+// Каждая проверка ниже заведена по конкретной строке из выгрузки, а не
+// придумана: так требование остаётся привязанным к наблюдению.
+
+test('«not available in your region» опознаётся как страновой запрет', async () => {
+  // grok.com, 06.09 09:21, дословное тело ответа. Прежний список маркеров
+  // его не знал, и исход был помечен «не опознан».
+  const st = run({
+    svc: (url) => (url.indexOf('grok') >= 0
+      ? { status: 403, body: '<!doctype html>\n<html>\n<body>\n<p>This service is not available in your region.</p>\n</body>\n</html>' }
+      : { status: 200, body: ROBOTS }),
+  });
+  const rep = await settle(st);
+  assert.equal(rep.ans.узлы[S1].сервисы.Grok.вид, 'страна',
+    'страновой запрет по-прежнему «не опознан»');
+});
+
+test('вместо robots.txt приехала страница — это ПОДМЕНА, а не успех', async () => {
+  // claude.ai, 06.09 09:21: статус 200, 434 666 байт, «<!DOCTYPE html>».
+  const big = '<!DOCTYPE html><!-- Last Published: Thu --><div>' + 'x'.repeat(500000) + '</div>';
+  const st = run({
+    svc: (url) => (url.indexOf('claude') >= 0 ? { status: 200, body: big } : { status: 200, body: ROBOTS }),
+  });
+  const rep = await settle(st);
+  const r = rep.ans.узлы[S1].сервисы.Claude;
+  assert.equal(r.итог, 'ПОДМЕНА', '200 с чужим телом засчитан как ответ: ' + r.итог);
+  assert.ok(String(r.вид).indexOf('не похоже на robots.txt') >= 0, 'причина подмены не названа: ' + r.вид);
+  assert.ok((rep.ans.чистых || []).indexOf(S1) < 0, 'узел с подменённым ответом объявлен чистым');
+});
+
+test('короткий, но настоящий robots.txt подменой не считается', async () => {
+  // gemini.google.com отдаёт 116 байт — граница не должна ловить его.
+  const st = run({ svc: () => ({ status: 200, body: 'User-agent: *\nAllow: /app/download\nDisallow: /\n' }) });
+  const rep = await settle(st);
+  assert.equal(rep.ans.узлы[S1].сервисы.Gemini.итог, 'ОТВЕТИЛ', 'настоящий robots.txt принят за подмену');
+});
+
+test('выход не совпал с флагом в имени — это видно в тексте', async () => {
+  // 06.09 10:00: узел с флагом 🇩🇪 показал выход RU, и в том же прогоне два
+  // сервиса до него не дошли.
+  const st = run({
+    geo: (url, node) => ({ status: 200,
+      body: trace(node === N1 ? 'RU' : 'DE', node === N1 ? '111.88.96.7' : '203.0.113.' + (node === N2 ? '7' : '8')) }),
+  });
+  const rep = await settle(st);
+  assert.equal(rep.ans.узлы[S1].флаг_vs_выход, 'DE→RU', 'расхождение флага и выхода не зафиксировано');
+  assert.ok((rep.ans.флаг_не_совпал || []).indexOf(S1) >= 0);
+  assert.ok(st.done.content.indexOf('выход не совпал с флагом') >= 0,
+    'расхождение видно только в JSON: ' + st.done.content.slice(0, 300));
+});
+
+test('один выход у всех узлов — предупреждение приставкой, разбор не выбрасывается', async () => {
+  // Так выглядела бы молча отвалившаяся пиновка: проба бодро отчитывается
+  // про четыре узла, а запросы шли через один. Но подозрение может быть и
+  // ложным (узлы одного поставщика), поэтому оно приставка, а не приговор.
+  const st = run({ geo: () => ({ status: 200, body: trace('DE', '203.0.113.7') }) });
+  const rep = await settle(st);
+  assert.ok(rep.ans.пиновка, 'подозрение на пиновку не выставлено');
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('ПРОВЕРИТЬ ПИНОВКУ') === 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('ЧИСТЫ ВСЕ') > 0, 'разбор по узлам выброшен: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.чистых.length > 0, 'корзины не заполнены');
+  assert.notEqual(st.done.backgroundColor, '#34C759', 'подозрительный прогон окрашен как успех');
+});
+
+test('выход прочитан только у двух узлов — тревога не поднимается', async () => {
+  // trace — один из шести параллельных запросов, и он теряется. По двум
+  // ответам из четырёх судить о пиновке нельзя.
+  const st = run({
+    geo: (url, node) => (node === N1 || node === N2
+      ? { status: 200, body: trace('DE', '203.0.113.7') }
+      : { status: 0 }),
+  });
+  const rep = await settle(st);
+  assert.ok(!rep.ans.пиновка, 'тревога поднята по двум узлам из четырёх');
+});
+
+test('разные выходы у узлов — пиновка под вопрос не ставится', async () => {
+  const st = run();
+  const rep = await settle(st);
+  assert.ok(!rep.ans.пиновка, 'ложная тревога по пиновке при разных выходах');
+});
+
+test('узлы одной подсети не считаются одним выходом', async () => {
+  // Маскировка прячет последнюю группу адреса — сравнивать надо ПОЛНЫЙ, иначе
+  // два узла одного провайдера дают ложную тревогу «пиновка не работает».
+  const st = run({
+    geo: (url, node) => ({ status: 200,
+      body: trace('DE', '203.0.113.' + (node === N1 ? '11' : node === N2 ? '12' : '13')) }),
+  });
+  const rep = await settle(st);
+  assert.ok(!rep.ans.пиновка, 'ложная тревога: сравнивались замаскированные адреса');
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('НЕДОСТОВЕРНО') !== 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+  // И при этом сам маскированный вид в отчёте остаётся.
+  assert.ok(String(rep.ans.узлы[S1].выход).indexOf('.x') > 0, 'адрес выхода не замаскирован');
+});
+
+test('окно сдвигается: следующий прогон берёт следующие узлы', async () => {
+  // Одиннадцать прогонов 06.09 проверили одну и ту же четвёрку — верх
+  // каскада, — тогда как вопрос был про «многие узлы».
+  const many = [];
+  for (let i = 0; i < 9; i++) many.push('🇩🇪 узел ' + i + ' [VPN] · 1↓2 / 3↓4');
+  const store = {};
+  const first = await settle(run({ members: many, store }));
+  const second = await settle(run({ members: many, store }));
+  const a = Object.keys(first.ans.узлы), b = Object.keys(second.ans.узлы);
+  assert.equal(a.length, NODES_N);
+  assert.equal(b.length, NODES_N);
+  assert.equal(a.filter((x) => b.indexOf(x) >= 0).length, 0,
+    'второй прогон повторил ту же четвёрку: ' + b.join(', '));
+  assert.ok(first.ans.окно.indexOf('1…4 из 9') === 0, 'окно первого прогона: ' + first.ans.окно);
+  assert.ok(second.ans.окно.indexOf('5…8 из 9') === 0, 'окно второго прогона: ' + second.ans.окно);
+});
+
+test('окно заворачивается по кругу, и строка окна не врёт', async () => {
+  const many = [];
+  for (let i = 0; i < 5; i++) many.push('🇩🇪 узел ' + i + ' [VPN] · 1↓2 / 3↓4');
+  const rep = await settle(run({ members: many, store: { rh_st15_off: '3' } }));
+  assert.equal(Object.keys(rep.ans.узлы).length, NODES_N, 'на границе пула взято не ' + NODES_N);
+  assert.equal(rep.ans.пригодных, 5);
+  // Границы считаются по модулю: «4…7 из 5» — число, которого не бывает, а по
+  // нему судят о покрытии пула.
+  assert.equal(rep.ans.окно, '4…2 из 5', 'строка окна: ' + rep.ans.окно);
+});
+
+test('пул меньше окна — строка окна остаётся осмысленной', async () => {
+  const rep = await settle(run({ members: [N1, N2] }));
+  assert.equal(rep.ans.окно, '1…2 из 2', 'строка окна: ' + rep.ans.окно);
+  assert.equal(rep.ans.взято, 2);
+});
+
+test('испорченное смещение в хранилище не ломает прогон', async () => {
+  for (const bad of ['мусор', '-4', '9999999', '']) {
+    const rep = await settle(run({ store: { rh_st15_off: bad } }));
+    assert.equal(rep.ans.взято, 3, 'смещение «' + bad + '» сломало отбор');
+  }
+});
+
+test('хранилище недоступно — прогон идёт, но сбой записан', async () => {
+  const st = run({ noStore: true });
+  const rep = await settle(st);
+  assert.equal(rep.ans.взято, 3, 'без хранилища узлы не отобрались');
+  assert.ok(rep.err.some((e) => e.indexOf('смещение') >= 0), 'отказ записи не отмечен: ' + JSON.stringify(rep.err));
+});
+
+test('член с неизвестным типом группы узлом не считается', async () => {
+  // Белый список типов открыт снизу; группу выдаёт наличие состава и выбора.
+  const members = ['🤖 Хитрая [VPN]', N1, N2];
+  const st = run({
+    members,
+    proxies: Object.assign(parents('wifi'), {
+      'RH-AI-W': { type: 'Fallback', now: N1, all: members },
+      '🤖 Хитрая [VPN]': { type: 'Smart', now: BYP, all: [BYP] },
+      [N1]: { type: 'Vless', alive: true }, [N2]: { type: 'Vless', alive: true },
+    }),
+  });
+  const rep = await settle(st);
+  assert.equal(st.pinned.filter((p) => p.node === '🤖 Хитрая [VPN]').length, 0,
+    'запрос пиннут на имя группы — он ушёл бы тому, кого группа выбрала, вплоть до обхода');
+  assert.equal(rep.ans.пригодных, 2);
+});
+
+test('обходные считаются по ВСЕМУ списку, а не до набора четвёрки', async () => {
+  // ⛔ Прежняя редакция обрывала цикл на четвёртом узле, и счётчик показывал
+  // 0 обходных при одиннадцати прогонах подряд — хотя обход в каскаде есть,
+  // рангом последний. Счётчик выглядел доказательством, что правило 1
+  // соблюдено, ничего не доказывая.
+  const members = [N1, N2, N3, '🇱🇻 Латвия [VPN] · 1↓2 / 3↓4', BYP, BYP.replace('03', '04')];
+  const st = run({ members });
+  const rep = await settle(st);
+  assert.equal(rep.ans.обходных_пропущено, 2, 'обходные посчитаны не по всему списку');
+  assert.equal(rep.ans.пригодных, 4);
+  assert.equal(st.pinned.filter((p) => p.node && p.node.indexOf('Обход') >= 0).length, 0);
 });
 
 test('страна не прочиталась — это видно, а не подставляется молча', async () => {
