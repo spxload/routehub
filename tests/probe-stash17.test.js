@@ -118,6 +118,45 @@ test('ИИ-соединений не было — это не отказ, и т�
   assert.notEqual(st.done.backgroundColor, '#34C759');
 });
 
+test('чужой хост той же длины, что маркер, не выдаётся за ИИ-сервис', async () => {
+  // ⛔ ДЕФЕКТ ПЕРВОЙ РЕДАКЦИИ, пойманный первым прогоном на устройстве.
+  // Проверка суффикса сравнивала indexOf с арифметикой длин, и при отсутствии
+  // подстроки обе части давали -1 — совпадали любые хосты, чья длина ровно на
+  // единицу меньше длины маркера. Все хосты ниже взяты ДОСЛОВНО из той
+  // выгрузки: каждый был выгружен наружу под чужим именем.
+  const пары = [
+    ['api.ip.sb', 'claude.ai'],
+    ['mask.icloud.com', 'bard.google.com'],
+    ['fonts.gstatic.com', 'gemini.google.com'],
+    ['gateway.icloud.com', 'oaiusercontent.com'],
+    ['js.stripe.com', 'oaistatic.com'],
+    ['pd.itunes.apple.com', 'aistudio.google.com'],
+    ['ocsp.digicert.com', 'gemini.google.com'],
+    ['firebaselogging-pa.googleapis.com', 'generativelanguage.googleapis.com'],
+    ['yandex.kz', 'claude.ai'],
+  ];
+  const st = run({ conns: пары.map((p, i) => conn(String(i + 1), p[0], { log: 'личное ' + p[0] })) });
+  const rep = await settle(st);
+  const dump = JSON.stringify(rep) + JSON.stringify(st.done);
+  for (const [чужой, маркер] of пары) {
+    assert.ok(dump.indexOf(чужой) < 0,
+      'хост «' + чужой + '» (' + чужой.length + ' знаков) выгружен как «' + маркер +
+      '» (' + маркер.length + ') — совпали только длины');
+  }
+  assert.equal(rep.ans.ии_соединений, 0, 'чужие хосты посчитаны как ИИ-соединения');
+  assert.equal(rep.ans.чужих_не_названо, пары.length * 20, 'чужие не посчитаны числом');
+});
+
+test('настоящие ИИ-хосты из полевой выгрузки распознаются все', async () => {
+  const свои = ['chatgpt.com', 'ws.chatgpt.com', 'auth.openai.com', 'cdn.openai.com',
+                'persistent.oaistatic.com', 'gemini.google.com', 'aistudio.google.com',
+                'grok.com', 'cdn.grok.com', 'assets.grok.com', 'imagine-public.x.ai'];
+  const st = run({ conns: свои.map((h, i) => conn(String(i + 1), h)) });
+  const rep = await settle(st);
+  assert.equal(rep.ans.ии_соединений, свои.length, 'часть настоящих ИИ-хостов потеряна');
+  assert.equal(rep.ans.чужих_не_названо, 0);
+});
+
 test('поддомен наблюдаемого хоста считается своим, чужой похожий — нет', async () => {
   const st = run({ conns: [
     conn('1', 'cdn.oaistatic.com'),
