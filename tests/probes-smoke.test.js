@@ -41,6 +41,8 @@ const PROBES = [
   'probes/routehub-probe-stash13.js',
   'probes/routehub-probe-stash14.js',
   'probes/routehub-probe-stash15.js',
+  'probes/routehub-probe-stash16.js',
+  'probes/routehub-probe-stash17.js',
   'probes/routehub-probe-surge.js',
   'probes/routehub-probe-surge2.js',
   'probes/routehub-probe-surge3.js',
