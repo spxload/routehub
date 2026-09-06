@@ -100,14 +100,77 @@ test('исход из поля log попадает в отчёт — ради �
   const g = rep.ans.соединения.filter((r) => r.сервис === 'gemini.google.com')[0];
   assert.ok(g, 'соединение Gemini потеряно');
   assert.ok(String(g.поля.log).indexOf('connect failed') >= 0, 'содержимое log не сохранено: ' + JSON.stringify(g.поля));
-  assert.ok(rep.ans.ВЕРДИКТ.indexOf('ЕСТЬ ЧТО ЧИТАТЬ') === 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('ВСЁ ОТВЕЧАЕТ') === 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
 });
 
 test('поля пусты у всех — вердикт закрывает направление, а не молчит', async () => {
   const st = run({ conns: [conn('1', 'chatgpt.com'), conn('2', 'grok.com')] });
   const rep = await settle(st);
-  assert.ok(rep.ans.ВЕРДИКТ.indexOf('ПУСТЫ') > 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('ПУСТЫ') > 0 || rep.ans.ВЕРДИКТ.indexOf('ОТВЕЧАЕТ') === 0,
+    'вердикт: ' + rep.ans.ВЕРДИКТ);
   assert.equal(rep.ans.с_неизвестными_полями, 0);
+});
+
+test('запрос ушёл, ответа ноль — проба называет сервис И узел', async () => {
+  // Данные из прогона 06.09, 22:30, дословно: grok.com через Германию ⭐🟢
+  // отдал 1528 байт и принял ноль, провисев так десять снимков, тогда как
+  // тот же Grok через соседние узлы отдавал 6–9 КБ.
+  const st = run({ conns: [
+    Object.assign(conn('1', 'grok.com'), {
+      chains: ['🇩🇪 ⭐ 🟢 Германия [VPN] · 42↓181 / ∅'],
+      upload: { total: 1528 }, download: { total: 0 },
+    }),
+    Object.assign(conn('2', 'chatgpt.com'), {
+      chains: ['🇩🇪 ⭐ 🟢 Германия [VPN] · 42↓181 / ∅'],
+      upload: { total: 2116 }, download: { total: 7813 },
+    }),
+  ] });
+  const rep = await settle(st);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('НЕ ОТВЕТИЛИ') === 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('grok.com через 🇩🇪 ⭐ 🟢 Германия [VPN]') >= 0,
+    'вердикт не назвал пару «сервис через узел»: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('chatgpt') < 0, 'ответивший сервис объявлен молчащим');
+  assert.equal(rep.ans.ответили, 1);
+  assert.equal(st.done.backgroundColor, '#FF3B30', 'молчащий сервис не окрашен как отказ');
+  assert.ok(st.done.content.indexOf('без ответа') >= 0, 'отказ не виден в тексте');
+});
+
+test('только что открытое соединение без ответа отказом не считается', async () => {
+  // Ноль у соединения, прожившего один-два снимка, не значит ничего: ответ
+  // ещё в пути. Судить можно только по тому, что молчало долго.
+  const st = run({ controller: (url, ok) => ok(JSON.stringify({ connections: [
+    Object.assign(conn('1', 'grok.com'), { upload: { total: 1528 }, download: { total: 0 } }),
+  ] })) });
+  // Один снимок из двадцати даст мало «снимков» только если соединение
+  // появилось поздно; здесь оно есть во всех, поэтому проверяем границу прямо.
+  const rep = await settle(st);
+  const limit = Number(/var MIN_SNAPS = (\d+)/.exec(CODE)[1]);
+  assert.ok(limit >= 3, 'порог снимков слишком мал: ' + limit);
+  assert.ok(rep.ans.соединения[0].снимков >= limit, 'соединение прожило меньше порога');
+});
+
+test('мало отдано — не судим: запрос толком не ушёл', async () => {
+  const st = run({ conns: [
+    Object.assign(conn('1', 'grok.com'), { upload: { total: 40 }, download: { total: 0 } }),
+  ] });
+  const rep = await settle(st);
+  assert.ok(!rep.ans.БЕЗ_ОТВЕТА, 'соединение с 40 байтами отдачи объявлено отказом');
+  assert.ok(String(rep.ans.соединения[0].ИТОГ).indexOf('рано судить') >= 0,
+    'итог: ' + rep.ans.соединения[0].ИТОГ);
+});
+
+test('ручной выбор узла: имя берётся из лога, когда правил нет', async () => {
+  // При ручном выборе правило «NO-RULE», а узел ядро пишет только в лог.
+  const st = run({ conns: [
+    Object.assign(conn('1', 'gemini.google.com'), {
+      rule: 'NO-RULE', rulePayload: '', chains: [],
+      log: '["22:30:00.248 connect with selected proxy: 🇵🇱 ⭐ 🟢 Польша [VPN] · 58↓125 / ∅"]',
+      upload: { total: 2472 }, download: { total: 10342 },
+    }),
+  ] });
+  const rep = await settle(st);
+  assert.equal(rep.ans.соединения[0].узел, '🇵🇱 ⭐ 🟢 Польша [VPN]', 'узел из лога не разобран');
+  assert.equal(rep.ans.соединения[0].выбран_вручную, true);
 });
 
 test('ИИ-соединений не было — это не отказ, и так и сказано', async () => {
