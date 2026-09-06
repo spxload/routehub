@@ -82,11 +82,27 @@ function ctl(path, cb) {
   } catch (e2) { once(null, String(e2)); }
 }
 
+// ⛔ ДЕФЕКТ ПЕРВОЙ РЕДАКЦИИ, найденный первым же прогоном на устройстве
+// 06.09, 22:12. Проверка суффикса была написана так:
+//     h.indexOf('.' + W) === h.length - W.length - 1
+// и это КЛАССИЧЕСКАЯ ловушка «минус единицы»: когда подстроки нет, indexOf
+// возвращает -1, а правая часть даёт -1 у любого хоста, чья длина ровно на
+// единицу МЕНЬШЕ длины маркера. В итоге чужие хосты объявлялись ИИ-сервисами
+// по одному лишь совпадению длины: `api.ip.sb` (9) -> `claude.ai` (9),
+// `mask.icloud.com` (15) -> `bard.google.com` (15), `fonts.gstatic.com` (17)
+// -> `gemini.google.com` (17), `js.stripe.com` (13) -> `oaistatic.com` (13),
+// `pd.itunes.apple.com` (19) -> `aistudio.google.com` (19).
+// ЦЕНА ОШИБКИ ЗДЕСЬ НЕ В ЦИФРАХ, А В ПРИВАТНОСТИ: имена личных хостов
+// выгружались наружу под видом ИИ-сервисов — ровно то, что фильтр обязан был
+// не допустить. Сравнение переписано на явную проверку хвоста без арифметики
+// с индексами.
 function watched(host) {
   var h = String(host || '').toLowerCase();
   if (!h) return '';
   for (var i = 0; i < WATCH.length; i++) {
-    if (h === WATCH[i] || h.indexOf('.' + WATCH[i]) === h.length - WATCH[i].length - 1) return WATCH[i];
+    var w = WATCH[i];
+    if (h === w) return w;
+    if (h.length > w.length + 1 && h.slice(h.length - w.length - 1) === '.' + w) return w;
   }
   return '';
 }
