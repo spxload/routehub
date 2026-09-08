@@ -254,6 +254,65 @@ DE → тиры Европы → AIeu → тиры Америки → AIam → �
 
 ## routehub.conf
 
+### C-draft-42 (2026-09-08) — APP STORE И iMESSAGE ПОД WHITELIST
+
+Apple держался на двух опорах — правиле `IP-CIDR,17.0.0.0/8,RH-RU,no-resolve`
+и наборе `apple.list` — и обе проходят мимо App Store.
+
+**Первое, общее.** У правила по адресу стоит `no-resolve`, поэтому для
+соединения, адресованного ИМЕНЕМ, оно не проверяется вовсе. Это касается и тех
+доменов Apple, что живут в 17.x: `init.ess.apple.com` -> 17.253.27.135, но
+правило до него не доходит.
+
+**Второе.** Витрина и картинки App Store раздаются со СТОРОННИХ CDN
+(`apps.apple.com`, `itunes.apple.com` -> Akamai 23.14.x; `mzstatic.com` ->
+Fastly 151.101.x), то есть даже с резолвом адрес не 17.x. А доменов App Store
+в `apple.list` нет вовсе — сверено 08.09: 92 строки, все `DOMAIN-SUFFIX`,
+`itunes` / `apps` / `mzstatic` / `ess` отсутствуют; iCloud, APNs и обновления
+покрыты. Под whitelist такие домены доезжали до `FINAL` и уходили в `DIRECT`,
+где whitelist их не пускает.
+
+`ess.apple.com` держит iMessage И FaceTime (Apple Identity Services).
+
+Полевой признак 08.09: «App Store не грузил, закрыл и открыл — загрузилось».
+Это повторная попытка, попавшая в другой адрес, а не случайность.
+
+**Правка** — четыре доменных правила в `[Rule]` со ставкой на `RH-RU`
+(`fallback, DIRECT, RH-Обход`), поэтому в обычном режиме поведение НЕ меняется:
+обход подхватывает только когда `DIRECT` перестал работать.
+
+```
+DOMAIN-SUFFIX,metrics.mzstatic.com,REJECT-DROP
+DOMAIN-SUFFIX,audio-ssl.itunes.apple.com,RH-Главный
+DOMAIN-SUFFIX,mzstatic.com,RH-RU
+DOMAIN-SUFFIX,itunes.apple.com,RH-RU
+DOMAIN-SUFFIX,apps.apple.com,RH-RU
+DOMAIN-SUFFIX,ess.apple.com,RH-RU
+```
+
+Порядок внутри блока значим — узкие строки ВЫШЕ общих. Две узкие строки
+поставлены по итогам ревью:
+
+* `metrics.mzstatic.com` резался набором `Privacy_Domain` (`REJECT-DROP`).
+  Локальные правила приоритетнее подписки, поэтому без явной строки общее
+  правило сняло бы блокировку телеметрии App Store и погнало бы её в `RH-RU`.
+* `audio-ssl.itunes.apple.com` оставлен на `RH-Главный`: домен не 17.x, и общая
+  строка увела бы поток Apple Music в `RH-RU`, то есть под whitelist на ПЛАТНЫЙ
+  обходной узел. Витрину это не чинит и не ломает — она на `mzstatic` и
+  `apps.apple.com`.
+
+**Парность.** Те же домены добавлены в `src/clients/stash-rules.js` (ветка
+`stash-client`), иначе контуры Loon и Stash разъедутся. Сторожит
+`tests/clients-stash-sets.test.js` — он и поймал одностороннюю правку
+(`28 !== 24`); базовая линия поднята 24 -> 30.
+
+**Что НЕ сделано и почему.** Проверка на устройстве, не мешает ли
+`real-ip = *.apple.com` в `[General]` трём из четырёх доменных правил, —
+открыта. Ответ даёт единственный опыт: открыть App Store под whitelist и
+посмотреть, каким правилом он обслужен.
+
+---
+
 ### C-draft-41 (2026-08-15) — СНЯТ СКРИПТ RH-RKN
 
 `routehub-rkn.js` пробивал маяки через ИМЕНА ГРУПП (`RH-Проба-VPN`, `RH-Обход`),
