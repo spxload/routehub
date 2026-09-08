@@ -157,8 +157,11 @@ const SETRULES = RULES.filter(function (r) { return r.indexOf('RULE-SET,') === 0
 
 // ── ТЕСТЫ ───────────────────────────────────────────────────────────────
 
-test('эталон читается: в боевом конфиге 24 локальных правила и 12 удалённых наборов', () => {
-  assert.equal(CONF_LOCAL.length, 24, '[Rule] боевого конфига изменилась — сверить перенос');
+test('эталон читается: в боевом конфиге 30 локальных правил и 12 удалённых наборов', () => {
+  // 24 -> 30 (08.09): четыре доменных правила Apple для App Store и iMessage,
+  // iMessage. Число сторожит парность контуров — правка одного Loon без Stash
+  // (или наоборот) роняет этот тест, что уже и произошло при внесении.
+  assert.equal(CONF_LOCAL.length, 30, '[Rule] боевого конфига изменилась — сверить перенос');
   assert.equal(CONF_REMOTE.length, EXPECT.length, '[Remote Rule] боевого конфига изменилась');
   CONF_REMOTE.forEach(function (r, i) {
     assert.ok(r.src.indexOf(EXPECT[i].conf) >= 0, 'строка ' + i + ' [Remote Rule]: ' + r.src);
