@@ -1,6 +1,6 @@
 // routehub — модуль clients/stash-rules.js
 // КЛИЕНТСКИЙ СЛОЙ STASH: секция `rules:` профиля.
-// Перенос секции [Rule] боевого routehub.conf (C-draft-41). Правила лежат
+// Перенос секции [Rule] боевого routehub.conf (C-draft-42). Правила лежат
 // ЗДЕСЬ, а не читаются из конфига Loon: синтаксис у клиентов разный, а
 // «разобрать чужой конфиг регэкспом» — источник тихих расхождений. Порядок
 // строк повторяет routehub.conf сверху вниз; в Stash, как и в Loon, побеждает
@@ -72,6 +72,21 @@ const PROXY_SUFFIX = ['youtube.com', 'googlevideo.com', 'instagram.com'];
 
 // Личные исключения Дианы: домены, которым нужен обход даже под whitelist
 // РКН. Список ведётся руками; в Loon он стоит первым в [Rule], здесь тоже.
+// Домены Apple, которых нет в наборе apple.list, но без которых под whitelist
+// не работают App Store и iMessage. Пара к строке в routehub.conf — правки
+// парные, иначе контуры разъедутся.
+const APPLE_SUFFIX = ['mzstatic.com', 'itunes.apple.com', 'apps.apple.com', 'ess.apple.com'];
+// Узкие строки ВЫШЕ общих, порядок значим:
+//  • metrics.mzstatic.com резался набором Privacy_Domain, и без явного
+//    REJECT-DROP правка ниже сняла бы эту блокировку — локальные правила
+//    приоритетнее подписки;
+//  • медиа iTunes/Apple Music оставляем прежнему пути, иначе поток музыки
+//    уходил бы под whitelist на платный обход.
+const APPLE_NARROW = [
+  ['DOMAIN-SUFFIX', 'metrics.mzstatic.com', 'REJECT-DROP'],
+  ['DOMAIN-SUFFIX', 'audio-ssl.itunes.apple.com', P_MAIN],
+];
+
 const PERSONAL = [['DOMAIN-SUFFIX', 'samokat.ru', 'DIRECT']];
 
 function rule(parts) { return parts.join(','); }
@@ -86,6 +101,12 @@ function buildRules(remote) {
   PERSONAL.forEach(function (r) { out.push(rule(r)); });
   // Apple Push: норма DIRECT, whitelist -> обход (Apple под whitelist не идёт).
   out.push(rule(['IP-CIDR', '17.0.0.0/8', P_RU, 'no-resolve']));
+  // App Store и iMessage ДОМЕНАМИ, а не только по адресу 17.x: в наборе
+  // apple.list доменов App Store нет вовсе (сверено 08.09), а витрина и
+  // картинки раздаются со сторонних CDN, где адрес не 17.x. Без этих строк
+  // под whitelist App Store доезжал до MATCH и уходил в DIRECT.
+  APPLE_NARROW.forEach(function (r) { out.push(rule(r)); });
+  APPLE_SUFFIX.forEach(function (d) { out.push(rule(['DOMAIN-SUFFIX', d, P_RU])); });
   // Локальные REJECT: мультикаст.
   out.push(rule(['IP-CIDR', '224.0.0.0/4', 'REJECT', 'no-resolve']));
   out.push(rule(['IP-CIDR', '239.0.0.0/8', 'REJECT', 'no-resolve']));
@@ -105,4 +126,4 @@ function buildRules(remote) {
   return out;
 }
 
-export { AI_SUFFIX, PERSONAL, PROXY_SUFFIX, P_AI, P_AUTO, P_CALL, P_MAIN, P_RU, buildRules };
+export { AI_SUFFIX, APPLE_SUFFIX, PERSONAL, PROXY_SUFFIX, P_AI, P_AUTO, P_CALL, P_MAIN, P_RU, buildRules };
