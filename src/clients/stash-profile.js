@@ -36,14 +36,28 @@
 //  3. «Слабый DIRECT»: RH-RU — fallback с DIRECT первым, обход вторым.
 //     В Loon проверено, что fallback пробивает DIRECT и уходит дальше при
 //     whitelist. Для Stash это НЕ проверено.
-//  4. Группам не задан ни url теста, ни interval: по документации они не
-//     обязательны, значение по умолчанию 600 с. ЗАМЕР ЖИВЁТ НА УЗЛЕ
-//     (`benchmark-url`/`benchmark-timeout` в clients/stash.js), а не на
-//     группе: результат узла ядро делит между всеми группами, где узел
-//     состоит, поэтому дублировать настройку по группам незачем.
-//  5. `lazy: true` у RH-Обход: пока группа не используется, ядро не гоняет
-//     по ней замер. Обходные узлы вдобавок помечены `benchmark-disabled`,
-//     так что это второй рубеж, а не единственный.
+//  4. Группам не задан url теста: ЗАМЕР ЖИВЁТ НА УЗЛЕ (`benchmark-url` и
+//     `benchmark-timeout` в clients/stash.js). Дублировать его по группам
+//     незачем — документация Stash говорит прямо: «If a proxy is referenced
+//     by multiple policy groups, the delay testing results for this proxy
+//     will be shared among the policy groups». Это же снимает вопрос о
+//     многократном счёте: обходной узел состоит в семи группах, но меряется
+//     один раз. `interval` группам задан (GROUP_INTERVAL), вопреки прежней
+//     записи здесь — она была неверна с S-draft-5.
+//  5. ⛔ ЗАПИСЬ ОТМЕНЕНА S-draft-5. Стояло: «`lazy: true` у RH-Обход плюс
+//     `benchmark-disabled` у обходных узлов». Оба ключа сняты — обход на
+//     устройстве не работал вовсе (вывод 22). Правило 1 держит интервал.
+//  6. S-draft-7, НОВОЕ ДОПУЩЕНИЕ И НОВЫЙ РИСК. RH-Главный переведена в
+//     `fallback`, то есть FINAL теперь переключается сам. Документация
+//     разрешает группу внутри группы («If the strategy group contains
+//     another strategy group, the test will be performed recursively»), но
+//     НЕ описывает, как ядро считает здоровье члена-ГРУППЫ и чем оно
+//     проверяет DIRECT: узлом DIRECT не является, `benchmark-*` у него
+//     нет, url группам не задан. ЦЕНА ОШИБКИ СИММЕТРИЧНА прежней: раньше
+//     худшим исходом было «сидим на мёртвом DIRECT, пока не переключат
+//     руками», теперь появился «DIRECT ошибочно сочли мёртвым, и ВЕСЬ
+//     прочий иностранный трафик молча ушёл на узлы, включая обходные».
+//     Поэтому правка живёт на стенде Stash и в боевой Loon не переносится.
 // История версий — CHANGELOG.md в корне репозитория.
 
 import { BENCH_TIMEOUT, BENCH_URL, GROUP_INTERVAL, PROVIDER, buildGroups, childGroup, nodeSet } from './stash.js';
@@ -54,7 +68,7 @@ import { nodeToYaml, nodesToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
 // (поле conf_ver) и в первой строке самого профиля.
-const VERSION = 'S-draft-6';
+const VERSION = 'S-draft-7';
 
 // Поставщик прокси. interval — как часто Stash перечитывает файл узлов;
 // 600 с выбрано потому, что ПОРЯДОК членов групп меняется перевыдачей
@@ -79,6 +93,74 @@ const TEST_TIMEOUT = BENCH_TIMEOUT;
 // (отравление РКН — пометка в routehub.conf).
 const DNS_BOOT = ['system', '1.1.1.1', '77.88.8.8'];
 const DNS_MAIN = ['https://cloudflare-dns.com/dns-query', 'https://dns.google/dns-query'];
+
+// ── S-draft-7: FAKE-IP-FILTER ─────────────────────────────────────────
+// Stash по своей документации отвечает поддельным адресом на всё, что идёт
+// через прокси («Stash uses Fake IP to avoid local DNS queries for requests
+// that need to go through a proxy» — stash.wiki/en/faq/effective-stash).
+// В Loon этому противостоит `real-ip` в [General]; у нас в профиле Stash
+// соответствия не было ВООБЩЕ, и это самое крупное расхождение контуров.
+// Ключ `dns.fake-ip-filter` документирован (stash.wiki, Configuration
+// Example), синтаксис оттуда же: `+.` — домен и все поддомены, `*` — одна
+// метка. Ключи списка сериализатор кавычит, поэтому `*` YAML не ломает.
+//
+// ЧЕГО ЗДЕСЬ СОЗНАТЕЛЬНО НЕТ: `+.apple.com` и `+.icloud.com`. В Loon они
+// в `real-ip` стоят, и прежняя запись проекта (СВЕРКА, Н3) советовала их
+// добавить. ГИПОТЕЗА S-draft-7, ранее нигде не зафиксированная: `real-ip`
+// отдаёт настоящий адрес, соединение уходит ПО АДРЕСУ, и доменное правило
+// не матчится — тогда `*.apple.com` в `real-ip` подрывает ровно те четыре
+// доменных правила C-draft-42, ради которых они и вносились. Гипотеза НЕ
+// проверена ни на Loon, ни на Stash. Копировать в Stash настройку, чей вред
+// заподозрен, но не измерен, значит размножать сомнительное — переносим
+// бесспорную часть, Apple ждёт опыта на устройстве.
+const DNS_FAKE_IP_FILTER = [
+  // Перенос бесспорной части `real-ip` из routehub.conf.
+  'wpad',
+  'wpad.*',
+  '+.local',
+  '*.lan',
+  '*.localdomain',
+  'time.*.com',
+  'ntp.*.com',
+  // STUN — звонки. Поддельный адрес ломает пробивку NAT, а звонки у проекта
+  // уже страдали от глушения UDP (см. disable-udp-ports в routehub.conf).
+  '+.stun.*.*',
+  '+.stun.*.*.*',
+  '+.stun.*.*.*.*',
+  '+.stun.*.*.*.*.*',
+  '+.stun.playstation.net',
+  // Проверка связности: адрес должен быть настоящим, иначе система считает
+  // сеть неисправной. msftconnecttest — тот же хост, что в internet-test-url.
+  '*.msftncsi.com',
+  '*.msftconnecttest.com',
+];
+
+// ── S-draft-7: NAMESERVER-POLICY ──────────────────────────────────────
+// Возможность, которой у Loon нет вовсе: свой резолвер на заданные домены.
+// ЗАЧЕМ. Сверка со списками РКН 08.09: под whitelist из четырёх наших
+// резолверов доступны ровно два — `system` и 77.88.8.8. `1.1.1.1` в
+// whitelist-ips.list отсутствует, доменов cloudflare-dns.com и dns.google
+// в whitelist-domains.list (465 доменов) нет, подсетей Cloudflare 104.16.x
+// и 162.159.x тоже. То есть DoH под whitelist мёртв.
+// ЧТО ДЕЛАЕМ. РФ-зоны уводим на системный резолвер: он и под whitelist жив,
+// и локальность CDN у него лучше, чем у чужого DoH. Остальное остаётся на
+// DoH, то есть защита от подмены РКН для иностранных доменов не трогается.
+// ЧЕГО НЕ ДЕЛАЕМ. Не выключаем DoH целиком: вне whitelist plain-резолвер в
+// РФ отравлен — это записано в routehub.conf у строки doh-server. Сколько
+// Stash ждёт мёртвый DoH, прежде чем уйти на plain, НЕ ИЗМЕРЕНО; до замера
+// состав резолверов не трогаем.
+// ПОЧЕМУ БЕЗ `geosite:` — ADR-04 §5: база GEOSITE тянется с github при первом
+// обращении, значит под whitelist откажет ровно тогда, когда нужна.
+// Ключи не кавычатся сериализатором, поэтому все начинаются с `+` — YAML это
+// принимает; ключ с `*` в начале сломал бы разбор (алиас) и здесь запрещён.
+const DNS_NS_POLICY = {
+  '+.ru': 'system',
+  '+.su': 'system',
+  '+.xn--p1ai': 'system',      // .рф в punycode
+  '+.yandex.net': 'system',
+  '+.vk.com': 'system',
+  '+.vkuser.net': 'system',
+};
 
 // Служебные группы. В Loon они живут в [Proxy Group] конфига; здесь их негде
 // держать, кроме кода. Имена — те же, на них ссылаются правила.
@@ -105,11 +187,19 @@ function serviceGroups(masterLines, state, opts) {
   // подтверждена окончательно, оба недокументированных-для-нашего-случая
   // ключа снимаются разом: разбирать, какой из двух виноват, имеет смысл
   // только после того, как обход заработает хоть в каком-то виде.
-  // Правило 1 исполняется интервалом замера (GROUP_INTERVAL, час).
+  // Правило 1 исполняется интервалом замера (GROUP_INTERVAL, 600 с).
   return [
-    // FINAL: прочий иностранный. Норма — DIRECT, под whitelist Диана
-    // переключает на RH-АВТО руками (в Loon то же самое, тип select).
-    { name: G_MAIN, type: 'select', proxies: ['DIRECT', 'RH-АВТО'] },
+    // FINAL: прочий иностранный. Норма — DIRECT, под whitelist — RH-АВТО.
+    // S-draft-7: `select` -> `fallback`. Прежде переключение было РУЧНЫМ, и
+    // это был источник ручной работы номер один: whitelist включается и
+    // выключается без предупреждения, а группа до вмешательства оставалась
+    // на мёртвом DIRECT. Решение проекта — автоматика, даже ценой окна
+    // ожидания (окно сокращено в clients/stash.js: GROUP_INTERVAL 3600 -> 600).
+    // ЧЕМ ЭТО ОТЛИЧАЕТСЯ ОТ LOON: там RH-Главный остаётся `select`, потому
+    // что у Loon переключение делает netwatch по смене сети. У Stash своего
+    // netwatch нет, а писать в маршрутизацию из скрипта запрещает правило 2
+    // проекта — значит штатная автоматика единственная доступная.
+    { name: G_MAIN, type: 'fallback', proxies: ['DIRECT', 'RH-АВТО'], interval: GROUP_INTERVAL },
     // РФ-сервисы и GEOIP-RU: норма DIRECT, whitelist -> обход.
     { name: G_RU, type: 'fallback', proxies: ['DIRECT', G_BYPASS], interval: GROUP_INTERVAL },
     bypass,
@@ -149,7 +239,14 @@ function renderProfile(ctx) {
     '',
     yBlock({ mode: 'rule', 'log-level': 'info' }, 0),
     '',
-    yBlock({ dns: { 'default-nameserver': DNS_BOOT, nameserver: DNS_MAIN } }, 0),
+    yBlock({
+      dns: {
+        'default-nameserver': DNS_BOOT,
+        nameserver: DNS_MAIN,
+        'nameserver-policy': DNS_NS_POLICY,
+        'fake-ip-filter': DNS_FAKE_IP_FILTER,
+      },
+    }, 0),
     '',
     useProvider ? yBlock({ 'proxy-providers': prov }, 0) : nodesToYaml(set.nodes).replace(/\n$/, ''),
     '',
@@ -180,7 +277,8 @@ const usesTemplate = false;
 const contentType = 'text/yaml; charset=utf-8';
 
 export {
-  DNS_BOOT, DNS_MAIN, G_BYPASS, G_MAIN, G_RU, PROVIDER_INTERVAL, PROVIDER_PATH,
+  DNS_BOOT, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, G_BYPASS, G_MAIN, G_RU,
+  PROVIDER_INTERVAL, PROVIDER_PATH,
   TEST_TIMEOUT, TEST_URL, VERSION, aiBlocks, contentType, profileGroups,
   rankBypass, renderConfig, renderProfile, serviceGroups, subParamsFromConf, usesTemplate,
 };

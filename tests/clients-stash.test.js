@@ -176,7 +176,7 @@ test('без узлов группы остаются, а список член�
   const g = S.buildGroups([], {}).find(function (x) { return x.name === 'RH-AI-W'; });
   assert.deepEqual(g.proxies, []);
   const y = S.renderGroups([], {});
-  assert.ok(y.indexOf("- name: 'RH-AI-W'\n    type: 'fallback'\n    interval: 3600\n  - name:") >= 0,
+  assert.ok(y.indexOf("- name: 'RH-AI-W'\n    type: 'fallback'\n    interval: 600\n  - name:") >= 0,
     'поведение пустой группы изменилось — поправить шапку stash.js');
 });
 
@@ -281,9 +281,10 @@ test('имена узлов в /nodes и в членах групп совпад
 // интернета, причём при ручном выборе в глобальном режиме и без whitelist,
 // то есть ни `fallback`, ни правила, ни сеть ни при чём. Единственное, чем
 // профиль отличал обходной узел от рабочего, — этот ключ.
-// Теперь правило 1 исполняется ИНТЕРВАЛОМ замера (час вместо умолчания в
-// 600 с): HEAD на generate_204 стоит порядка килобайта, то есть около
-// 0,4 МБ в сутки на все обходные узлы вместе.
+// Теперь правило 1 исполняется ИНТЕРВАЛОМ замера. S-draft-7 вернул интервал
+// к документированному умолчанию 600 с: HEAD на generate_204 стоит порядка
+// килобайта, то есть около 2,3 МБ в сутки на все обходные узлы вместе —
+// оценка, не измерение (рукопожатие может стоить дороже килобайта).
 // ТЕСТ СТОРОЖИТ ВОЗВРАТ СТАРОГО РЕШЕНИЯ: `benchmark-disabled` не должен
 // появиться ни у одного узла, а адрес теста обязан быть у ВСЕХ, включая
 // обходные, — иначе обход снова окажется неотличим от сломанного.
@@ -355,10 +356,101 @@ test('у групп задан интервал замера, а lazy нигде
   groups.forEach(function (g) {
     assert.equal(g.lazy, undefined, 'lazy у группы ' + g.name);
     if (g.type === 'fallback') {
-      assert.equal(g.interval, 3600,
-        'у fallback-группы ' + g.name + ' нет часового интервала — вернулось умолчание 600 с');
+      assert.equal(g.interval, S.GROUP_INTERVAL,
+        'у fallback-группы ' + g.name + ' нет интервала замера');
     }
   });
+});
+
+// ── S-draft-7: ОКНО ОЖИДАНИЯ И ПОРОГ ЗАМЕРА ─────────────────────────
+// Оба числа проект уже один раз увёл от умолчаний Stash и оба раза заплатил.
+// Тайм-аут 3 с — это дефект ST14 в четвёртый раз: свой короткий порог выдаёт
+// живой узел за мёртвый. Интервал 3600 с — окно до ЧАСА, в течение которого
+// мёртвый DIRECT числится живым; полевая жалоба 08.09 «App Store грузил
+// тридцать секунд» пришла именно оттуда. Сторож, чтобы не вернулось молча.
+test('порог замера и интервал не уходят от умолчаний Stash в опасную сторону', () => {
+  assert.ok(S.BENCH_TIMEOUT >= 5,
+    'benchmark-timeout опустили ниже значения из примера документации (5 с) — это дефект ST14');
+  assert.ok(S.GROUP_INTERVAL <= 600,
+    'интервал замера подняли выше умолчания Stash (600 с) — окно ожидания снова растёт');
+  assert.ok(S.BENCH_TIMEOUT_BYPASS > S.BENCH_TIMEOUT,
+    'тайм-аут обхода перестал быть длиннее обычного');
+  // Границы с ДВУХ сторон: односторонний сторож ловит только откат назад.
+  assert.ok(S.BENCH_TIMEOUT <= 10,
+    'benchmark-timeout задрали — замер начнёт держать мёртвый узел живым');
+  assert.ok(S.GROUP_INTERVAL >= 600,
+    'интервал опустили ниже 600 с — расход на обходных узлах растёт линейно');
+});
+
+// Сторож на дыру, найденную ревью S-draft-7: `yBlock` МОЛЧА выбрасывает
+// пустые массивы. Если `DNS_MAIN` когда-нибудь опустеет, ключ `nameserver`
+// исчезнет из профиля целиком и весь резолвинг уедет на plain — то есть под
+// отравление РКН, против которого DoH и заводился. Отказ был бы тихим.
+test('резолверы не исчезают из профиля молча', () => {
+  const P = T.STASH_PROFILE;
+  assert.ok(P.DNS_MAIN.length >= 1, 'DNS_MAIN опустел');
+  assert.ok(P.DNS_BOOT.length >= 1, 'DNS_BOOT опустел');
+  assert.ok(P.DNS_BOOT.indexOf('system') >= 0,
+    'из DNS_BOOT пропал system — единственный резолвер, живой под whitelist');
+  const y = P.renderProfile({ key: 'k1', base: 'https://x.invalid/t/a', masterLines: LINES, state: STATE });
+  assert.ok(/\n  nameserver:\n    - /.test(y), 'ключ nameserver исчез из профиля или пуст');
+  assert.ok(/\n  default-nameserver:\n    - /.test(y), 'ключ default-nameserver исчез из профиля или пуст');
+});
+
+// ── S-draft-7: FAKE-IP-FILTER ───────────────────────────────────────
+// Аналога `real-ip` из Loon в профиле не было вовсе — крупнейшее расхождение
+// контуров. Проверяем состав, а не только факт наличия: без STUN ломается
+// пробивка NAT для звонков, без msftconnecttest система считает сеть битой.
+test('fake-ip-filter есть и держит STUN с проверкой связности', () => {
+  const P = T.STASH_PROFILE;
+  const list = P.DNS_FAKE_IP_FILTER;
+  assert.ok(Array.isArray(list) && list.length >= 10, 'fake-ip-filter пуст или исчез');
+  ['+.stun.*.*', '*.msftconnecttest.com', '+.local', 'wpad'].forEach(function (x) {
+    assert.ok(list.indexOf(x) >= 0, 'из fake-ip-filter пропало ' + x);
+  });
+  // Apple и iCloud сюда НЕ переносим, пока открыт вопрос про real-ip против
+  // доменных правил C-draft-42. Тест сторожит именно это решение.
+  list.forEach(function (x) {
+    assert.ok(x.indexOf('apple.com') < 0 && x.indexOf('icloud.com') < 0,
+      'в fake-ip-filter попал Apple: ' + x + ' — сперва закрыть вопрос real-ip');
+  });
+  const y = P.renderProfile({ key: 'k1', base: 'https://x.invalid/t/a', masterLines: LINES, state: STATE });
+  assert.ok(y.indexOf('fake-ip-filter:') > 0, 'fake-ip-filter не доехал до YAML');
+});
+
+// ── S-draft-7: NAMESERVER-POLICY ────────────────────────────────────
+// Сериализатор НЕ кавычит ключи. Ключ, начинающийся с «*», YAML прочитает
+// как алиас и профиль развалится целиком. Поэтому ограничение на форму ключа
+// — не стиль, а условие разбора.
+test('nameserver-policy есть, и ключи не ломают YAML', () => {
+  const P = T.STASH_PROFILE;
+  const pol = P.DNS_NS_POLICY;
+  assert.ok(pol && Object.keys(pol).length > 0, 'nameserver-policy пуст или исчез');
+  Object.keys(pol).forEach(function (k) {
+    assert.ok(k.charAt(0) === '+',
+      'ключ nameserver-policy «' + k + '» начинается не с «+» — сериализатор не кавычит ключи');
+  });
+  Object.keys(pol).forEach(function (k) {
+    assert.equal(pol[k], 'system',
+      'у ключа ' + k + ' резолвер не system — смысл правки был именно в нём');
+  });
+  assert.equal(pol['+.ru'], 'system', 'РФ-зона больше не уходит на системный резолвер');
+  const y = P.renderProfile({ key: 'k1', base: 'https://x.invalid/t/a', masterLines: LINES, state: STATE });
+  assert.ok(y.indexOf('nameserver-policy:') > 0, 'nameserver-policy не доехал до YAML');
+});
+
+// ── S-draft-7: RH-Главный СТАЛ АВТОМАТИЧЕСКИМ ───────────────────────
+// Было `select` с ручным переключением DIRECT <-> RH-АВТО. Whitelist
+// включается без предупреждения, и до вмешательства группа сидела на мёртвом
+// DIRECT. У Stash своего netwatch нет, а писать в маршрутизацию из скрипта
+// запрещает правило 2 проекта — значит штатный `fallback` единственный путь.
+test('RH-Главный — fallback с интервалом, а не ручной select', () => {
+  const P = T.STASH_PROFILE;
+  const g = P.serviceGroups(LINES, STATE, {}).filter(function (x) { return x.name === P.G_MAIN; })[0];
+  assert.ok(g, 'группа RH-Главный исчезла');
+  assert.equal(g.type, 'fallback', 'RH-Главный вернулась в ручной select');
+  assert.equal(g.interval, S.GROUP_INTERVAL, 'у RH-Главный нет интервала замера');
+  assert.deepEqual(g.proxies, ['DIRECT', 'RH-АВТО'], 'порядок членов RH-Главный изменился');
 });
 
 // ── РЕГРЕССИЯ НА ОТКАЗ, ПОЛУЧЕННЫЙ НА УСТРОЙСТВЕ 31.08 ──────────────
