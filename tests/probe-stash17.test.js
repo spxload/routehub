@@ -258,3 +258,222 @@ test('число снимков не превышает объявленного
   assert.ok(rep.ans.снимков <= limit, 'снимков больше предела: ' + rep.ans.снимков);
   assert.ok(st.ctl.length <= limit, 'запросов больше снимков');
 });
+
+// ───────────────────────────────────────────────────────────────────────
+// ПУНКТ 10: протокол, повторы, расширенный WATCH.
+// ───────────────────────────────────────────────────────────────────────
+
+// Соединение с заданным протоколом и портом: `network` лежит в metadata, и
+// подменять его надо именно там, иначе проверка ничего не проверяет.
+function connNet(id, host, network, port, extra = {}) {
+  const c = conn(id, host, extra);
+  c.metadata = Object.assign({}, c.metadata, { network, destinationPort: port });
+  return c;
+}
+const МОЛЧИТ = { upload: { total: 1528 }, download: { total: 0 } };
+
+// Список WATCH читается из исходника: тест обязан проверять ТОТ набор, что
+// уедет на телефон, а не свою копию, которая разойдётся с ним на первой правке.
+const WATCH = (() => {
+  const src = /var WATCH = \[([\s\S]*?)\];/.exec(CODE)[1];
+  return src.split('\n').join(' ').match(/'([^']+)'/g).map((s) => s.slice(1, -1));
+})();
+
+test('протокол несостоявшегося соединения назван: udp/443 — это QUIC', async () => {
+  // ЗАЧЕМ. QUIC ходит по UDP/443. Блокировку QUIC проект сознательно не
+  // включает, но отличить обрыв QUIC от обрыва TCP нечем — этим и отличаем.
+  const st = run({ conns: [connNet('1', 'gemini.google.com', 'udp', '443', МОЛЧИТ)] });
+  const rep = await settle(st);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('НЕ ОТВЕТИЛИ') === 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('udp/443 QUIC') > 0, 'протокол не назван: ' + rep.ans.ВЕРДИКТ);
+  assert.equal(rep.ans.udp_без_ответа, 1, 'UDP-отказ не посчитан отдельно');
+  assert.equal(rep.ans.quic_без_ответа, 1, 'QUIC-отказ не посчитан отдельно');
+  assert.equal(rep.ans.соединения[0].сеть, 'udp');
+  assert.equal(rep.ans.по_протоколам.udp, 1);
+});
+
+test('отказ по TCP не выдаётся за UDP и за QUIC', async () => {
+  const st = run({ conns: [connNet('1', 'grok.com', 'tcp', '443', МОЛЧИТ)] });
+  const rep = await settle(st);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('[tcp]') > 0, 'протокол не назван: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('QUIC') < 0, 'TCP объявлен QUIC-ом');
+  assert.equal(rep.ans.udp_без_ответа, undefined, 'TCP посчитан как UDP-отказ');
+  assert.equal(rep.ans.по_протоколам.tcp, 1);
+});
+
+test('UDP не на 443 QUIC-ом не называется', async () => {
+  // Звонки и DNS тоже UDP. Назвать их QUIC-ом — увести разбор в сторону.
+  const st = run({ conns: [connNet('1', 'grok.com', 'udp', '8801', МОЛЧИТ)] });
+  const rep = await settle(st);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('[udp]') > 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('QUIC') < 0, 'UDP/8801 объявлен QUIC-ом');
+  assert.equal(rep.ans.udp_без_ответа, 1);
+  assert.equal(rep.ans.quic_без_ответа, undefined, 'не-QUIC посчитан QUIC-ом');
+});
+
+test('протокол неизвестен — так и сказано, а не «tcp» по умолчанию', async () => {
+  const c = conn('1', 'chatgpt.com', МОЛЧИТ);
+  delete c.metadata.network;
+  const st = run({ conns: [c] });
+  const rep = await settle(st);
+  assert.equal(rep.ans.соединения[0].сеть, '?', 'пустое поле network подменено догадкой');
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('[?]') > 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+});
+
+test('повторы: разные соединения к одному хосту считаются и выносятся в вердикт', async () => {
+  // ЗАЧЕМ. Приложение, которому не ответили, заходит заново. Байты при этом
+  // могут идти в обе стороны, и проба по ним молчит — а переоткрытия видны.
+  // Поле log заполнено намеренно: без него проба и так не красит вывод
+  // зелёным, и проверка цвета ничего бы не значила.
+  const st = run({ conns: [
+    conn('1', 'gemini.google.com', { log: 'connect failed: EOF' }),
+    conn('2', 'gemini.google.com', { log: 'connect failed: EOF' }),
+    conn('3', 'gemini.google.com'), conn('4', 'chatgpt.com'),
+  ] });
+  const rep = await settle(st);
+  assert.deepEqual(rep.ans.ПОВТОРЫ, ['gemini.google.com ×3'], 'повторы: ' + JSON.stringify(rep.ans.ПОВТОРЫ));
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('ПЕРЕОТКРЫВАЕТ') === 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('gemini.google.com ×3') > 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+  assert.equal(st.done.backgroundColor, '#FF9F0A', 'переоткрытия окрашены как «всё хорошо»');
+  assert.ok(st.done.content.indexOf('переоткрытия') >= 0, 'переоткрытия не видны в тексте');
+});
+
+test('одно соединение во всех снимках повтором не считается', async () => {
+  // Соединение живёт двадцать снимков и остаётся ОДНИМ: считать снимки за
+  // повторы — значит объявлять повтором любое долгое соединение.
+  const st = run({ conns: [conn('1', 'gemini.google.com'), conn('2', 'chatgpt.com')] });
+  const rep = await settle(st);
+  assert.equal(rep.ans.ПОВТОРЫ, undefined, 'повторы: ' + JSON.stringify(rep.ans.ПОВТОРЫ));
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('ПЕРЕОТКРЫВАЕТ') < 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+});
+
+test('порог повторов: два потока — норма, ниже порога не сообщаем', async () => {
+  const порог = Number(/var MIN_REPEAT = (\d+)/.exec(CODE)[1]);
+  assert.ok(порог >= 3, 'порог повторов слишком мал: ' + порог);
+  const st = run({ conns: [conn('1', 'grok.com'), conn('2', 'grok.com')] });
+  const rep = await settle(st);
+  assert.equal(rep.ans.ПОВТОРЫ, undefined, 'два соединения объявлены повтором');
+});
+
+test('отказ и повторы вместе: вердикт начинается с отказа, повторы рядом', async () => {
+  const st = run({ conns: [
+    Object.assign(conn('1', 'gemini.google.com'), МОЛЧИТ),
+    Object.assign(conn('2', 'gemini.google.com'), МОЛЧИТ),
+    conn('3', 'gemini.google.com'),
+  ] });
+  const rep = await settle(st);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('НЕ ОТВЕТИЛИ') === 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('Переоткрывает: gemini.google.com ×3 (без ответа 2)') > 0,
+    'повторы не попали в вердикт: ' + rep.ans.ВЕРДИКТ);
+  assert.equal(st.done.backgroundColor, '#FF3B30');
+});
+
+test('новые домены Gemini и AI Studio распознаются', async () => {
+  // Каждый домен подтверждён боевым контуром: правилами RH-AI в routehub.conf
+  // ветки main либо набором viewer12/OverseasAI.list, который тот же конфиг
+  // подключает с policy=RH-AI.
+  const свои = ['ai.google.dev', 'makersuite.google.com',
+                'alkalimakersuite-pa.clients6.google.com', 'aiplatform.googleapis.com',
+                'proactivebackend-pa.googleapis.com', 'business.gemini.google',
+                'generativeai.google', 'www.generativeai.google'];
+  const st = run({ conns: свои.map((h, i) => conn(String(i + 1), h)) });
+  const rep = await settle(st);
+  assert.equal(rep.ans.ии_соединений, свои.length,
+    'часть доменов Gemini не распознана: ' + JSON.stringify(rep.ans.по_сервисам));
+  assert.equal(rep.ans.чужих_не_названо, 0);
+});
+
+test('расширенный WATCH не выносит наружу личные хосты Google и Apple', async () => {
+  // ⛔ Расширение списка — самое опасное место пробы: каждая строка WATCH это
+  // разрешение выгрузить имя хоста. Хосты ниже ходят с того же телефона и к
+  // ИИ отношения не имеют; ни один не должен совпасть.
+  const чужие = ['google.com', 'www.google.com', 'mail.google.com', 'photos.google.com',
+                 'drive.google.com', 'calendar.google.com', 'accounts.google.com',
+                 'play.google.com', 'clients6.google.com', 'waa-pa.clients6.google.com',
+                 'clients4.google.com', 'googleapis.com', 'storage.googleapis.com',
+                 'fonts.googleapis.com', 'people-pa.googleapis.com',
+                 'firebaselogging-pa.googleapis.com', 'fonts.gstatic.com',
+                 'mask.icloud.com', 'gateway.icloud.com', 'mzstatic.com',
+                 'gemini.google.com.evil.example', 'notgemini.google',
+                 'myai.google.dev.example'];
+  const st = run({ conns: чужие.map((h, i) => conn(String(i + 1), h, { log: 'личное ' + h })) });
+  const rep = await settle(st);
+  const dump = JSON.stringify(rep) + JSON.stringify(st.done);
+  for (const h of чужие) assert.ok(dump.indexOf(h) < 0, 'личный хост выгружен наружу: ' + h);
+  assert.equal(rep.ans.ии_соединений, 0, 'личные хосты посчитаны как ИИ-соединения');
+});
+
+test('ловушка «минус единицы» закрыта для КАЖДОГО домена WATCH, включая новые', async () => {
+  // Прежняя редакция сравнивала indexOf с арифметикой длин, и совпадал любой
+  // хост ровно на символ короче маркера. Проверка идёт по всему списку, а не
+  // по девяти известным хостам: новый домен обязан проходить её сам.
+  const подделки = [];
+  for (const w of WATCH) {
+    // Хост ровно на символ короче маркера — тот самый случай, на котором
+    // старое сравнение давало -1 === -1. Для коротких маркеров вроде
+    // `claude.ai` доменного хвоста уже не остаётся, и берётся голая строка
+    // нужной длины: проверяется арифметика, а не красота имени.
+    const n = w.length - 1 - '.example'.length;
+    подделки.push(n > 0 ? ('z'.repeat(n) + '.example') : 'z'.repeat(w.length - 1));
+    подделки.push(w + '.example');                    // маркер как ПРЕФИКС, а не хвост
+    подделки.push('не' + w);                          // маркер как хвост без точки
+  }
+  const st = run({ conns: подделки.map((h, i) => conn(String(i + 1), h)) });
+  const rep = await settle(st);
+  const dump = JSON.stringify(rep) + JSON.stringify(st.done);
+  for (const h of подделки) assert.ok(dump.indexOf(h) < 0, 'подделка принята за ИИ-хост: ' + h);
+  assert.equal(rep.ans.ии_соединений, 0, 'подделки посчитаны ИИ-соединениями');
+});
+
+test('в WATCH нет широких маркеров — список не должен «подрасти» до всего Google', async () => {
+  // В наборе OverseasAI.list есть строки `google.com`, `apis.google.com` и
+  // подобные. Для маршрутизации они уместны, для ВЫГРУЗКИ ИМЁН — нет.
+  const запрещено = ['google.com', 'google', 'googleapis.com', 'apis.google.com',
+                     'gstatic.com', 'clients6.google.com', 'com', 'ai', 'dev'];
+  for (const w of WATCH) {
+    assert.ok(запрещено.indexOf(w) < 0, 'в WATCH попал широкий маркер: ' + w);
+    assert.ok(w.indexOf('.') > 0, 'маркер без точки ловит целую зону: ' + w);
+  }
+  assert.ok(WATCH.indexOf('gemini.google.com') >= 0, 'потерян основной домен Gemini');
+});
+
+test('соединения без собственного id повтором не считаются', async () => {
+  // ⛔ Запасной ключ соединения строится из НОМЕРА записи в списке. Номер
+  // съезжает, как только закрылось соседнее соединение, и одно и то же
+  // соединение получило бы в следующем снимке другой ключ — счётчик повторов
+  // насчитал бы переоткрытия там, где соединение всё время было одно.
+  let n = 0;
+  const без_id = (host) => { const c = conn('x', host); delete c.id; return c; };
+  const st = run({ controller: (url, ok) => {
+    // Соединение к Gemini всё время ОДНО, но в каждом снимке стоит на новом
+    // месте списка — запасной ключ пробегает :0, :1, :2.
+    const список = [без_id('gemini.google.com'), без_id('chatgpt.com'), без_id('grok.com')];
+    const сдвиг = n++ % 3;
+    for (let k = 0; k < сдвиг; k++) список.push(список.shift());
+    return ok(JSON.stringify({ connections: список }));
+  } });
+  const rep = await settle(st);
+  assert.equal(rep.ans.ПОВТОРЫ, undefined,
+    'соединения без id посчитаны переоткрытиями: ' + JSON.stringify(rep.ans.ПОВТОРЫ));
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('ПЕРЕОТКРЫВАЕТ') < 0, 'вердикт: ' + rep.ans.ВЕРДИКТ);
+});
+
+test('в вердикт идут три самых настойчивых хоста, остальные — числом', async () => {
+  // Вердикт читают с экрана телефона: перечень из десятка имён вытесняет из
+  // первой строки главное. Полный список остаётся в отчёте.
+  const хосты = ['gemini.google.com', 'chatgpt.com', 'grok.com', 'claude.ai'];
+  const conns = [];
+  хосты.forEach((h, k) => { for (let j = 0; j <= k; j++) conns.push(conn(h + ':' + j, h)); });
+  // 1, 2, 3, 4 соединения: порог MIN_REPEAT пройдут два хоста из четырёх,
+  // ещё два добираются ниже — всего четыре, то есть на один больше показа.
+  const ещё = ['x.ai', 'perplexity.ai'].reduce((a, h) =>
+    a.concat([conn(h + ':1', h), conn(h + ':2', h), conn(h + ':3', h)]), []);
+  const st = run({ conns: conns.concat(ещё) });
+  const rep = await settle(st);
+  assert.equal(rep.ans.ПОВТОРЫ.length, 4, 'повторы: ' + JSON.stringify(rep.ans.ПОВТОРЫ));
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('claude.ai ×4') > 0, 'самый настойчивый хост не первый: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('и ещё 1') > 0, 'хвост списка не свёрнут: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(rep.ans.ВЕРДИКТ.indexOf('perplexity') < 0, 'в вердикт попал четвёртый хост: ' + rep.ans.ВЕРДИКТ);
+  assert.ok(JSON.stringify(rep.ans.ПОВТОРЫ).indexOf('perplexity.ai ×3') > 0, 'хост потерян в отчёте');
+  assert.ok(rep.ans.ВЕРДИКТ.length < 300, 'вердикт разросся до портянки: ' + rep.ans.ВЕРДИКТ.length);
+});
