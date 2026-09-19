@@ -1,6 +1,6 @@
 // routehub — модуль clients/stash-rules.js
 // КЛИЕНТСКИЙ СЛОЙ STASH: секция `rules:` профиля.
-// Перенос секции [Rule] боевого routehub.conf (C-draft-42). Правила лежат
+// Перенос секции [Rule] боевого routehub.conf (C-draft-43). Правила лежат
 // ЗДЕСЬ, а не читаются из конфига Loon: синтаксис у клиентов разный, а
 // «разобрать чужой конфиг регэкспом» — источник тихих расхождений. Порядок
 // строк повторяет routehub.conf сверху вниз; в Stash, как и в Loon, побеждает
@@ -56,7 +56,19 @@ const AI_SUFFIX = [
 ];
 
 // YouTube и соцсети — на прокси (заблокировано в РФ либо деградирует).
-const PROXY_SUFFIX = ['youtube.com', 'googlevideo.com', 'instagram.com'];
+const PROXY_SUFFIX = [
+  'youtube.com', 'googlevideo.com',
+  // Аватары и шапки каналов YouTube (C-draft-43, 19.09). Набор
+  // `domains_refilter` покрывает `ggpht.com` вместе с `yt3`/`yt4`, но
+  // `googleusercontent.com` не содержит ни одной строкой — как и
+  // `domains_youtube.list` набора `rh-youtube`. Тот же файл аватара
+  // отдают все четыре хоста (замер 19.09: 200, image/jpeg, 71 239 байт),
+  // поэтому шарды берутся парой. Суффикс целиком НЕ берём: под ним
+  // Google Photos, Gmail и Play — чужой трафик на узлах, где последним
+  // рангом стоит платный обход.
+  'yt3.googleusercontent.com', 'yt4.googleusercontent.com',
+  'instagram.com',
+];
 
 // ⛔ СНЯТО 02.09. Здесь стояли пять доменов инфраструктуры YouTube
 // (`ytimg.com`, `ggpht.com`, `youtu.be`, `youtube-nocookie.com`,
