@@ -7,7 +7,7 @@
 import { buildAiTiers } from './ai.js';
 import { aiBlocks, renderConfig, subParamsFromConf } from './clients/loon.js';
 import { KEY_RE } from './const.js';
-import { ensureFlags, ensureFreeSpare, kvGetJSON, kvPutJSON, kvPutManyJSON, loadRegistry, tokenGate } from './store.js';
+import { ensureFlags, ensureFreeSpare, kvGetJSON, kvPutJSON, kvPutManyJSON, loadRegistry, nonceTaken, tokenGate } from './store.js';
 import { fetchUpstream, getSub, renderNodesBoth } from './sub.js';
 import { classifyNet, confVersion, decodeName, fragOf, jsonResp, matchKey, metricOf, utf8ToB64 } from './util.js';
 
@@ -155,6 +155,22 @@ async function handleSpeed(req, env, tok) {
   const now = new Date().toISOString();
   const e = reg[key];
   if (e.status === 'free') {
+    // Проверка стоит ТОЛЬКО на привязке свободного ключа: записи в статусе
+    // `bound` эта правка не читает и не меняет, отвязать боевой ключ она не
+    // может по построению. Реестр при отказе не пишется — отклонённая
+    // регистрация не должна иметь права трогать D1.
+    //
+    // ЧТО ЭТО ЗНАЧИТ ДЛЯ СУЩЕСТВУЮЩЕГО ОБЩЕГО НОНСА k1/k2: правка его НЕ
+    // ЧИНИТ. Оба ключа уже `bound`, каждый свип идёт ниже по ветке «нонс
+    // совпал» и проходит как раньше; сотовый кэш k2 так и останется
+    // замороженным. Чинится это только руками Дианы: на k2 очистить
+    // `rh_nonce` и `rh_speed_cell` в Loon и отвязать ключ в панели.
+    // Правка ПРЕДОТВРАЩАЕТ ПОВТОРЕНИЕ: после отвязки повторная регистрация с
+    // унаследованным нонсом получит 409 вместо молчаливой привязки второго
+    // устройства к чужому нонсу.
+    // Штатная перепривязка того же устройства не ломается: `unbind` удаляет
+    // нонс у своего ключа, а «другим владельцем» ключ сам себе не бывает.
+    if (nonceTaken(reg, nonce, key)) return jsonResp({ error: 'nonce taken' }, 409);
     e.status = 'bound'; e.nonce = nonce; e.first_seen = now; e.last_seen = now;
     ensureFreeSpare(reg); ensureFlags(reg);
   } else if (e.status === 'bound') {
@@ -200,8 +216,9 @@ async function handleSpeed(req, env, tok) {
   // ЗАПАСНОЙ ПУТЬ для устройств до speedtest v0.6.4, которые отметок не шлют.
   // Признак настоящего замера — изменение значений: совпало до последнего
   // поля, значит слот переотправлен из кэша и замера не было.
-  // Оговорка: два разных сбойных jit оба схлопываются в null (v1.9.7) и
-  // выглядят одинаковыми — ошибка в сторону «старо», она безобидна.
+  // Оговорка: два разных сбойных jit оба схлопываются в потолок JIT_CAP
+  // (v1.10.2; до неё — в null) и выглядят одинаковыми — ошибка в сторону
+  // «старо», она безобидна.
   function sameMetric(a, b) {
     if (!a || !b) return false;
     if (a.dead || b.dead) return !!a.dead === !!b.dead;

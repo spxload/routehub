@@ -28,7 +28,7 @@ const TOKEN_REQUIRED_DEFAULT = false;
 
 const SETTINGS_KEY = 'settings';
 
-const WORKER_VER = 'v1.10.1';
+const WORKER_VER = 'v1.10.2';
 
 const TOKEN_LEN = 32;
 
@@ -107,14 +107,20 @@ const FLOOR_RTT = 30, FLOOR_JIT = 10, FLOOR_BL = 20;
 
 const VOICE_JIT = 30, VOICE_BL = 50, VOICE_MED = 160; // пороги голосовой пригодности (☎)
 
-// v1.9.7: ПРЕДЕЛ РАЗУМНОГО для метрик задержки. Значение выше — это не «узел
-// хуже», а сбой замера: проба попала в таймаут или в паузу планировщика iOS.
-// Такие значения приходят как null (компонент нейтрален), иначе один
-// испорченный замер отбрасывал быстрый узел на десятки позиций вниз —
-// см. ЗАМЕРЫ_И_ВЕСА.md, разбор среза от 2026-08-16 (видели jit 23726, bl 8039).
-// Реальный плохой джиттер (сотни миллисекунд) порог не превышает и наказывает
-// узел как раньше.
-const JIT_BAD = 1000, BL_BAD = 2000;
+// v1.10.2: ПОТОЛОК для метрик задержки (винзоризация при приёме). Значение
+// выше — это не «узел хуже», а сбой замера: проба попала в таймаут или в
+// паузу планировщика iOS. Значения взяты из ЗАМЕРЫ_И_ВЕСА.md, предложение 2
+// («порядка 300 и 500 мс»); разбор среза 16.08 видел jit 23726 и bl 8039, и
+// из-за такого выброса быстрый узел съезжал на 10-23 позиции вниз.
+// Реальный плохой джиттер (сотни миллисекунд) потолка не достигает и
+// наказывает узел как раньше.
+// До v1.10.2 здесь стояли JIT_BAD = 1000 / BL_BAD = 2000, и значение выше
+// порога обнулялось в null — почему это заменено, написано у metricOf.
+// Оговорка о запасе: после правки спидтеста v0.6.2 (усечённый размах)
+// максимум jit в срезе — 66 мс (вывод 16 памяти проекта), то есть на
+// сегодняшних данных потолок не срабатывает вовсе. Это страховка на случай,
+// когда причину чинит не скрипт: чужое устройство, старая версия, новый сбой.
+const JIT_CAP = 300, BL_CAP = 500;
 
 const VOICE = '☎'; // ☎ маркер пригодности для звонков
 
@@ -133,4 +139,4 @@ const ADMIN_SESSION_TAG = 'rh-admin-v1';
 
 const CASCADE_TIERS = ['EU', 'AM', 'RU', 'REST', 'GAME', 'BYPASS'];
 
-export { ADMIN_COOKIE, ADMIN_SESSION_MS, ADMIN_SESSION_TAG, BLK, BL_BAD, BY, CASCADE_TIERS, CELL_HINTS, CORS, DE, DEAD, DOMAIN_RE, FLAGS, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, FRESH_MS, ICON_CELL, ICON_WIFI, JIT_BAD, KEY_RE, KV_UPSERT, META_HEADERS, METRIC_SEP, NODATA, NODE_PREFIXES, PATH_TOKEN_RE, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, RU, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SETTINGS_KEY, SUP_DIG, SUP_PLUS, TOKEN_ALPHABET, TOKEN_LEN, TOKEN_RE, TOKEN_REQUIRED_DEFAULT, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED, WORKER_VER };
+export { ADMIN_COOKIE, ADMIN_SESSION_MS, ADMIN_SESSION_TAG, BLK, BL_CAP, BY, CASCADE_TIERS, CELL_HINTS, CORS, DE, DEAD, DOMAIN_RE, FLAGS, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, FRESH_MS, ICON_CELL, ICON_WIFI, JIT_CAP, KEY_RE, KV_UPSERT, META_HEADERS, METRIC_SEP, NODATA, NODE_PREFIXES, PATH_TOKEN_RE, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, RU, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SETTINGS_KEY, SUP_DIG, SUP_PLUS, TOKEN_ALPHABET, TOKEN_LEN, TOKEN_RE, TOKEN_REQUIRED_DEFAULT, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED, WORKER_VER };

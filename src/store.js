@@ -58,6 +58,29 @@ function ensureFreeSpare(reg) {
   reg['k' + (max + 1)] = { status: 'free', token: makeToken() };
 }
 
+// ТЕХДОЛГ 11b: НОНС, ЗАНЯТЫЙ ДРУГИМ КЛЮЧОМ.
+// Нонс — единственное, чем Worker отличает одно физическое устройство от
+// другого. Если два телефона шлют один и тот же нонс (на k2 восстановили
+// резервную копию Loon вместе с $persistentStore — срез D1 16.08, техдолг 11),
+// то проверка на конфликт не срабатывает ни разу: у обоих ключей нонс «свой»,
+// и подмена устройства проходит молча.
+// ЗАНЯТЫМ считается нонс, который хранит ЛЮБОЙ другой ключ, а не только
+// `bound`. Статус не проверяется намеренно: нонс хранят ровно привязанные и
+// конфликтные ключи, потому что `unbind` его удаляет, — то есть сузить
+// условие до `bound` значило бы разрешить занять нонс ключа, который УЖЕ в
+// конфликте, и снова получить два устройства на одном нонсе. Выход из
+// конфликта это не запирает: отвязка удаляет нонс и снимает запрет.
+// Пустой нонс сюда не доходит — handleSpeed отсекает его раньше (400);
+// иначе ключ без поля `nonce` совпал бы с undefined.
+
+function nonceTaken(reg, nonce, self) {
+  for (const k in reg) {
+    if (k === self) continue;
+    if (reg[k] && reg[k].nonce === nonce) return true;
+  }
+  return false;
+}
+
 // Токен устройства: 32 символа без похожих (0/O/l/1) — читаемо при переносе руками.
 
 function makeToken() {
@@ -104,4 +127,4 @@ function ensureFlags(reg) {
   return ch;
 }
 
-export { denyToken, ensureFlags, ensureFreeSpare, ensureTokens, kvGetJSON, kvPutJSON, kvPutManyJSON, loadMylist, loadRegistry, loadSettings, makeToken, saveSettings, tokenGate };
+export { denyToken, ensureFlags, ensureFreeSpare, ensureTokens, kvGetJSON, kvPutJSON, kvPutManyJSON, loadMylist, loadRegistry, loadSettings, makeToken, nonceTaken, saveSettings, tokenGate };

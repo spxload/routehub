@@ -62,7 +62,11 @@ function nodesForDash(masterLines, state) {
         down: it.m.down || 0,
         rtt: it.m.rtt || 0,
         med: (it.m.med != null ? it.m.med : it.m.rtt) || 0,
-        jit: (it.m.jit == null ? null : it.m.jit),   // v1.9.8: null = сбойный замер, не идеальный джиттер
+        // v1.9.8: null передаётся как null, а не как 0 — иначе отсутствие
+        // джиттера выглядело бы идеальным джиттером. С v1.10.2 новые замеры
+        // null в этом поле не дают вовсе (сбойное значение обрезается
+        // потолком JIT_CAP), поэтому null здесь — только старая запись.
+        jit: (it.m.jit == null ? null : it.m.jit),
         bl: (it.m.bl == null ? null : it.m.bl),
         // v1.10.0: два возраста, потому что замера два. age_min — полный
         // замер скорости (down, bl): именно он весит 0.40 в балле.

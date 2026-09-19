@@ -5,7 +5,7 @@
 // уехал в clients/loon.js (v1.9.6, ADR-01).
 // История версий — CHANGELOG.md в корне репозитория.
 
-import { BLK, BL_BAD, CELL_HINTS, DEAD, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, JIT_BAD, METRIC_SEP, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SUP_DIG, SUP_PLUS, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED } from './const.js';
+import { BLK, BL_CAP, CELL_HINTS, DEAD, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, JIT_CAP, METRIC_SEP, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SUP_DIG, SUP_PLUS, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED } from './const.js';
 
 function proxOf(fl) { return (fl in PROX) ? PROX[fl] : 99; }
 
@@ -151,12 +151,28 @@ function classifyNet(asOrg) {
   return 'wifi';
 }
 
-// v1.9.7: значения задержки выше предела разумного (JIT_BAD / BL_BAD) —
-// это сбой замера, а не свойство узла, поэтому они приходят как null:
-// в scoreOf такой компонент считается нейтральным, а не худшим из возможных.
-// Раньше одиночный выброс ронял быстрый узел на 10-23 позиции (ЗАМЕРЫ_И_ВЕСА.md).
-// Для звонков (voiceOk) null остаётся отказом — обещать голос по сбойному
-// замеру нельзя.
+// v1.10.2: ВИНЗОРИЗАЦИЯ ПРИ ПРИЁМЕ. Значения задержки выше потолка
+// (JIT_CAP / BL_CAP) ОБРЕЗАЮТСЯ до потолка. Обоснование — ЗАМЕРЫ_И_ВЕСА.md,
+// предложение 2: выше потолка это уже не «узел хуже», а «замер не удался»,
+// и разница между 300 и 23 726 для ранжирования смысла не имеет.
+//
+// ПОЧЕМУ ОБРЕЗАТЬ, А НЕ ОТБРАСЫВАТЬ. v1.9.7 такие значения превращала в null,
+// а null в scoreOf делает компонент НЕЙТРАЛЬНЫМ (jN = 1, лучший из
+// возможных). На пороге из-за этого получался обрыв: jit 999 давал узлу
+// худший джиттерный компонент, а jit 1001 — лучший, то есть чуть более
+// испорченный замер вознаграждался. Потолок обрыв убирает: балл по джиттеру
+// не возрастает нигде, а узел с диким выбросом получает ограниченный штраф
+// и из рейтинга не выбывает.
+//
+// ЧЕГО ПРАВКА НЕ ДЕЛАЕТ. Выше потолка все значения равны между собой, значит
+// одиночный выброс и стабильно плохой узел по этому компоненту неразличимы.
+// Отличить их можно только по истории замеров (EWMA, техдолг 3) — это
+// отдельная задача, и здесь она не решается.
+//
+// Записи jit: null, принятые v1.9.7, в D1 остаются и не переписываются,
+// поэтому scoreOf и voiceOk обязаны понимать null и дальше.
+// Для звонков обрезанное значение остаётся отказом: JIT_CAP 300 > VOICE_JIT 30
+// и BL_CAP 500 > VOICE_BL 50 — обещать голос по сбойному замеру нельзя.
 
 function metricOf(s) {
   if (s.dead) return { dead: true };
@@ -165,8 +181,8 @@ function metricOf(s) {
   const o = {
     down: Math.max(0, Math.round(+s.down || 0)),
     rtt: Math.max(0, Math.round(+s.rtt || 0)),
-    jit: (jit > JIT_BAD ? null : jit),
-    bl: ((bl == null || bl > BL_BAD) ? null : bl),
+    jit: Math.min(jit, JIT_CAP),
+    bl: (bl == null ? null : Math.min(bl, BL_CAP)),
   };
   if (s.med != null) o.med = Math.max(0, Math.round(+s.med));
   return o;
