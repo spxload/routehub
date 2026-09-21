@@ -19,7 +19,7 @@
 // v0.4.8: кнопка Loon = nsloon-ссылка; убран засев whoosh.bike (+чистка).
 // =============================================================
 
-var VERSION = 'dash v0.7.0';
+var VERSION = 'dash v0.8.0';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -431,6 +431,14 @@ function ageTxt(n){
   return 'скорость '+a+' · пинг '+p;
 }
 
+// v0.8.0: отдача рядом с загрузкой (ADR-05). Поле `up` есть с Worker v1.11.0;
+// нет поля — старый Worker, строка прежняя. Есть, но null — узел ещё не
+// мерялся отдачей (прочерк, а не 0: ноль значит «тело не ушло»).
+// На балл (кольцо) отдача не влияет — только показ.
+function spdTxt(n){
+  if(!('up' in n))return n.down+' Мбит';
+  return '↓'+n.down+' ↑'+(n.up==null?'—':n.up)+' Мбит';
+}
 function rNd(){
   var ms=(W.nodes&&W.nodes[S.seg])||[];
   var h='<div class="card"><div style="display:flex;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden">'+
@@ -440,7 +448,7 @@ function rNd(){
   for(var i=0;i<ms.length;i++){var n=ms[i];
     if(hasAge(n)){known++;if(n.age_min==null)noTs++}
     var at=ageTxt(n);
-    rows+='<div class="row">'+ring(n.score)+'<div class="grow"><div class="nm">'+esc(n.name)+(n.voice?' <span class="chip ok">звонки</span>':'')+'</div><div class="sub">'+n.down+' Мбит · пинг '+n.rtt+' мс · джиттер '+n.jit+' · потери '+n.bl+'‰</div>'+(at?'<div class="sub">'+at+'</div>':'')+'</div></div>'}
+    rows+='<div class="row">'+ring(n.score)+'<div class="grow"><div class="nm">'+esc(n.name)+(n.voice?' <span class="chip ok">звонки</span>':'')+'</div><div class="sub">'+spdTxt(n)+' · пинг '+n.rtt+' мс · джиттер '+n.jit+' · потери '+n.bl+'‰</div>'+(at?'<div class="sub">'+at+'</div>':'')+'</div></div>'}
   // Слот, у которого ни у одного узла нет отметки, не мерялся ни разу:
   // устройство переотправляет кэш, а замера не было. Это не мелочь —
   // именно так выглядел замороженный сотовый кэш k2. Предупреждение
