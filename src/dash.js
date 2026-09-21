@@ -68,6 +68,9 @@ function nodesForDash(masterLines, state) {
         // потолком JIT_CAP), поэтому null здесь — только старая запись.
         jit: (it.m.jit == null ? null : it.m.jit),
         bl: (it.m.bl == null ? null : it.m.bl),
+        // v1.11.0: отдача (ADR-05). null — «не мерялась» (запись до v1.11.0
+        // или спидтест до v0.7.0), а не 0: ноль значит «тело не ушло».
+        up: (it.m.up == null ? null : it.m.up),
         // v1.10.0: два возраста, потому что замера два. age_min — полный
         // замер скорости (down, bl): именно он весит 0.40 в балле.
         // ping_age_min — последний пинг (rtt, jit), он обновляется чаще.
