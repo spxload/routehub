@@ -13,6 +13,16 @@ const ICON_CELL = '📱';      // 📱
 
 const NODATA = '∅';               // ∅
 
+// v1.11.1: ПРИЗНАК ОБХОДНОГО УЗЛА — слово «Обход» В ЛЮБОМ МЕСТЕ имени.
+// Так устроен боевой конфиг: RH-Filter-Обход = NameKeyword «Обход», а
+// VPN-фильтры исключают обход регуляркой «^(?!.*Обход)». Так же с v0.7.0
+// работает isBypass() в scripts/routehub-speedtest.js. Прежний признак
+// Worker'а — подстрока «[Обход» — был уже конфига: имя «[🌀 Обход] …»
+// (провайдер уже вставлял значки внутрь скобок у VPN) Worker не счёл бы
+// обходом. Одна константа на весь Worker: tagOf (util.js) и регулярки
+// AI-фильтров (clients/loon.js). Регистр важен — как в регулярке конфига.
+const BYPASS_WORD = 'Обход';
+
 const BLK = ['▁', '▃', '▅', '▇', '█']; // ▁▃▅▇█
 
 const SUP_PLUS = '⁺';             // ⁺
@@ -28,7 +38,7 @@ const TOKEN_REQUIRED_DEFAULT = false;
 
 const SETTINGS_KEY = 'settings';
 
-const WORKER_VER = 'v1.11.0';
+const WORKER_VER = 'v1.11.1';
 
 const TOKEN_LEN = 32;
 
@@ -139,4 +149,4 @@ const ADMIN_SESSION_TAG = 'rh-admin-v1';
 
 const CASCADE_TIERS = ['EU', 'AM', 'RU', 'REST', 'GAME', 'BYPASS'];
 
-export { ADMIN_COOKIE, ADMIN_SESSION_MS, ADMIN_SESSION_TAG, BLK, BL_CAP, BY, CASCADE_TIERS, CELL_HINTS, CORS, DE, DEAD, DOMAIN_RE, FLAGS, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, FRESH_MS, ICON_CELL, ICON_WIFI, JIT_CAP, KEY_RE, KV_UPSERT, META_HEADERS, METRIC_SEP, NODATA, NODE_PREFIXES, PATH_TOKEN_RE, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, RU, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SETTINGS_KEY, SUP_DIG, SUP_PLUS, TOKEN_ALPHABET, TOKEN_LEN, TOKEN_RE, TOKEN_REQUIRED_DEFAULT, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED, WORKER_VER };
+export { ADMIN_COOKIE, ADMIN_SESSION_MS, ADMIN_SESSION_TAG, BLK, BL_CAP, BY, BYPASS_WORD, CASCADE_TIERS, CELL_HINTS, CORS, DE, DEAD, DOMAIN_RE, FLAGS, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, FRESH_MS, ICON_CELL, ICON_WIFI, JIT_CAP, KEY_RE, KV_UPSERT, META_HEADERS, METRIC_SEP, NODATA, NODE_PREFIXES, PATH_TOKEN_RE, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, RU, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SETTINGS_KEY, SUP_DIG, SUP_PLUS, TOKEN_ALPHABET, TOKEN_LEN, TOKEN_RE, TOKEN_REQUIRED_DEFAULT, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED, WORKER_VER };
