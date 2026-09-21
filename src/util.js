@@ -5,7 +5,7 @@
 // уехал в clients/loon.js (v1.9.6, ADR-01).
 // История версий — CHANGELOG.md в корне репозитория.
 
-import { BLK, BL_BAD, CELL_HINTS, DEAD, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, JIT_BAD, METRIC_SEP, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SUP_DIG, SUP_PLUS, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED } from './const.js';
+import { BLK, BL_BAD, BYPASS_WORD, CELL_HINTS, DEAD, FLAG_RE, FLAG_START_RE, FLOOR_BL, FLOOR_JIT, FLOOR_RTT, JIT_BAD, METRIC_SEP, PROX, REGION_AM, REGION_EU, REGION_RU, RH_ICON_SVG, SCORE_WB, SCORE_WJ, SCORE_WR, SCORE_WS, SUP_DIG, SUP_PLUS, VOICE, VOICE_BL, VOICE_JIT, VOICE_MED } from './const.js';
 
 function proxOf(fl) { return (fl in PROX) ? PROX[fl] : 99; }
 
@@ -137,9 +137,15 @@ function startFlag(name) { const m = String(name).match(FLAG_START_RE); return m
 // ([VPN] -> [🌀 VPN] и т.п.), поэтому критерий — слово в скобочном теге,
 // а не точная подстрока '[VPN]'. Порядок: обход -> игры -> VPN (обход строго
 // первым: у него скобка тоже может однажды получить слово VPN).
+// Обход — слово BYPASS_WORD в ЛЮБОМ месте имени, а не подстрока '[Обход'
+// (перенос v1.11.1 из main). Согласовано с RH-Filter-Обход (NameKeyword) и
+// «^(?!.*Обход)» VPN-фильтров Loon. Ошибка в эту сторону (обычный узел со
+// словом сочтён обходом) стоит узла, ошибка в обратную — платного трафика
+// (правило 1): в Stash нераспознанный обход с «VPN]» встаёт в страновой тир
+// RH-AI/RH-АВТО, без «VPN]» — выпадает из профиля вместе с RH-Обход.
 
 function tagOf(name) {
-  if (name.indexOf('[Обход') >= 0) return 'bypass';
+  if (name.indexOf(BYPASS_WORD) >= 0) return 'bypass';
   if (name.indexOf('Игры') >= 0) return 'game';
   if (name.indexOf('VPN]') >= 0) return 'vpn';
   return 'other';

@@ -7,7 +7,7 @@
 // Рядом со временем появится clients/stash.js, собирающий YAML.
 // История версий — CHANGELOG.md в корне репозитория.
 
-import { ICON_CELL, ICON_WIFI, REGION_AM, REGION_EU, REGION_RU } from '../const.js';
+import { BYPASS_WORD, ICON_CELL, ICON_WIFI, REGION_AM, REGION_EU, REGION_RU } from '../const.js';
 import { regionOf } from '../util.js';
 
 // Извлечь хвост параметров Loon из строки [Remote Proxy] конфига.
@@ -30,8 +30,8 @@ function aiBlocks(tiers) {
   function pushTier(fl) {
     n++;
     const id = (n < 10 ? '0' : '') + n;
-    fW.push('RH-Filter-W-AI' + id + ' = NameRegex, Lastdep, FilterKey = ^(?!.*Обход).*' + fl + '.*VPN].*' + ICON_WIFI);
-    fC.push('RH-Filter-C-AI' + id + ' = NameRegex, Lastdep, FilterKey = ^(?!.*Обход).*' + fl + '.*VPN].*' + ICON_CELL);
+    fW.push('RH-Filter-W-AI' + id + ' = NameRegex, Lastdep, FilterKey = ^(?!.*' + BYPASS_WORD + ').*' + fl + '.*VPN].*' + ICON_WIFI);
+    fC.push('RH-Filter-C-AI' + id + ' = NameRegex, Lastdep, FilterKey = ^(?!.*' + BYPASS_WORD + ').*' + fl + '.*VPN].*' + ICON_CELL);
     gW.push('RH-Filter-W-AI' + id);
     gC.push('RH-Filter-C-AI' + id);
   }
@@ -40,7 +40,7 @@ function aiBlocks(tiers) {
   function pushRegionRest(suffix, flags) {
     const inc = flags.filter(function (f) { return tiers.indexOf(f) < 0; });
     if (!inc.length) return;
-    const re = '^(?!.*Обход).*(' + inc.join('|') + ').*VPN].*';
+    const re = '^(?!.*' + BYPASS_WORD + ').*(' + inc.join('|') + ').*VPN].*';
     fW.push('RH-Filter-W-AI' + suffix + ' = NameRegex, Lastdep, FilterKey = ' + re + ICON_WIFI);
     fC.push('RH-Filter-C-AI' + suffix + ' = NameRegex, Lastdep, FilterKey = ' + re + ICON_CELL);
     gW.push('RH-Filter-W-AI' + suffix);
@@ -56,7 +56,7 @@ function aiBlocks(tiers) {
   byRegion(3).forEach(pushTier);          // прочие регионы
   // Общий запасной AIrest: исключаем обходные, ВЕСЬ СНГ, занятые тиеры и то,
   // что уже покрыто региональными остатками. Ловит незнакомые новые страны.
-  const exclAlt = ['Обход'].concat(REGION_RU, REGION_EU, REGION_AM, tiers).join('|');
+  const exclAlt = [BYPASS_WORD].concat(REGION_RU, REGION_EU, REGION_AM, tiers).join('|');
   fW.push('RH-Filter-W-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*VPN].*' + ICON_WIFI);
   fC.push('RH-Filter-C-AIrest = NameRegex, Lastdep, FilterKey = ^(?!.*(' + exclAlt + ')).*VPN].*' + ICON_CELL);
   gW.push('RH-Filter-W-AIrest');
