@@ -1,9 +1,17 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.6.4 (2026-08-17)';
+var VERSION = 'speedtest v0.7.0 (2026-09-21)';
 //
 // Тип: cron (весь день, каждые 20 мин). Аргумент: "<key>|<origin>|<opts>".
 //
+// v0.7.0 — ОТДАЧА (`up`), ADR-05. В ПОЛНОМ замере, сразу после загрузки,
+//          POST 1 МБ на speed.cloudflare.com/__up через тот же узел. Только
+//          полный замер (раз в сутки на узел и сеть), в пинг-свип не входит.
+//          Узлы — ТОТ ЖЕ отбор, что для загрузки: isBypass() один на оба
+//          списка, обход не меряется ничем (правило 1). В балл `up` не входит.
+//          0 — тело не ушло (ошибка, таймаут, сервер принял не всё);
+//          null/нет поля — не мерялось. Парно с Worker v1.11.0, порядок
+//          обновления любой: старый Worker лишнее поле отбрасывает.
 // v0.6.4 — ВРЕМЯ ЗАМЕРА НАРУЖУ: buildArr отдаёт ts и tsp из кэша,
 //          сервер перестаёт гадать о свежести слота (парно с Worker v1.10.0).
 // v0.6.3 — ЕДИНЫЙ ТЕСТ-АДРЕС С ГРУППАМИ: пинг-пробы идут на
@@ -58,6 +66,13 @@ var SWEEP_BUDGET_MS = 150 * 1000;
 var POOL_W = 'RH-АВТО-W';
 var POOL_C = 'RH-АВТО-C';
 var DOWN_HOST = 'https://speed.cloudflare.com/__down';
+// v0.7.0: отдача. Размер и цена — ADR-05: 1 МБ на узел в полном замере,
+// около 50 МБ в сутки на сеть при пуле 50 узлов против 200+ МБ загрузки.
+// Таймаут Loon — в МИЛЛИСЕКУНДАХ (в Stash — в секундах). 20 с на 1 МБ —
+// это 0,4 Мбит/с: медленнее отдача для видео в мессенджер бесполезна.
+var UP_HOST = 'https://speed.cloudflare.com/__up';
+var UP_BYTES = 1000000;
+var UP_TIMEOUT = 20000;
 var PING_URL = 'http://connectivitycheck.gstatic.com/generate_204';  // v0.6.3: та же цель, что у групп
 var METRIC_SEP = ' · ';
 var GAP_MS = 25 * 60 * 1000;
@@ -78,6 +93,15 @@ function nameOf(el) {
   return '';
 }
 function looksLikeNode(n) { return typeof n === 'string' && n.length >= 5 && n.indexOf('[') >= 0; }
+// ПРАВИЛО 1: обходные узлы — платный трафик, их не меряет НИЧТО: ни полный
+// замер (загрузка + отдача), ни пинг-свип. Один предикат на оба списка.
+// v0.7.0: признак — слово «Обход» в ЛЮБОМ месте имени, как у фильтра
+// RH-Filter-Обход (NameKeyword) в routehub.conf; прежняя проверка '[Обход'
+// пропустила бы узел со значком внутри скобок («[🌀 Обход]»), а пул
+// RH-АВТО-W/-C включает RH-Filter-Обход целиком. Рабочие фильтры конфига
+// исключают «Обход» так же широко (^(?!.*Обход)), так что рабочий узел под
+// это правило не попадает.
+function isBypass(n) { return String(n).indexOf('Обход') >= 0; }
 
 function hb(ev) {
   try {
@@ -122,6 +146,7 @@ function buildArr(cacheKey) {
       var it = { name: nm, down: e.down, rtt: e.rtt, jit: e.jit || 0 };
       if (e.med != null) it.med = e.med;
       if (e.bl != null) it.bl = e.bl;
+      if (e.up != null) it.up = e.up;   // v0.7.0: нет замера — нет поля
       if (e.ts) it.ts = e.ts;
       if (e.tsp) it.tsp = e.tsp;
       out.push(it);
@@ -238,6 +263,33 @@ function main() {
       });
   }
 
+  // v0.7.0: ОТДАЧА. Время — от вызова до ответа, как у загрузки (rateOf):
+  // рукопожатие входит в оба, поэтому цифры сравнимы между собой, но не
+  // с «мегабитами» провайдера — speed.cloudflare.com систематически занижает.
+  // cb(mbps) — число с одним знаком; 0 — тело не ушло; null — ответ есть,
+  // но не 200 (про узел это ничего не говорит, записывать нечего).
+  var upBody = null;
+  function upRateOf(name, cb) {
+    if (upBody === null) {
+      var blk = new Array(1001).join('0');          // 1000 байт ASCII
+      upBody = new Array(UP_BYTES / 1000 + 1).join(blk);
+    }
+    var s0 = Date.now();
+    $httpClient.post({ url: UP_HOST + '?t=' + Date.now(), node: name, timeout: UP_TIMEOUT,
+      headers: { 'Content-Type': 'text/plain' }, body: upBody },
+      function (e, r) {
+        if (e || !r) { cb(0); return; }
+        if (r.status !== 200) { cb(null); return; }
+        // Сервер сообщает, сколько байт принял; меньше отправленного — тело
+        // оборвалось, и время ничего не значит.
+        var got = null, hs = r.headers || {};
+        for (var hk in hs) { if (hs.hasOwnProperty(hk) && String(hk).toLowerCase() === 'cf-meta-upload-bytes') got = hs[hk]; }
+        if (got != null && +got !== UP_BYTES) { cb(0); return; }
+        var sec = (Date.now() - s0) / 1000;
+        cb(sec > 0 ? Math.round((UP_BYTES * 8 / 1e6) / sec * 10) / 10 : null);
+      });
+  }
+
   function measureNode(name, cb) {
     rttSamples(name, RTT_SAMPLES, [], RTT_TIMEOUT, function (acc) {
       if (!acc.length) { console.log('  x RTT [' + name + ']: нет ответа'); cb(null); return; }
@@ -249,8 +301,10 @@ function main() {
         if (mbps1 === null || mbps1 <= 0) { console.log('  ~ DOWN [' + name + ']: fail (rtt ' + mn + ')'); cb(null); return; }
         var bl = (loaded != null) ? Math.max(0, loaded - mn) : null;
         function done(down) {
-          console.log('  ok [' + name + '] ' + down + ' Mbps ' + mn + 'ms m' + med + ' j' + jit + (bl != null ? ' bl' + bl : ''));
-          cb({ down: down, rtt: mn, med: med, jit: jit, bl: bl });
+          upRateOf(name, function (up) {
+            console.log('  ok [' + name + '] ' + down + ' Mbps ↑' + (up == null ? '-' : up) + ' ' + mn + 'ms m' + med + ' j' + jit + (bl != null ? ' bl' + bl : ''));
+            cb({ down: down, up: up, rtt: mn, med: med, jit: jit, bl: bl });
+          });
         }
         if (sec1 < FAST_SEC) {
           rateOf(name, DOWN_BIG, false, function (mbps2) { done((mbps2 && mbps2 > 0) ? mbps2 : mbps1); });
@@ -273,11 +327,14 @@ function main() {
           if (res.jit != null && prev.jit != null) nj = Math.round(EWMA_A * res.jit + (1 - EWMA_A) * prev.jit);
           if (res.bl != null && prev.bl != null) nb = Math.round(EWMA_A * res.bl + (1 - EWMA_A) * prev.bl);
         }
-        results[base] = { down: nd, rtt: nr, med: nm2, jit: nj, bl: nb, ts: Date.now(), tsp: Date.now(), att: Date.now(), fails: 0 };
+        // up — сырой, без EWMA: сначала меряем (ADR-05). null (сервер не
+        // ответил 200) не затирает прежний замер.
+        var nu = (res.up != null) ? res.up : (prev.up == null ? null : prev.up);
+        results[base] = { down: nd, up: nu, rtt: nr, med: nm2, jit: nj, bl: nb, ts: Date.now(), tsp: Date.now(), att: Date.now(), fails: 0 };
       } else {
         failN++;
         var f = (prev.fails || 0) + 1;
-        results[base] = { down: prev.down || 0, rtt: prev.rtt || 0, med: (prev.med == null ? null : prev.med), jit: prev.jit || 0, bl: (prev.bl == null ? null : prev.bl), ts: prev.ts || 0, tsp: prev.tsp || 0, att: Date.now(), fails: f };
+        results[base] = { down: prev.down || 0, up: (prev.up == null ? null : prev.up), rtt: prev.rtt || 0, med: (prev.med == null ? null : prev.med), jit: prev.jit || 0, bl: (prev.bl == null ? null : prev.bl), ts: prev.ts || 0, tsp: prev.tsp || 0, att: Date.now(), fails: f };
         if (f === MAX_FAILS) console.log('  ! [' + base + '] помечен как мёртвый (' + f + ' неудач)');
       }
       writeJSON(RKEY, results);
@@ -291,7 +348,7 @@ function main() {
     for (var i = 0; i < arr.length; i++) {
       var nm = nameOf(arr[i]);
       if (!looksLikeNode(nm)) continue;
-      if (nm.indexOf('[Обход') >= 0) continue;
+      if (isBypass(nm)) continue;
       var e = results[baseName(nm)];
       if (e && (e.fails || 0) >= MAX_FAILS) continue; // мёртвые — на бэкоффе DEAD_MS
       list.push(nm);
@@ -369,7 +426,7 @@ function main() {
     for (var i = 0; i < arr.length; i++) {
       var nm = nameOf(arr[i]);
       if (!looksLikeNode(nm)) continue;
-      if (nm.indexOf('[Обход') >= 0) continue; // [Обход
+      if (isBypass(nm)) continue; // правило 1: ни загрузки, ни отдачи
       if (isDue(results[baseName(nm)], catchup)) due.push(nm);
       if (due.length >= BATCH) break;
     }
