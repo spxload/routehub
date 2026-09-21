@@ -31,11 +31,21 @@ const full = (base, tail) => `${base} · ${tail}`;
 
 const SECRET = 'Bearer ОЧЕНЬ-СЕКРЕТНО';
 
+// Служебные группы (v0.2.1, журнал выбора): по умолчанию — штатное
+// состояние, RH-Главный и RH-RU на DIRECT, RH-Обход смотрит на обходной узел.
 function proxiesBody(opts = {}) {
-  const { tail = '21↓68 / 7↓96', now = null, alive2 = true } = opts;
+  const { tail = '21↓68 / 7↓96', now = null, alive2 = true,
+    main = 'DIRECT', ru = 'DIRECT', byp = null, noMain = false } = opts;
   const n1 = full(B1, tail), n2 = full(B2, tail), nb = full(BB, tail);
+  const service = {
+    'RH-Главный': { type: 'Fallback', now: main, all: ['DIRECT', 'RH-АВТО'] },
+    'RH-RU': { type: 'Fallback', now: ru, all: ['DIRECT', 'RH-Обход'] },
+    'RH-Обход': { type: 'Fallback', now: byp || nb, all: [nb] },
+  };
+  if (noMain) delete service['RH-Главный'];
   return JSON.stringify({
     proxies: {
+      ...service,
       'RH-AI': { type: 'Selector', now: 'RH-AI-W' },
       'RH-АВТО': { type: 'Selector', now: 'RH-АВТО-W' },
       'RH-Звонки': { type: 'Selector', now: 'RH-Звонки-W' },
@@ -75,21 +85,25 @@ function run(store, opts = {}) {
     ctlSilent = false,
     alive2 = true,
     pingMs = 30, loadedMs = 60, downMs = 200,
+    main, ru, byp, noMain,    // выбор служебных групп (журнал v0.2.1)
   } = opts;
 
   const calls = [];
-  const state = { done: false, post: null, notes: [] };
+  const state = { done: false, post: null, notes: [], logs: [] };
 
-  function respond(o, cb) {
+  // Метод записывается ТАКИМ, КАКИМ ОН УЙДЁТ: поле method в опциях
+  // перекрывает имя функции. Иначе `$httpClient.get({method: 'PUT'})`
+  // прошёл бы проверку правила 2 как GET.
+  function respond(o, cb, fn = 'GET') {
     const url = String(o.url || '');
     const rawPin = o.headers && o.headers['X-Stash-Selected-Proxy'];
     const pinName = rawPin ? decodeURIComponent(rawPin) : null;
     const auth = (o.headers && o.headers.Authorization) || null;
-    calls.push({ url, pin: pinName, auth, method: 'GET' });
+    calls.push({ url, pin: pinName, auth, method: String(o.method || fn).toUpperCase() });
     const ok = (body, ms = 1) => setTimeout(() => cb(null, { status: 200, headers: {} }, body), ms);
     const fail = (ms = 1) => setTimeout(() => cb('нет ответа', null, null), ms);
 
-    if (url.indexOf('/proxies') >= 0) return ctlSilent ? fail() : ok(proxiesBody({ tail, now, alive2 }));
+    if (url.indexOf('/proxies') >= 0) return ctlSilent ? fail() : ok(proxiesBody({ tail, now, alive2, main, ru, byp, noMain }));
     if (url.indexOf('/connections') >= 0) return ctlSilent ? fail() : ok(connBody(tail));
     if (url.indexOf('ipify') >= 0) {
       if (pin === 'dead' && pinName) return fail();
@@ -104,7 +118,7 @@ function run(store, opts = {}) {
   }
 
   const sandbox = {
-    console: { log: () => {} },
+    console: { log: (s) => state.logs.push(String(s)) },
     JSON, Math, Date, Object, Array, String, Number, Boolean, RegExp, Error,
     isNaN, parseInt, parseFloat, isFinite, encodeURIComponent, decodeURIComponent,
     setTimeout, clearTimeout,
@@ -120,20 +134,22 @@ function run(store, opts = {}) {
       write: (v, k) => { store[k] = v; return true; },
     },
     $httpClient: {
-      get: respond,
-      head: respond,
+      get: (o, cb) => respond(o, cb, 'GET'),
+      head: (o, cb) => respond(o, cb, 'HEAD'),
       post: (o, cb) => {
         const url = String(o.url);
-        calls.push({ url, pin: null, method: 'POST' });
+        calls.push({ url, pin: null, method: String(o.method || 'POST').toUpperCase() });
         // Правило 2: POST к контроллеру недопустим. Ловим здесь, а не
         // надеемся, что последняя выгрузка затрёт следы.
         assert.ok(url.indexOf('127.0.0.1') < 0, 'POST к контроллеру — запись в маршрутизацию');
         state.post = { url, body: JSON.parse(o.body) };
         setTimeout(() => cb(null, { status: 200, headers: {} }, '{"ok":true}'), 1);
       },
-      put: () => { throw new Error('сборщик не должен писать в маршрутизацию'); },
-      patch: () => { throw new Error('сборщик не должен писать в маршрутизацию'); },
-      delete: () => { throw new Error('сборщик не должен писать в маршрутизацию'); },
+      // Запись фиксируется ДО исключения: скрипт оборачивает вызовы в
+      // try/catch, и одно исключение он бы молча проглотил.
+      put: (o) => { calls.push({ url: String(o && o.url), pin: null, method: 'PUT' }); throw new Error('сборщик не должен писать в маршрутизацию'); },
+      patch: (o) => { calls.push({ url: String(o && o.url), pin: null, method: 'PATCH' }); throw new Error('сборщик не должен писать в маршрутизацию'); },
+      delete: (o) => { calls.push({ url: String(o && o.url), pin: null, method: 'DELETE' }); throw new Error('сборщик не должен писать в маршрутизацию'); },
     },
     $done: () => { state.done = true; },
   };
@@ -315,3 +331,205 @@ test('узел, который ядро считает мёртвым, поме�
   const m2 = last.state.post.body.wifi.find((x) => x.name === B2);
   assert.ok(m2 && m2.dead === true, 'мёртвый узел не помечен: ' + JSON.stringify(m2));
 });
+
+// ── v0.2.1: ЖУРНАЛ ВЫБОРА СЛУЖЕБНЫХ ГРУПП ─────────────────────────────
+// Первая строка итогового отчёта — вердикт по RH-Главный и RH-RU. Отчёт —
+// одна запись console.log, начинающаяся с «RH-Collect отчёт:».
+const reportLines = (r) => {
+  const rep = r.state.logs.find((s) => s.indexOf('RH-Collect отчёт:') === 0);
+  assert.ok(rep, 'итоговый отчёт не выведен');
+  return rep.split('\n').slice(1);
+};
+const lastLog = (store) => { const l = JSON.parse(store['rh_stash_log']); return l[l.length - 1]; };
+const ctlCalls = (r) => r.calls.filter((c) => c.url.indexOf('127.0.0.1') >= 0);
+
+test('журнал выбора: штатно — первая строка «выбор штатный», now всех шести групп записан', async () => {
+  const store = makeStore();
+  const r = await settle(run(store, { pin: 'works' }));
+  const head = reportLines(r)[0];
+  assert.ok(head.indexOf('выбор штатный') === 0, 'первая строка отчёта: ' + head);
+  assert.ok(head.indexOf('ТРЕВОГА') < 0);
+  const e = lastLog(store);
+  assert.equal(e.sel, head, 'вердикт выбора не попал в хранимый журнал');
+  assert.deepEqual(Object.keys(e.g).sort(),
+    ['RH-AI', 'RH-RU', 'RH-АВТО', 'RH-Главный', 'RH-Звонки', 'RH-Обход'].sort(), 'записаны не все группы');
+  assert.equal(e.g['RH-Главный'], 'DIRECT');
+  assert.equal(e.g['RH-АВТО'], 'RH-АВТО-W');
+  assert.ok(e.g['RH-Обход'].indexOf('Обход') >= 0);
+});
+
+test('RH-Главный ушёл с DIRECT: тревога ПЕРВОЙ строкой, с цепочкой до узла', async () => {
+  const store = makeStore();
+  const r = await settle(run(store, { pin: 'works', main: 'RH-АВТО' }));
+  const head = reportLines(r)[0];
+  assert.ok(head.indexOf('⚠ ТРЕВОГА') === 0, 'тревога не первой строкой: ' + head);
+  assert.ok(head.indexOf('RH-Главный не на DIRECT') >= 0, head);
+  assert.ok(head.indexOf('RH-Главный → RH-АВТО → RH-АВТО-W → ' + B1) >= 0, 'цепочка не раскрыта: ' + head);
+  assert.equal(lastLog(store).sel, head);
+  assert.equal(lastLog(store).g['RH-Главный'], 'RH-АВТО');
+});
+
+test('RH-Главный на обходе: тревога помечает платный трафик', async () => {
+  const store = makeStore();
+  const nb = full(BB, '21↓68 / 7↓96');
+  const r = await settle(run(store, { pin: 'works', main: 'RH-Обход', byp: nb }));
+  const head = reportLines(r)[0];
+  assert.ok(head.indexOf('⚠ ТРЕВОГА') === 0, head);
+  assert.ok(head.indexOf('ОБХОД, платный трафик') >= 0, 'не помечен платный обход: ' + head);
+});
+
+test('RH-RU -> RH-Обход -> обходной узел: тревога о платном обходе ПЕРВОЙ строкой', async () => {
+  const store = makeStore();
+  const r = await settle(run(store, { pin: 'works', ru: 'RH-Обход' }));
+  const head = reportLines(r)[0];
+  assert.ok(head.indexOf('⚠ ТРЕВОГА') === 0, head);
+  assert.ok(head.indexOf('РФ-трафик идёт по ПЛАТНОМУ обходу') >= 0, head);
+  assert.ok(head.indexOf('RH-RU → RH-Обход → ' + BB) >= 0, head);
+});
+
+test('RH-RU на RH-Обход, но обход сам на DIRECT: тревога есть, «платного» нет', async () => {
+  const store = makeStore();
+  const r = await settle(run(store, { pin: 'works', ru: 'RH-Обход', byp: 'DIRECT' }));
+  const head = reportLines(r)[0];
+  assert.ok(head.indexOf('⚠ ТРЕВОГА') === 0 && head.indexOf('RH-RU не на DIRECT') >= 0, head);
+  assert.ok(head.indexOf('ПЛАТНОМУ') < 0, 'обход на DIRECT назван платным: ' + head);
+});
+
+test('группы RH-Главный нет в /proxies: это тревога, а не молчание', async () => {
+  const store = makeStore();
+  const r = await settle(run(store, { pin: 'works', noMain: true }));
+  const head = reportLines(r)[0];
+  assert.ok(head.indexOf('⚠ ТРЕВОГА') === 0 && head.indexOf('RH-Главный нет в /proxies') >= 0, head);
+});
+
+test('у RH-Главный пустое now: тревога «выбор неизвестен», а не «штатно»', async () => {
+  const store = makeStore();
+  const r = await settle(run(store, { pin: 'works', main: '' }));
+  const head = reportLines(r)[0];
+  assert.ok(head.indexOf('⚠ ТРЕВОГА') === 0 && head.indexOf('RH-Главный: поле now пусто') >= 0, head);
+});
+
+test('контроллер молчит: первая строка отчёта говорит, что выбор не прочитан', async () => {
+  const store = makeStore();
+  const r = await settle(run(store, { ctlSilent: true }));
+  assert.ok(reportLines(r)[0].indexOf('выбор групп не прочитан') === 0, reportLines(r)[0]);
+});
+
+test('журнал выбора не порождает трафика: тревога не добавляет ни одного запроса (правило 1)', async () => {
+  const sA = makeStore(), sB = makeStore();
+  await settle(run(sA, { pin: 'works' }));
+  await settle(run(sB, { pin: 'works' }));
+  const a = await settle(run(sA, { pin: 'works' }));
+  const b = await settle(run(sB, { pin: 'works', main: 'RH-Обход', ru: 'RH-Обход' }));
+  const shape = (r) => r.calls.map((c) => c.method + ' ' + c.url.replace(/[?&]t=[^&]*/g, '') + ' ' + (c.pin || '')).sort();
+  assert.deepEqual(shape(b), shape(a), 'при тревоге набор запросов изменился');
+  assert.ok(!bypassTouched(b), 'обходной узел задет запросом');
+  assert.deepEqual(ctlCalls(b).map((c) => c.url.replace('http://127.0.0.1:9090', '')).sort(),
+    ['/connections', '/proxies'], 'к контроллеру ушло что-то кроме /proxies и /connections');
+});
+
+test('правило 2: к контроллеру — ни одного запроса методом, отличным от GET', async () => {
+  const store = makeStore();
+  const runs = [
+    await settle(run(store, { pin: 'works' })),
+    await settle(run(store, { pin: 'works' })),
+    await settle(run(store, { pin: 'works', main: 'RH-АВТО', ru: 'RH-Обход' })),
+    await settle(run(makeStore(), { pin: 'works', noMain: true })),
+  ];
+  for (const r of runs) {
+    assert.ok(ctlCalls(r).length >= 1, 'песочница не видит запросов к контроллеру');
+    for (const c of ctlCalls(r)) assert.equal(c.method, 'GET', 'к контроллеру ушёл ' + c.method + ' ' + c.url);
+    for (const c of r.calls) {
+      assert.ok(['PUT', 'PATCH', 'DELETE'].indexOf(c.method) < 0, 'запрос на запись: ' + c.method + ' ' + c.url);
+    }
+  }
+});
+
+// ── v0.2.1: СТОРОЖ И ХУДШИЙ ЧЕСТНЫЙ ПУТЬ ──────────────────────────────
+// Прогон на ВИРТУАЛЬНЫХ ЧАСАХ без растяжения таймеров — самый жёсткий для
+// сторожа случай: 90 с номинала здесь ровно 90 с. Каждый запрос отвечает
+// за миллисекунду до своего тайм-аута (или отказывает ровно по нему) —
+// дольше честный запрос идти не может. Контроллер и выгрузка отвечают
+// всегда (иначе прогон кончается FATAL за 5 с и проверять нечего), а в
+// кэше заранее лежит один свежий узел: без него выгрузки не было бы, и
+// самый дорогой хвост пути — POST_SEC — остался бы непроверенным.
+const numConst = (name) => {
+  const m = CODE.match(new RegExp('^var ' + name + ' = ([^;]+);', 'm'));
+  assert.ok(m, 'нет константы ' + name);
+  return Function('return (' + m[1] + ')')();
+};
+
+function runVirtual(mode) {
+  const START = Date.UTC(2026, 8, 21, 6, 5, 0);
+  const clock = { now: START };
+  const q = [];
+  let seq = 0;
+  const vSet = (fn, ms) => { const id = ++seq; q.push({ at: clock.now + Math.max(0, +ms || 0), id, fn }); return id; };
+  const vClear = (id) => { const i = q.findIndex((t) => t.id === id); if (i >= 0) q.splice(i, 1); };
+  class VDate extends Date {
+    constructor(...a) { if (a.length) super(...a); else super(clock.now); }
+    static now() { return clock.now; }
+  }
+  const store = makeStore();
+  store['rh_stash_pin'] = JSON.stringify({ ok: true, firm: true, streak: 2, why: 'тест', ts: START });
+  store['rh_stash_wifi'] = JSON.stringify({
+    [B1]: { down: 80, rtt: 40, med: 45, jit: 5, bl: 10, ts: START, ats: START },
+    [B2]: { down: 60, rtt: 50, med: 55, jit: 6, bl: 12, ts: START - 25 * 3600e3, ats: START - 25 * 3600e3 },
+  });
+  const st = { doneAt: null, dones: 0, logs: [], maxTimeout: 0, posts: 0 };
+  function respond(o, cb, isPost) {
+    const sec = +o.timeout;
+    if (sec > st.maxTimeout) st.maxTimeout = sec;
+    const url = String(o.url || '');
+    let body = '{}';
+    const ctl = url.indexOf('127.0.0.1') >= 0;
+    if (url.indexOf('/proxies') >= 0) body = proxiesBody();
+    else if (url.indexOf('/connections') >= 0) body = connBody();
+    if (isPost) st.posts++;
+    if (mode === 'timeout' && !ctl && !isPost) vSet(() => cb('тайм-аут', null, null), sec * 1000);
+    else vSet(() => cb(null, { status: 200, headers: {} }, body), sec * 1000 - 1);
+  }
+  const sandbox = {
+    console: { log: (s) => st.logs.push(String(s)) },
+    JSON, Math, Date: VDate, Object, Array, String, Number, Boolean, RegExp, Error,
+    isNaN, parseInt, parseFloat, isFinite, encodeURIComponent, decodeURIComponent,
+    setTimeout: vSet, clearTimeout: vClear,
+    $argument: 'k1|https://stand.example|',
+    $environment: { 'controller-url': 'http://127.0.0.1:9090' },
+    $notification: { post: () => {} },
+    $persistentStore: {
+      read: (k) => (k in store ? store[k] : null),
+      write: (v, k) => { store[k] = v; return true; },
+    },
+    $httpClient: { get: (o, cb) => respond(o, cb), head: (o, cb) => respond(o, cb), post: (o, cb) => respond(o, cb, true) },
+    $done: () => { st.dones++; if (st.doneAt == null) st.doneAt = clock.now - START; },
+  };
+  sandbox.globalThis = sandbox;
+  vm.runInContext(CODE, vm.createContext(sandbox), { filename: 'routehub-stash-collect.js' });
+  for (let n = 0; q.length && n < 100000; n++) {
+    q.sort((x, y) => x.at - y.at || x.id - y.id);
+    const t = q.shift();
+    clock.now = t.at;
+    t.fn();
+  }
+  return st;
+}
+
+test('сторож: арифметика — GUARD_MS не меньше 90 с и перекрывает бюджет плюс выгрузку с запасом', () => {
+  const GUARD_MS = numConst('GUARD_MS'), BUDGET_MS = numConst('BUDGET_MS'), POST_SEC = numConst('POST_SEC');
+  assert.ok(GUARD_MS >= 90000, 'сторож ниже 90 с: ' + GUARD_MS);
+  assert.ok(BUDGET_MS + POST_SEC * 1000 + 10000 <= GUARD_MS,
+    'худший путь ' + (BUDGET_MS + POST_SEC * 1000) + ' мс не оставляет сторожу 10 с запаса до ' + GUARD_MS);
+});
+
+for (const mode of ['slow', 'timeout']) {
+  test('сторож: худший честный путь (' + mode + ') доходит до $done сам, раньше сторожа', () => {
+    const GUARD_MS = numConst('GUARD_MS');
+    const st = runVirtual(mode);
+    assert.equal(st.dones, 1, '$done вызван ' + st.dones + ' раз');
+    assert.equal(st.posts, 1, 'путь без выгрузки — не худший');
+    assert.ok(!st.logs.some((s) => s.indexOf('сторож') >= 0), 'сработал сторож: честный прогон оборван');
+    assert.ok(st.doneAt <= GUARD_MS - 10000, '$done на ' + st.doneAt + ' мс — меньше 10 с запаса до сторожа');
+    assert.ok(st.maxTimeout > 0 && st.maxTimeout <= 60, 'тайм-аут не в секундах: ' + st.maxTimeout);
+  });
+}

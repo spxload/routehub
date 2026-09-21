@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { T, DE, NL, US, KZ } from './harness.js';
 import { nodeLine } from './mock-d1.js';
+import { profileGroups } from '../src/clients/stash-profile.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC = fs.readFileSync(path.join(ROOT, 'scripts/routehub-stash-collect.js'), 'utf8');
@@ -46,6 +47,10 @@ const C = {
   POOL_C: strConst('POOL_C'),
   BYPASS: strConst('BYPASS'),
   METRIC_SEP: strConst('METRIC_SEP'),
+  WATCH: arrConst('WATCH'),
+  G_MAIN: strConst('G_MAIN'),
+  G_RU: strConst('G_RU'),
+  G_BYP: strConst('G_BYP'),
 };
 
 // ── Профиль на подставной подписке ───────────────────────────────────
@@ -147,4 +152,19 @@ test('без единого замера имена ЧИСТЫЕ — перех�
   };
   assert.deepEqual(after.map(baseOf).sort(), before.map(baseOf).sort(),
     'базовые имена до и после появления метрик разошлись — кэш сборщика обнулится');
+});
+
+test('журнал выбора (v0.2.1) смотрит на группы, которые рендерер реально строит', () => {
+  // Переименуй служебную группу в рендерере — журнал не упадёт, а объявит
+  // «нет группы», и тревога о платном трафике станет тревогой об имени.
+  // Хуже того, при расхождении только в WATCH уход с DIRECT не был бы виден.
+  const all = {};
+  profileGroups(LINES, STATE, {}).forEach((g) => { all[g.name] = g; });
+  for (const g of C.WATCH) assert.ok(all[g], 'журнал выбора ждёт группу ' + g + ', а в профиле её нет');
+  for (const g of [C.G_MAIN, C.G_RU, C.G_BYP]) assert.ok(C.WATCH.includes(g), g + ' не журналируется');
+  // Тревога строится на том, что DIRECT — законный член обеих групп: иначе
+  // сравнение now с 'DIRECT' ничего не значит.
+  assert.ok(all[C.G_MAIN].proxies.includes('DIRECT'), C.G_MAIN + ' без DIRECT');
+  assert.ok(all[C.G_RU].proxies.includes('DIRECT'), C.G_RU + ' без DIRECT');
+  assert.ok(all[C.G_RU].proxies.includes(C.G_BYP), C.G_RU + ' не ведёт на ' + C.G_BYP);
 });
