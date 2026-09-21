@@ -1,11 +1,30 @@
 // =============================================================
 // routehub-stash-collect.js — RouteHub, сборщик метрик узлов для Stash
-var VERSION = 'stash-collect v0.2.0 (2026-09-02)';
+var VERSION = 'stash-collect v0.2.1 (2026-09-21)';
 //
 // Тип: cron (каждые 20 мин). Аргумент: "<key>|<origin>|<opts>" —
 // та же форма, что у routehub-speedtest.js в Loon. `origin` включает префикс
 // токена целиком, если он нужен: <origin>/t/<токен>; дальше скрипт добавляет
 // /speed. Валидность проверяется до первого сетевого вызова.
+//
+// v0.2.1 — сторож и журнал выбора. Кратко, что изменилось по существу:
+//   * СТОРОЖ 25 -> 90 С, ПУТЬ ДО $done ОГРАНИЧЕН. Арифметика v0.2.0
+//     («25 с втрое — 75 с, скрипт уже закончил») держалась на растяжении
+//     таймеров, а его может и не быть: без растяжения 25 с номинала — это
+//     25 с настоящих, и сторож обрывал живой прогон посреди замера. Обрыв
+//     по своему таймеру выглядит как отказ узла — дефект ST14, проект
+//     ловил его уже четыре раза. Сверх того худший честный путь v0.2.0 ничем
+//     не был ограничен (до 120 с): узел запускался до 30-й секунды и сам
+//     стоил до 75. Теперь тайм-аут каждого запроса замера подрезается под
+//     остаток бюджета (capSec), и путь до $done не длиннее 75 с при стороже
+//     в 90. Расчёт — у GUARD_MS.
+//   * ЖУРНАЛ ВЫБОРА СЛУЖЕБНЫХ ГРУПП. S-draft-7 (14.09) перевёл RH-Главный из
+//     ручного select в fallback, и у этого решения записан новый риск: если
+//     ядро ошибочно сочтёт DIRECT мёртвым, весь прочий иностранный трафик
+//     молча уйдёт на узлы, включая ПЛАТНЫЕ обходные. Увидеть этот уход можно
+//     только по полю now групп, поэтому сборщик его теперь записывает, а уход
+//     RH-Главный или RH-RU с DIRECT ставит ПЕРВОЙ строкой отчёта. Это чтение
+//     того же ответа /proxies: ни одного нового запроса, ни байта через узлы.
 //
 // v0.2.0 — по итогам ревью v0.1.0. Разбор ревью и причины решений — в
 //   docs/ADR-04, §6. Кратко, что изменилось по существу:
@@ -87,7 +106,9 @@ var VERSION = 'stash-collect v0.2.0 (2026-09-02)';
 // ПРАВИЛО 2 (диагностика не пишет в боевую маршрутизацию): к контроллеру
 // идут только GET. PUT /proxies/{имя} и PATCH /configs в этом файле нет и
 // быть не должно; тест tests/stash-collect.test.js роняет прогон, если они
-// появятся.
+// появятся. Журнал выбора групп (v0.2.1) только ЧИТАЕТ поле now: уход
+// RH-Главный с DIRECT он показывает, но вернуть его обратно не пытается и
+// не должен — это решение Дианы, а не скрипта.
 //
 // ЧЕГО ЗДЕСЬ ПОКА НЕТ. Лёгкого пинг-свипа (Loon v0.6.0): rtt узла стареет
 // вместе с down, до суток. Свип осмыслен, но это отдельный кусок с
@@ -118,15 +139,34 @@ var POST_SEC = 15;
 
 // ВРЕМЯ ПРОГОНА — ДВЕ ШКАЛЫ, И ИХ НЕЛЬЗЯ ПУТАТЬ. BUDGET_MS считается по
 // Date.now(), то есть настоящий; GUARD_MS — номинал для setTimeout, который
-// Stash растягивает (ST5: 33 с превратились в 120 с, то есть примерно
-// втрое-вчетверо). Числа подобраны так, чтобы сторож срабатывал ПОЗЖЕ
-// исчерпания бюджета, а не раньше: 25 с номинала при растяжении даже втрое
-// это 75 с, при вчетверо — 100 с, и в обоих случаях скрипт к этому времени
-// уже закончил сам. Коэффициент растяжения известен по одному замеру, и
-// полагаться на него нельзя — поэтому кэш пишется ПОСЛЕ КАЖДОГО узла:
-// сторож, сработавший не вовремя, не отменяет уже сделанной работы.
-var BUDGET_MS = 70000;
-var GUARD_MS = 25000;
+// Stash в фоне растягивает (ST5: 33 с превратились в 120 с, то есть примерно
+// втрое-вчетверо), но не укорачивает. Тайм-ауты $httpClient не растягиваются:
+// это секунды ядра (ST1, ST9).
+//
+// СТОРОЖ ОБЯЗАН СРАБАТЫВАТЬ ПОЗЖЕ ХУДШЕГО ЧЕСТНОГО ПУТИ, СЧИТАЯ БЕЗ
+// РАСТЯЖЕНИЯ. Растяжение известно по одному замеру и бывает не всегда; если
+// на него опереться, сторож в прогоне без растяжения обрежет живой замер, и
+// обрыв по своему таймеру прочитается как отказ узла (дефект ST14). Так было
+// в v0.2.0: 25 с номинала при пути до 120 с.
+//
+// ХУДШИЙ ЧЕСТНЫЙ ПУТЬ (v0.2.1). Каждый запрос замера и контроллера получает
+// тайм-аут capSec — номинал, подрезанный под остаток бюджета до целых
+// секунд вниз, — а когда остатка нет, не отправляется вовсе. Запрос,
+// ушедший в момент t, закрывается не позже t + floor(остаток) ≤ BUDGET_MS.
+// После бюджета остаётся одна выгрузка с полным POST_SEC. Итого
+//   BUDGET_MS + POST_SEC = 60 + 15 = 75 с настоящих;
+// сторож в 90 с номинала — это не меньше 90 с настоящих, запас 15 с на
+// задержку колбэков и синхронный хвост (merge, запись кэша). В фоне сторож
+// растянется до 270–360 с и уступит тайм-ауту манифеста (180 с); 75 с
+// помещаются и под ним. Тест tests/stash-collect.test.js гоняет этот путь
+// на виртуальных часах и падает, если $done позже GUARD_MS − 10 с.
+//
+// Бюджет снижен с 70 до 60 с ради этого запаса. Узел запускается, пока до
+// конца бюджета не меньше NODE_COST_MS, то есть в первые 20 с прогона
+// (было 30). Кэш по-прежнему пишется ПОСЛЕ КАЖДОГО узла: сторож, сработавший
+// не вовремя, не отменяет уже сделанной работы.
+var BUDGET_MS = 60000;
+var GUARD_MS = 90000;
 var NODE_COST_MS = 40000;          // сколько времени резервировать на узел
 var LOCK_MS = 15 * 60 * 1000;
 var PIN_TTL = 24 * 3600 * 1000;
@@ -136,6 +176,13 @@ var DOWN_HOST = 'https://speed.cloudflare.com/__down';
 var PING_URL = 'http://connectivitycheck.gstatic.com/generate_204';
 
 var PARENTS = ['RH-AI', 'RH-АВТО', 'RH-Звонки'];
+// Журнал выбора (v0.2.1): чьё поле now записывается в отчёт. Имена — те же,
+// что строит рендерер профиля; сцепку держит tests/stash-collect-coupling.
+var WATCH = ['RH-Главный', 'RH-RU', 'RH-Обход', 'RH-AI', 'RH-АВТО', 'RH-Звонки'];
+var G_MAIN = 'RH-Главный';
+var G_RU = 'RH-RU';
+var G_BYP = 'RH-Обход';
+var DIRECT = 'DIRECT';
 var POOL_W = 'RH-АВТО-W';
 var POOL_C = 'RH-АВТО-C';
 var BYPASS = 'Обход';
@@ -195,6 +242,14 @@ function isGroup(p) {
     t === 'loadbalance' || t === 'load-balance' || t === 'relay';
 }
 function left() { return BUDGET_MS - (Date.now() - T0); }
+// Тайм-аут запроса в секундах, подрезанный под остаток бюджета; 0 — времени
+// нет, запрос не отправлять. Округление ВНИЗ и только целые: так запрос не
+// переживёт бюджет, а дробный timeout у Stash ни одной пробой не проверен.
+// На этом держится арифметика сторожа (см. GUARD_MS).
+function capSec(nominal) {
+  var s = Math.floor(left() / 1000);
+  return (s >= nominal) ? nominal : ((s >= 1) ? s : 0);
+}
 
 var LOG = [];
 function say(s) { LOG.push(s); try { console.log('RH-Collect: ' + s); } catch (e) {} }
@@ -211,14 +266,18 @@ var CACHE = {}, CKEY = '';
 var PIN = null;
 var FATAL = '';
 var ACT = { tried: 0, ok: 0 };
+var SEL = null;          // группа -> цепочка выбора [now, now у now, ...]
+var SEL_HEAD = '';       // первая строка отчёта: штатно или тревога
 
 // ── СЕТЕВЫЕ ПРИМИТИВЫ ────────────────────────────────────────────────
 // К контроллеру — только GET (правило 2).
 function ctlGet(path, cb) {
-  var o = { url: CTRL + path, timeout: CTRL_SEC };
+  var sec = capSec(CTRL_SEC);
+  var o = { url: CTRL + path, timeout: sec };
   if (AUTH) o.headers = { Authorization: AUTH };
   var done = false;
   function once(b, e) { if (done) return; done = true; cb(b, e); }
+  if (!sec) { once(null, 'бюджет исчерпан'); return; }
   try {
     G.$httpClient.get(o, function (e, r, body) {
       once(e ? null : body,
@@ -269,12 +328,78 @@ function delaysOf(p) {
   return out;
 }
 
+// ── ЖУРНАЛ ВЫБОРА СЛУЖЕБНЫХ ГРУПП (v0.2.1) ───────────────────────────
+// ТОЛЬКО ЧТЕНИЕ поля now из уже полученного ответа /proxies: ни одного
+// нового запроса к контроллеру и ни одного — через узлы (правила 1 и 2).
+// Зачем: после S-draft-7 RH-Главный — fallback, и если ядро сочтёт DIRECT
+// мёртвым, прочий иностранный трафик уйдёт на узлы, включая обходные. Этот
+// уход ничем, кроме поля now, не виден — поэтому он поднимается в первую
+// строку отчёта, а не лежит среди прочих.
+//
+// Цепочка раскрывается до узла: «RH-Главный → RH-АВТО → RH-АВТО-W → узел».
+// Иначе тревога сообщала бы только имя группы, а вопрос «платный ли это
+// узел» оставался бы открытым. Глубина ограничена, петли отсекаются: форма
+// ответа ядра нам не подконтрольна.
+function chainOf(MAP, name) {
+  var out = [], seen = {}, cur = name;
+  for (var d = 0; d < 6 && cur && !seen[cur]; d++) {
+    seen[cur] = 1;
+    var p = MAP[cur];
+    var nx = p ? String(p.now || p.Now || '') : '';
+    if (!nx) break;
+    out.push(nx);
+    cur = nx;
+  }
+  return out;
+}
+
+function chainStr(g) {
+  var c = SEL[g];
+  var s = [g].concat(c).join(' → ');
+  var last = c.length ? c[c.length - 1] : '';
+  return (isBypass(last) || c.indexOf(G_BYP) >= 0) ? s + ' (ОБХОД, платный трафик)' : s;
+}
+
+function readSelection(MAP) {
+  SEL = {};
+  var parts = [];
+  for (var i = 0; i < WATCH.length; i++) {
+    var g = WATCH[i];
+    if (!MAP[g]) { parts.push(g + '=нет группы'); continue; }
+    SEL[g] = chainOf(MAP, g);
+    parts.push(g + '=' + (SEL[g][0] || '?'));
+  }
+  // Тревога — только по двум группам, которым положено стоять на DIRECT.
+  // Отсутствие группы тоже тревога: уход с DIRECT в этом случае не виден.
+  var alarm = [];
+  var main = SEL[G_MAIN], ru = SEL[G_RU], byp = SEL[G_BYP];
+  // Пустое now — тоже тревога: выбор группы неизвестен, а значит неизвестно
+  // и то, что она на DIRECT. Молчать здесь — ровно тот тихий отказ, ради
+  // которого журнал заведён.
+  if (!main) alarm.push(G_MAIN + ' нет в /proxies — уход с DIRECT не виден');
+  else if (!main[0]) alarm.push(G_MAIN + ': поле now пусто, выбор неизвестен');
+  else if (main[0] !== DIRECT) alarm.push(G_MAIN + ' не на DIRECT: ' + chainStr(G_MAIN));
+  if (!ru) alarm.push(G_RU + ' нет в /proxies — уход с DIRECT не виден');
+  else if (!ru[0]) alarm.push(G_RU + ': поле now пусто, выбор неизвестен');
+  else if (ru[0] === G_BYP && byp && byp[0] && byp[0] !== DIRECT) {
+    // RH-Обход, стоящий на DIRECT, — это профиль без обходных узлов:
+    // трафик уходит напрямую, платить не за что. Иначе — платит.
+    alarm.push('РФ-трафик идёт по ПЛАТНОМУ обходу: ' + chainStr(G_RU));
+  } else if (ru[0] !== DIRECT) alarm.push(G_RU + ' не на DIRECT: ' + chainStr(G_RU));
+  SEL_HEAD = alarm.length ? ('⚠ ТРЕВОГА ВЫБОРА: ' + alarm.join('; '))
+    : ('выбор штатный: ' + G_MAIN + ' и ' + G_RU + ' на DIRECT');
+  say('выбор групп: ' + parts.join(' · '));
+}
+
 function stepInventory(next) {
   ctlGet('/proxies', function (body, e) {
     if (e || !body) { FATAL = 'контроллер не ответил: ' + (e || 'пусто'); next(); return; }
     var d = null;
     try { d = JSON.parse(body); } catch (e2) { FATAL = 'ответ /proxies не разобран'; next(); return; }
     var MAP = (d && (d.proxies || d.Proxies)) || d || {};
+    // Выбор читается ДО проверок сети и пула: тревога о платном трафике
+    // нужна и в том прогоне, который дальше споткнётся о FATAL.
+    readSelection(MAP);
 
     // Сеть — это ЧТЕНИЕ решения, уже принятого ядром по ssid-policy, а не
     // своё определение. Родителей трое; расхождение между ними означает, что
@@ -382,9 +507,11 @@ function stepPassive(next) {
 // «работает» записывается только на второй удачной проверке, и каждая
 // берёт свою пару узлов.
 function ipThrough(full, cb) {
-  var o = full ? pinned(full, IP_URL, IP_SEC) : { url: IP_URL, timeout: IP_SEC };
+  var sec = capSec(IP_SEC);
+  var o = full ? pinned(full, IP_URL, sec) : { url: IP_URL, timeout: sec };
   var done = false;
   function once(v) { if (done) return; done = true; cb(v); }
+  if (!sec) { once(null); return; }
   try {
     G.$httpClient.get(o, function (e, r, body) {
       if (e || !body) { once(null); return; }
@@ -466,6 +593,10 @@ function pickActive() {
 
 function pingSeries(full, n, acc, cb) {
   if (n <= 0) { cb(acc); return; }
+  // За бюджетом серия обрывается: недобранные пробы — не отказ узла, а
+  // нехватка времени, и measureOne сам отбросит серию короче двух проб.
+  var sec = capSec(PING_SEC);
+  if (!sec) { cb(acc); return; }
   var t0 = Date.now();
   var done = false;
   function once(okFlag) {
@@ -474,7 +605,7 @@ function pingSeries(full, n, acc, cb) {
     pingSeries(full, n - 1, acc, cb);
   }
   try {
-    G.$httpClient.get(pinned(full, PING_URL + '?t=' + Date.now() + Math.random(), PING_SEC),
+    G.$httpClient.get(pinned(full, PING_URL + '?t=' + Date.now() + Math.random(), sec),
       function (e) { once(!e); });
   } catch (e2) { once(false); }
 }
@@ -488,9 +619,11 @@ function pingSeries(full, n, acc, cb) {
 function download(full, cb) {
   var loaded = [], timers = [], done = false;
   function probe() {
+    var sec = capSec(PING_SEC);
+    if (done || !sec) return;          // за бюджетом или после закачки — не нужна
     var p0 = Date.now();
     try {
-      G.$httpClient.get(pinned(full, PING_URL + '?t=L' + Date.now() + Math.random(), PING_SEC),
+      G.$httpClient.get(pinned(full, PING_URL + '?t=L' + Date.now() + Math.random(), sec),
         function (e) { if (!e && !done) loaded.push(Date.now() - p0); });
     } catch (e2) {}
   }
@@ -499,11 +632,16 @@ function download(full, cb) {
     for (var t = 0; t < timers.length; t++) { try { clearTimeout(timers[t]); } catch (e) {} }
     cb(v, loaded);
   }
+  // Закачка, подрезанная бюджетом, может не успеть и вернуть отказ: узел
+  // останется без замера до следующего прогона. Это честнее, чем тянуть
+  // прогон за сторожа.
+  var dsec = capSec(DOWN_SEC);
+  if (!dsec) { once(null); return; }
   probe();
   for (var k = 1; k < BL_SAMPLES; k++) timers.push(setTimeout(probe, k * BL_GAP));
   var s0 = Date.now();
   try {
-    G.$httpClient.get(pinned(full, DOWN_HOST + '?bytes=' + DOWN_BYTES + '&t=' + Date.now(), DOWN_SEC),
+    G.$httpClient.get(pinned(full, DOWN_HOST + '?bytes=' + DOWN_BYTES + '&t=' + Date.now(), dsec),
       function (e, r) {
         if (e || !r || r.status !== 200) { once(null); return; }
         var sec = (Date.now() - s0) / 1000;
@@ -644,8 +782,16 @@ function finish() {
   FINISHED = true;
   try { clearTimeout(GUARD); } catch (e) {}
   writeRaw(K_LOCK, '');
+  // ОТЧЁТ ПРОГОНА. Первая строка — вердикт журнала выбора: уход RH-Главный
+  // или RH-RU с DIRECT должен быть виден сразу, а не среди строк замера.
+  // Построчные записи say() выше уже ушли в журнал сценариев по ходу дела —
+  // на случай, если прогон оборвёт сам клиент и до сюда он не дойдёт.
+  var head = SEL_HEAD || 'выбор групп не прочитан: /proxies не получен';
+  try { console.log('RH-Collect отчёт:\n' + [head].concat(LOG).join('\n')); } catch (e1) {}
   var log = readJSON(K_LOG, []);
-  log.push({ t: new Date().toISOString(), net: NET, pool: POOL.length, a: ACT.ok, ms: Date.now() - T0, x: FATAL || undefined });
+  var sel;
+  if (SEL) { sel = {}; for (var g in SEL) sel[g] = SEL[g][0] || ''; }
+  log.push({ sel: head, t: new Date().toISOString(), net: NET, pool: POOL.length, a: ACT.ok, ms: Date.now() - T0, g: sel, x: FATAL || undefined });
   while (log.length > LOG_MAX) log.shift();
   writeJSON(K_LOG, log);
   // Молчание — худший исход: прогон за прогоном упирается в FATAL, а увидеть
@@ -715,9 +861,10 @@ function main() {
   });
 }
 
-// Сторож. Номинал заведомо БОЛЬШЕ бюджета после растяжения таймеров (ST5),
-// потому что его дело — поймать зависшую цепочку, а не обрезать нормальный
-// прогон. Работу он не отменяет: кэш пишется после каждого узла.
+// Сторож. Номинал БОЛЬШЕ худшего честного пути даже без растяжения таймеров
+// (расчёт у GUARD_MS), потому что его дело — поймать зависшую цепочку, а не
+// обрезать нормальный прогон. Работу он не отменяет: кэш пишется после
+// каждого узла.
 GUARD = setTimeout(function () {
   if (!FINISHED) { say('сторож: цепочка не завершилась'); finish(); }
 }, GUARD_MS);
