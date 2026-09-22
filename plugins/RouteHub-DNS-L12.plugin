@@ -1,0 +1,9 @@
+#!name = RouteHub L12 (время резолва DNS)
+#!desc = Ручная проба L12, пункт 44: сколько стоит резолв нового имени сейчас и отвечает ли DoH. Только чтение, только DIRECT, обходные узлы не трогает, в маршрутизацию не пишет. Запуск — кнопкой RH-L12 в разделе скриптов. Нужны ДВА прогона: без whitelist (база) и под whitelist (замер). Установить и прогнать первый раз, пока whitelist выключен: под whitelist raw.githubusercontent.com недоступен и скрипт не скачается. После замеров плагин выключить.
+#!author = RouteHub
+#!loon_version = 3.2.1(733)
+
+[Script]
+# Боевой routehub.conf этот плагин НЕ меняет. Тайм-аут 120 с: худший честный
+# путь пробы 60 с, сторож внутри 80 с (см. шапку скрипта).
+generic script-path=https://raw.githubusercontent.com/spxload/routehub/main/probes/routehub-probe-dnstime.js, tag=RH-L12, timeout=120, img-url=https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/Available.png, enabled=true
