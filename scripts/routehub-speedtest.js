@@ -1,9 +1,13 @@
 // =============================================================
 // routehub-speedtest.js — RouteHub, спидтест с телефона (Этап D / H)
-var VERSION = 'speedtest v0.7.0 (2026-09-21)';
+var VERSION = 'speedtest v0.7.1 (2026-09-22)';
 //
 // Тип: cron (весь день, каждые 20 мин). Аргумент: "<key>|<origin>|<opts>".
 //
+// v0.7.1 — EWMA_A 0.6 → 0.2 (техдолг 3, пункт 52). EWMA_A — вес НОВОГО
+//          замера, как α в записанном решении. Работает только при флаге
+//          `ewma` устройства (реестр Worker'а → «ewma» в третьем поле
+//          аргумента); без флага поведение прежнее, замер пишется сырым.
 // v0.7.0 — ОТДАЧА (`up`), ADR-05. В ПОЛНОМ замере, сразу после загрузки,
 //          POST 1 МБ на speed.cloudflare.com/__up через тот же узел. Только
 //          полный замер (раз в сутки на узел и сеть), в пинг-свип не входит.
@@ -51,7 +55,16 @@ var CACHE_MS = 24 * 3600 * 1000;
 var RETRY_MS = 15 * 60 * 1000;
 var DEAD_MS = 6 * 3600 * 1000;
 var MAX_FAILS = 5;
-var EWMA_A = 0.6;
+// EWMA: новое = α·замер + (1 − α)·прежнее. α — вес НОВОГО замера: чем
+// меньше α, тем медленнее значение идёт за замерами и тем слабее одиночный
+// выброс. 0.2 — решение из research Этапа D (ЭТАП_D_ФОРМУЛА.md, раздел 10;
+// память проекта, «EWMA α ≈ 0.2»), в той же записи, что у VividCortex/ewma
+// (α = 2/(N+1), то есть память около 9 замеров). Было 0.6 — прежнему
+// значению оставалось лишь 40 %. Полный замер — раз в сутки на узел и
+// сеть, поэтому смена скорости узла доходит наполовину примерно за три
+// замера. Действует только при флаге `ewma`; rtt, med и jit пинг-свип
+// всё равно перезаписывает сырыми, сглаживание держится на down и bl.
+var EWMA_A = 0.2;
 var DOWN_BYTES = 4000000;
 var DOWN_BIG = 12000000;
 var FAST_SEC = 1.5;
@@ -164,6 +177,7 @@ function jitterOf(arr) {
   return Math.round(a[a.length - 1] - a[0]);
 }
 
+function ewmaOf(nv, pv) { return Math.round(EWMA_A * nv + (1 - EWMA_A) * pv); }
 function median(arr) {
   if (!arr || !arr.length) return null;
   var a = arr.slice().sort(function (x, y) { return x - y; });
@@ -321,11 +335,11 @@ function main() {
         okN++;
         var nd = res.down, nr = res.rtt, nm2 = res.med, nj = res.jit, nb = res.bl;
         if (useEwma && prev.down > 0 && prev.ts > 0) {
-          nd = Math.round(EWMA_A * res.down + (1 - EWMA_A) * prev.down);
-          nr = Math.round(EWMA_A * res.rtt + (1 - EWMA_A) * prev.rtt);
-          if (res.med != null && prev.med != null) nm2 = Math.round(EWMA_A * res.med + (1 - EWMA_A) * prev.med);
-          if (res.jit != null && prev.jit != null) nj = Math.round(EWMA_A * res.jit + (1 - EWMA_A) * prev.jit);
-          if (res.bl != null && prev.bl != null) nb = Math.round(EWMA_A * res.bl + (1 - EWMA_A) * prev.bl);
+          nd = ewmaOf(res.down, prev.down);
+          nr = ewmaOf(res.rtt, prev.rtt);
+          if (res.med != null && prev.med != null) nm2 = ewmaOf(res.med, prev.med);
+          if (res.jit != null && prev.jit != null) nj = ewmaOf(res.jit, prev.jit);
+          if (res.bl != null && prev.bl != null) nb = ewmaOf(res.bl, prev.bl);
         }
         // up — сырой, без EWMA: сначала меряем (ADR-05). null (сервер не
         // ответил 200) не затирает прежний замер.
