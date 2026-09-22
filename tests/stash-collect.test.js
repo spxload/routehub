@@ -35,7 +35,7 @@ const SECRET = 'Bearer ОЧЕНЬ-СЕКРЕТНО';
 // состояние, RH-Главный и RH-RU на DIRECT, RH-Обход смотрит на обходной узел.
 function proxiesBody(opts = {}) {
   const { tail = '21↓68 / 7↓96', now = null, alive2 = true,
-    main = 'DIRECT', ru = 'DIRECT', byp = null, noMain = false } = opts;
+    main = 'DIRECT', ru = 'DIRECT', byp = null, noMain = false, more = [] } = opts;
   const n1 = full(B1, tail), n2 = full(B2, tail), nb = full(BB, tail);
   const service = {
     'RH-Главный': { type: 'Fallback', now: main, all: ['DIRECT', 'RH-АВТО'] },
@@ -43,13 +43,21 @@ function proxiesBody(opts = {}) {
     'RH-Обход': { type: 'Fallback', now: byp || nb, all: [nb] },
   };
   if (noMain) delete service['RH-Главный'];
+  // v0.2.2: дополнительные рабочие узлы пула — для сводок, которым нужна
+  // выборка больше двух узлов. {base, delay, alive}
+  const extra = {}, extraNames = [];
+  for (const x of more) {
+    const nm = full(x.base, tail);
+    extraNames.push(nm);
+    extra[nm] = { type: 'Vless', alive: x.alive !== false, delay: x.delay || 0 };
+  }
   return JSON.stringify({
     proxies: {
       ...service,
       'RH-AI': { type: 'Selector', now: 'RH-AI-W' },
       'RH-АВТО': { type: 'Selector', now: 'RH-АВТО-W' },
       'RH-Звонки': { type: 'Selector', now: 'RH-Звонки-W' },
-      'RH-АВТО-W': { type: 'Fallback', now: now || n1, all: [n1, n2, nb] },
+      'RH-АВТО-W': { type: 'Fallback', now: now || n1, all: [n1, n2, ...extraNames, nb] },
       'RH-АВТО-C': { type: 'Fallback', now: n1, all: [n1, n2, nb] },
       // Живая форма записи узла у Stash 3.4.1 (ST9): одно поле `delay`,
       // истории НЕТ. У второго узла нарочно оставлена `history` — это
@@ -57,6 +65,7 @@ function proxiesBody(opts = {}) {
       [n1]: { type: 'Vless', alive: true, address: 'x:443', state: 'ok', delay: 70 },
       [n2]: { type: 'Vless', alive: alive2, history: [{ delay: 90 }] },
       [nb]: { type: 'Vless', alive: true },                // benchmark-disabled
+      ...extra,
     },
   });
 }
@@ -86,6 +95,7 @@ function run(store, opts = {}) {
     alive2 = true,
     pingMs = 30, loadedMs = 60, downMs = 200,
     main, ru, byp, noMain,    // выбор служебных групп (журнал v0.2.1)
+    more,                     // доп. узлы пула (v0.2.2)
   } = opts;
 
   const calls = [];
@@ -103,7 +113,7 @@ function run(store, opts = {}) {
     const ok = (body, ms = 1) => setTimeout(() => cb(null, { status: 200, headers: {} }, body), ms);
     const fail = (ms = 1) => setTimeout(() => cb('нет ответа', null, null), ms);
 
-    if (url.indexOf('/proxies') >= 0) return ctlSilent ? fail() : ok(proxiesBody({ tail, now, alive2, main, ru, byp, noMain }));
+    if (url.indexOf('/proxies') >= 0) return ctlSilent ? fail() : ok(proxiesBody({ tail, now, alive2, main, ru, byp, noMain, more }));
     if (url.indexOf('/connections') >= 0) return ctlSilent ? fail() : ok(connBody(tail));
     if (url.indexOf('ipify') >= 0) {
       if (pin === 'dead' && pinName) return fail();
@@ -533,3 +543,126 @@ for (const mode of ['slow', 'timeout']) {
     assert.ok(st.maxTimeout > 0 && st.maxTimeout <= 60, 'тайм-аут не в секундах: ' + st.maxTimeout);
   });
 }
+
+// ── v0.2.2: ДОЛЯ ПОТЕРЬ ЯДРА И delay ЯДРА ПРОТИВ rtt ──────────────────
+// Обе сводки — вычисления над ответом /proxies и кэшем. Прогоны ниже идут
+// с закреплённым вердиктом «пиновка не работает»: активной фазы нет, и
+// любой запрос через узел был бы порождён именно новыми сводками.
+const PIN_OFF = JSON.stringify({ ok: false, firm: true, why: 'тест', ts: Date.now() });
+const lossLine = (r) => reportLines(r).find((s) => s.indexOf('потери ядра') === 0);
+const dvLine = (r) => reportLines(r).find((s) => s.indexOf('delay ядра против rtt') === 0);
+const X = (i) => '🇵🇱 Польша [VPN] 1' + i;
+
+test('доля потерь: окно ключуется базовым именем и переживает смену хвоста метрик', async () => {
+  const store = makeStore();
+  store['rh_stash_pin'] = PIN_OFF;
+  const seq = [true, false, true, false, false, true];
+  for (let i = 0; i < seq.length; i++) {
+    await settle(run(store, { pin: 'ignored', alive2: seq[i], tail: (20 + i) + '↓68 / 7↓96' }));
+  }
+  const c = JSON.parse(store['rh_stash_wifi']);
+  assert.equal(c[B2].lw, '010110', 'окно не сложилось по базовому имени: ' + c[B2].lw);
+  assert.equal(c[B1].lw, '000000');
+  assert.equal(c[B2].fails, 0, 'fails подряд должен обнулиться удачной проверкой');
+  const r = await settle(run(store, { pin: 'ignored', alive2: true, tail: '99↓1 / 1↓1' }));
+  const l = lossLine(r);
+  assert.ok(l, 'строки о потерях нет в отчёте');
+  assert.ok(l.indexOf(B2 + ' 3/7 (43%)') >= 0, 'доля узла не выведена: ' + l);
+  assert.ok(l.indexOf('с потерями 1') >= 0, l);
+  assert.equal(lastLog(store).lz, 1, 'число узлов с потерями не попало в журнал');
+});
+
+test('доля потерь: окно, а не накопление — старше LOSS_N попыток забывается', async () => {
+  const N = numConst('LOSS_N');
+  const store = makeStore();
+  store['rh_stash_pin'] = PIN_OFF;
+  store['rh_stash_wifi'] = JSON.stringify({ [B2]: { lw: '1'.repeat(N) } });
+  await settle(run(store, { pin: 'ignored', alive2: true }));
+  const c = JSON.parse(store['rh_stash_wifi']);
+  assert.equal(c[B2].lw.length, N, 'окно выросло за LOSS_N — это накопление');
+  assert.equal(c[B2].lw, '1'.repeat(N - 1) + '0', 'новое наблюдение не встало в конец');
+});
+
+test('доля потерь: меньше LOSS_MIN попыток — доля не выводится', async () => {
+  const store = makeStore();
+  store['rh_stash_pin'] = PIN_OFF;
+  let r;
+  for (let i = 0; i < 3; i++) r = await settle(run(store, { pin: 'ignored', alive2: false }));
+  const l = lossLine(r);
+  assert.ok(l.indexOf('меньше 5 попыток') >= 0, 'при трёх попытках выведена доля: ' + l);
+  assert.ok(l.indexOf('%') < 0, l);
+  assert.equal(lastLog(store).lz, undefined);
+});
+
+test('delay против rtt: меньше CMP_MIN пар — «данных мало», числа нет', async () => {
+  const store = makeStore();
+  store['rh_stash_pin'] = PIN_OFF;
+  const t = Date.now();
+  store['rh_stash_wifi'] = JSON.stringify({
+    [B1]: { down: 50, rtt: 50, ats: t, ts: t },
+    [B2]: { down: 50, rtt: 60, ats: t, ts: t },
+  });
+  const r = await settle(run(store, { pin: 'ignored' }));
+  const l = dvLine(r);
+  assert.ok(l && l.indexOf('данных мало') >= 0 && l.indexOf('пар 2') >= 0, 'нет «данных мало»: ' + l);
+  assert.ok(l.indexOf('×') < 0 && l.indexOf('медиана') < 0, 'при двух парах выдано число: ' + l);
+  assert.deepEqual(lastLog(store).dv, { n: 2 });
+});
+
+test('delay против rtt: медианы расхождения и отношения по свежим живым парам', async () => {
+  const store = makeStore();
+  store['rh_stash_pin'] = PIN_OFF;
+  const t = Date.now(), old = t - 25 * 3600e3;
+  // B1: delay 70, B2: history 90. Пары (delay, rtt):
+  //   B1 70/50, B2 90/60, X0 100/50, X1 80/40, X2 66/60  -> в выборке 5;
+  //   X3 — мёртв по ядру, X4 — rtt старше суток, X5 — delay 0: не в выборке.
+  const cache = {
+    [B1]: { down: 50, rtt: 50, ats: t, ts: t },
+    [B2]: { down: 50, rtt: 60, ats: t, ts: t },
+    [X(0)]: { down: 50, rtt: 50, ats: t, ts: t },
+    [X(1)]: { down: 50, rtt: 40, ats: t, ts: t },
+    [X(2)]: { down: 50, rtt: 60, ats: t, ts: t },
+    [X(3)]: { down: 50, rtt: 10, ats: t, ts: t },
+    [X(4)]: { down: 50, rtt: 10, ats: old, ts: old },
+    [X(5)]: { down: 50, rtt: 10, ats: t, ts: t },
+  };
+  store['rh_stash_wifi'] = JSON.stringify(cache);
+  const more = [
+    { base: X(0), delay: 100 }, { base: X(1), delay: 80 }, { base: X(2), delay: 66 },
+    { base: X(3), delay: 500, alive: false }, { base: X(4), delay: 500 }, { base: X(5), delay: 0 },
+  ];
+  const r = await settle(run(store, { pin: 'ignored', more }));
+  const l = dvLine(r);
+  // расхождения 20, 30, 50, 40, 6 -> медиана 30; отношения 1.40, 1.50, 2.00,
+  // 2.00, 1.10 -> медиана 1.50.
+  assert.ok(l.indexOf('узлов 5') >= 0, 'в выборку попали не те узлы: ' + l);
+  assert.ok(l.indexOf('медиана расхождения +30 мс') >= 0, l);
+  assert.ok(l.indexOf('отношение ×1.50') >= 0, l);
+  assert.deepEqual(lastLog(store).dv, { n: 5, d: 30, r: 1.5 });
+  // Окно потерь: «жив» без delay — ядро узел не проверяло, это не удача.
+  const c = JSON.parse(store['rh_stash_wifi']);
+  assert.equal(c[X(5)].lw, undefined, '«жив» без delay записан в окно как удача');
+  assert.equal(c[X(3)].lw, '1', 'провал ядра не записан');
+  assert.equal(c[X(0)].lw, '0');
+});
+
+test('сводки v0.2.2 не порождают запросов и не трогают контракт /speed (правила 1 и 2)', async () => {
+  const store = makeStore();
+  store['rh_stash_pin'] = PIN_OFF;
+  const t = Date.now();
+  const cache = { [B1]: { down: 50, rtt: 50, ats: t, ts: t, lw: '0101010' }, [B2]: { down: 50, rtt: 60, ats: t, ts: t } };
+  const more = [];
+  for (let i = 0; i < 4; i++) { cache[X(i)] = { down: 40, rtt: 40, ats: t, ts: t }; more.push({ base: X(i), delay: 90 }); }
+  store['rh_stash_wifi'] = JSON.stringify(cache);
+  const r = await settle(run(store, { pin: 'ignored', more }));
+  assert.ok(dvLine(r).indexOf('узлов ') >= 0, 'сводка не посчитана — проверка пустая');
+  assert.ok(!r.calls.some((c) => c.pin), 'запрос через узел при выключенной активной фазе');
+  assert.deepEqual(r.calls.map((c) => c.method + ' ' + c.url.replace('http://127.0.0.1:9090', '')).sort(),
+    ['GET /connections', 'GET /proxies', 'POST https://stand.example/speed']);
+  const body = r.state.post.body;
+  assert.deepEqual(Object.keys(body).sort(), ['cell', 'key', 'nonce', 'wifi']);
+  const allowed = ['name', 'down', 'rtt', 'jit', 'med', 'bl', 'ts', 'tsp', 'dead'];
+  for (const it of body.wifi) {
+    for (const k of Object.keys(it)) assert.ok(allowed.indexOf(k) >= 0, 'в /speed ушло новое поле ' + k);
+  }
+});
