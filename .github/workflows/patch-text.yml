@@ -60,13 +60,14 @@ jobs:
           print('OK')
           EOF
           git diff --binary > "$RUNNER_TEMP/patch.diff"
-      - name: node --test
-        run: node --test tests/*.test.js
+      # Дифф выгружается ДО тестов: исполняемый ими код его уже не подменит.
       - uses: actions/upload-artifact@v4
         with:
           name: patch
           path: ${{ runner.temp }}/patch.diff
           retention-days: 1
+      - name: node --test
+        run: node --test tests/*.test.js
 
   pr:
     needs: test
@@ -91,6 +92,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git apply "$RUNNER_TEMP/patch.diff"
+          WANT=$(realpath --relative-to=. "$P")
+          CHANGED=$(git diff --name-only)
+          if [ "$CHANGED" != "$WANT" ]; then
+            echo "Дифф меняет не только $WANT: $CHANGED" >&2
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
