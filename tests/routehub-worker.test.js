@@ -1,5 +1,5 @@
 // Тесты ядра routehub-worker.js. Запуск: node --test "tests/*.test.js"
-// CI нет намеренно — прогон ручной, перед коммитом.
+// Ручной прогон перед коммитом обязателен; CI (.github/workflows/tests.yml) — страховка.
 //
 // Загрузка Worker'а и общие помощники — в tests/harness.js.
 // Рядом лежат clients-loon.test.js и metrics.test.js.
