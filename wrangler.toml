@@ -20,17 +20,29 @@ compatibility_date = "2026-06-01"
 [triggers]
 crons = ["0 */2 * * *"]
 
+# v1.12.0 (T-private-repo): в сборку как Text вбираются и файлы, которые тянет
+# устройство, — routehub.conf, scripts/*.js, probes/*.js, plugins/*.plugin,
+# plugins/*.stoverride. Список импортов — src/files.js; отдаёт их маршрут
+# /t/<токен>/repo/<путь> (src/repo.js). Префикс **/ обязателен: без него
+# правило не срабатывает (проверено dry-run 24.09). Действует только на
+# статически импортированные файлы: src/*.js под **/scripts/*.js не подпадает.
+# fallthrough = true — правило не отключает встроенные правила Wrangler
+# (Text для *.txt, *.sql и т. д.), как было бы по умолчанию.
 [[rules]]
 type = "Text"
-globs = ["**/*.html"]
+globs = ["**/*.html", "**/scripts/*.js", "**/probes/*.js", "**/*.plugin", "**/*.stoverride", "**/*.conf"]
+fallthrough = true
 
 [[d1_databases]]
 binding = "RH_DB"
 database_name = "routehub-db"
 database_id = "b03b5540-80aa-43e6-9dce-92bd8e221507"
 
-[vars]
-CONFIG_URL = "https://raw.githubusercontent.com/spxload/routehub/main/routehub.conf"
+# [vars] с CONFIG_URL УБРАН в v1.12.0: routehub.conf встроен в сборку, Worker
+# его больше не запрашивает, а база скриптов строится от адреса запроса.
+# Оставленная переменная выглядела бы действующим источником конфига.
+# Откат версии в Cloudflare возвращает и её привязки, так что для отката
+# переменная здесь не нужна.
 
 # ───────────────────────────────────────────────────────────────────────────
 # СТЕНД STASH (ADR-01, 2026-08-16). Деплоится из ЭТОЙ ЖЕ ветки командой
@@ -49,18 +61,17 @@ name = "routehub-stash"
 
 [[env.stash.rules]]
 type = "Text"
-globs = ["**/*.html"]
+globs = ["**/*.html", "**/scripts/*.js", "**/probes/*.js", "**/*.plugin", "**/*.stoverride", "**/*.conf"]
+fallthrough = true
 
 [[env.stash.d1_databases]]
 binding = "RH_DB"
 database_name = "routehub-stash-db"
 database_id = "6ba57fd5-c707-410c-a2ea-428156d06f88"
 
-# routehub-stash.yaml ЕЩЁ НЕ СОЗДАН — появится на шаге 4 плана Stash, когда
-# будет ясно, нужен ли стенду свой конфиг. До тех пор запрос конфига стендом
-# вернёт 404; на боевой контур это не влияет.
-[env.stash.vars]
-CONFIG_URL = "https://raw.githubusercontent.com/spxload/routehub/main/routehub-stash.yaml"
+# [env.stash.vars] с CONFIG_URL (routehub-stash.yaml, так и не созданный)
+# УБРАН в v1.12.0 вместе с боевым: код main переменную больше не читает.
+# Свой конфиг стенда, если понадобится, встраивается так же, через src/files.js.
 
 [env.stash.triggers]
 crons = []

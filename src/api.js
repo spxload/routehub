@@ -7,6 +7,8 @@
 import { buildAiTiers } from './ai.js';
 import { aiBlocks, renderConfig, subParamsFromConf } from './clients/loon.js';
 import { KEY_RE } from './const.js';
+import { FILES } from './files.js';
+import { repoBase, rewriteRepoLinks } from './repo.js';
 import { ensureFlags, ensureFreeSpare, kvGetJSON, kvPutJSON, kvPutManyJSON, loadRegistry, nonceTaken, tokenGate } from './store.js';
 import { fetchUpstream, getSub, renderNodesBoth } from './sub.js';
 import { classifyNet, confVersion, decodeName, fragOf, jsonResp, matchKey, metricOf, utf8ToB64 } from './util.js';
@@ -28,11 +30,8 @@ async function handleConfig(url, env, tok) {
   ensureFlags(reg);
   reg[key].last_config_ts = new Date().toISOString();
 
-  // Обход кэша: no-store (кэш Workers) + ?t=now (CDN GitHub считает ресурс новым)
-  const cfgUrl = env.CONFIG_URL + (env.CONFIG_URL.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
-  const cr = await fetch(cfgUrl, { headers: { 'User-Agent': 'routehub-worker' }, cache: 'no-store' });
-  if (!cr.ok) throw new Error('config fetch ' + cr.status);
-  let conf = await cr.text();
+  // v1.12.0: шаблон из сборки (files.js), не с GitHub.
+  let conf = FILES['routehub.conf'];
   const cv = confVersion(conf);
   if (cv && reg[key].conf_ver !== cv) reg[key].conf_ver = cv;
   // Одна запись реестра на запрос (раньше при смене C-draft писалось дважды).
@@ -54,8 +53,10 @@ async function handleConfig(url, env, tok) {
     dev: reg[key],
     blocks: aiBlocks(buildAiTiers(masterLines, state)),
     subParams: subParams,
-    scriptBase: env.CONFIG_URL.replace(/[^/]+$/, ''),
+    scriptBase: repoBase(url.origin, reg[key].token),
   });
+  // [Plugin] и др. ссылки на репозиторий — на прокси (repo.js).
+  conf = rewriteRepoLinks(conf, url.origin, reg[key].token);
 
   return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }

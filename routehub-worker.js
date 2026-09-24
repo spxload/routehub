@@ -21,6 +21,8 @@
 //   src/api.js   — /config, /nodes, /speed, /rkn, /status          (все выше)
 //   src/dash.js  — дашборд rh.box и личный список доменов          (const, store, util)
 //   src/admin.js — админ-панель                                    (const, store, sub, util)
+//   src/files.js — манифест файлов, встроенных в сборку (Text)     (—)
+//   src/repo.js  — /t/<токен>/repo/<путь> и переписчик ссылок      (files, store)
 //   src/clients/loon.js — синтаксис конфига Loon: AI-блоки, подстановки
 //
 // МОДЕЛЬ ОДНОЙ ПОДПИСКИ: /nodes отдаёт оба набора (🛜/📱); каждая функция —
@@ -39,6 +41,7 @@ import * as AI from './src/ai.js';
 import * as API from './src/api.js';
 import * as DASH from './src/dash.js';
 import * as ADMIN from './src/admin.js';
+import * as REPO from './src/repo.js';
 import * as LOON from './src/clients/loon.js';
 
 export default {
@@ -69,6 +72,9 @@ export default {
       // Версия не секрет, а раньше её можно было увидеть только в /admin.
       if (req.method === 'GET' && url.pathname === '/version') return UTIL.jsonResp({ worker: CONST.WORKER_VER });
       if (req.method === 'GET' && url.pathname === '/config') return await API.handleConfig(url, env, tok);
+      // v1.12.0: файлы приватного репозитория из сборки. Токен — только из
+      // пути /t/<токен>/ (не ?token=); без него — 403 в самом обработчике.
+      if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/repo/')) return await REPO.handleRepo(req, url, env, pm ? tok : '');
       if (req.method === 'GET' && url.pathname === '/nodes') return await API.handleNodes(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/refresh') return await API.handleRefresh(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/dashboard') return await DASH.handleDashboard(url, env, tok);
@@ -100,4 +106,4 @@ export default {
 // Экспорт для тестов (tests/routehub-worker.test.js): всё объявленное в
 // модулях, одним объектом. На работу Worker'а не влияет — рантайм обращается
 // только к default-экспорту.
-export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...LOON };
+export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...REPO, ...LOON };

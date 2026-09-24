@@ -1,6 +1,6 @@
 # MAP.md — карта репозитория RouteHub
 
-Срез на 2026-09-23 (процесс Claude Code дополнен 24.09), ветка `main` (боевой Loon: Worker v1.11.1, конфиг
+Срез на 2026-09-23 (процесс Claude Code дополнен 24.09), ветка `main` (боевой Loon: Worker v1.12.0, конфиг
 C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 Читать этот файл первым, дальше — только файлы под задачу.
 
@@ -10,6 +10,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 |---|---|
 | Правка `routehub.conf` | `routehub.conf`, `src/clients/loon.js`, `CHANGELOG.md`, `tests/config.test.js` |
 | Правка Worker'а | `routehub-worker.js`, нужный `src/*.js`, `tests/routehub-worker.test.js`, `CHANGELOG.md` |
+| Новый файл в `scripts/`, `probes/`, `plugins/` | строка в `src/files.js`, сторож `tests/files-manifest.test.js` |
 | Скрипт устройства Loon | нужный `scripts/*.js`, `routehub.conf`, `tests/probes-smoke.test.js` |
 | Проба (probe) | нужный `probes/*`, его `plugins/*`, `tests/probe-*.test.js`, `docs/ЭТАП_K_*.md` |
 | Профиль/слой Stash | ветка `stash-client` (`src/clients/stash-*.js`), `docs/ADR-02`, `ЭТАП_K_STASH_СТЕНД.md` |
@@ -24,7 +25,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `CLAUDE.md` | правила для сессий Claude Code: жёсткие правила 1–5, процедуры, git и согласие |
 | `routehub-worker.js` | точка входа, только роутинг; импортирует все `src/*.js` и `web/routehub-admin.html` |
 | `routehub.conf` | боевой конфиг Loon, C-draft-43; рендерится шаблоном `src/clients/loon.js` |
-| `wrangler.toml` | деплой: боевой (`routehub-db`), `[env.stash]` (`routehub-stash-db`), cron 2 ч |
+| `wrangler.toml` | деплой: боевой (`routehub-db`), `[env.stash]` (`routehub-stash-db`), cron 2 ч; правила Text для встроенных файлов |
 | `README.md` | вход в репозиторий: карта, «с чего начать», актуальность docs |
 | `CHANGELOG.md` | версии Worker'а/конфига с v1.9.4/C-draft-41, с причинами |
 | `CHANGELOG_ARCHIVE.md` | версии до границы выше, дословно |
@@ -39,9 +40,11 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `store.js` | D1 (`kv`), реестр устройств, `nonce`, токены | const, util |
 | `sub.js` | подписка Lastdep: загрузка, кэш, наборы 🛜/📱 | const, store, util |
 | `ai.js` | расчёт AI-тиеров (каскады); рендер — в `clients/*` | const, util |
-| `api.js` | `/config /nodes /speed /rkn /status` | ai, clients/loon, const, store, sub, util |
+| `api.js` | `/config /nodes /speed /rkn /status` | ai, clients/loon, const, files, repo, store, sub, util |
 | `dash.js` | данные `rh.box`, личный список доменов | const, store, util |
 | `admin.js` | админ-панель: сессия HMAC, устройства | const, store, sub, util |
+| `files.js` | манифест файлов, встроенных в сборку (Text): конфиг, скрипты, пробы, плагины | — |
+| `repo.js` | `/t/<токен>/repo/<путь>`: гейт токена, белый список, переписчик ссылок | files, store |
 | `clients/loon.js` | `aiBlocks`, `subParamsFromConf`, `renderConfig` | const, util |
 
 `src/clients/stash-*.js` в `main` нет — код в ветке `stash-client`.
@@ -50,10 +53,12 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 
 | Файл | Что проверяет |
 |---|---|
-| `harness.js`, `mock-d1.js` | не тесты: загрузка Worker'а и мок D1 (`kv` на `Map`) |
+| `harness.js`, `mock-d1.js`, `text-loader.mjs` | не тесты: загрузка Worker'а, мок D1 (`kv` на `Map`), хук модулей Text |
 | `routehub-worker.test.js` | ядро: маршруты, реестр |
 | `clients-loon.test.js` | `renderConfig` — плейсхолдеры и аргументы скриптов |
-| `config.test.js` | сквозной `GET /config`: ключ, токен, тиры, `conf_ver` |
+| `config.test.js` | сквозной `GET /config` на встроенном `routehub.conf`: ключ, токен, тиры, `conf_ver`, ни одного fetch |
+| `repo.test.js` | прокси `/t/<токен>/repo/`: 403 без токена, 404 вне белого списка, байт в байт с переписанными ссылками |
+| `files-manifest.test.js` | сторож `src/files.js`: каждый файл встроен и совпадает с диском; правила Text в `wrangler.toml` |
 | `endpoints.test.js` | простые маршруты без ключа (`/version`) |
 | `metrics.test.js` | `POST /speed` и композитный балл |
 | `nonce.test.js` | чужой `nonce` при привязке ключа |
