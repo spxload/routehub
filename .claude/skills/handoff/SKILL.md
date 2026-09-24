@@ -7,7 +7,8 @@ license: MIT
 ---
 
 <!-- По мотивам skills/productivity/handoff из https://github.com/mattpocock/skills
-     (автор Matt Pocock, лицензия MIT). Адаптировано для RouteHub 24.09.2026. -->
+     (Copyright (c) 2026 Matt Pocock, лицензия MIT:
+     https://github.com/mattpocock/skills/blob/main/LICENSE). Адаптировано для RouteHub 24.09.2026. -->
 
 # Передача дел
 

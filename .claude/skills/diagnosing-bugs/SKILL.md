@@ -5,7 +5,8 @@ license: MIT
 ---
 
 <!-- По мотивам skills/engineering/diagnosing-bugs из
-     https://github.com/mattpocock/skills (автор Matt Pocock, лицензия MIT).
+     https://github.com/mattpocock/skills (Copyright (c) 2026 Matt Pocock, лицензия MIT:
+     https://github.com/mattpocock/skills/blob/main/LICENSE).
      Адаптировано для RouteHub 24.09.2026. -->
 
 # Диагностика поломки

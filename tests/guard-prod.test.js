@@ -13,6 +13,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,7 +22,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.join(HERE, '..', '.claude', 'hooks', 'guard-prod.js');
 const ROOT = '/work/routehub';
 
-function run(filePath, { tool = 'Edit', cwd = ROOT, raw } = {}) {
+function run(filePath, { tool = 'Edit', cwd = ROOT, raw, root = ROOT } = {}) {
   const input = raw !== undefined ? raw : JSON.stringify({
     session_id: 't',
     cwd,
@@ -32,7 +34,7 @@ function run(filePath, { tool = 'Edit', cwd = ROOT, raw } = {}) {
   const r = spawnSync(process.execPath, [HOOK], {
     input,
     encoding: 'utf8',
-    env: { ...process.env, CLAUDE_PROJECT_DIR: ROOT },
+    env: { ...process.env, CLAUDE_PROJECT_DIR: root },
   });
   const out = r.stdout.trim();
   return { code: r.status, out, json: out ? JSON.parse(out) : null };
@@ -95,6 +97,29 @@ test('похожие имена не путаются с боевыми', () => 
 test('файл вне проекта → пропуск', () => assertPass(run('/tmp/other/routehub.conf', { cwd: '/tmp/other2' })));
 
 test('неразобранный вход → ask (безопаснее спросить)', () => assertAsk(run(null, { raw: 'не json' })));
+test('исключение внутри хука → ask, а не код 1 (код 1 пропустил бы правку)', () => {
+  // Нулевой байт в пути: realpathSync бросает ERR_INVALID_ARG_VALUE,
+  // хук обязан ответить «ask», а не упасть.
+  const res = run(`${ROOT}/docs/x${String.fromCharCode(0)}.md`);
+  assertAsk(res);
+  assert.match(res.json.hookSpecificOutput.permissionDecisionReason, /не смог проверить путь/);
+});
+
+test('симлинк на боевой файл или каталог → ask', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-prod-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'docs'));
+  fs.mkdirSync(path.join(root, 'src'));
+  fs.writeFileSync(path.join(root, 'routehub.conf'), '');
+  fs.symlinkSync('../routehub.conf', path.join(root, 'docs', 'conf-link'));
+  fs.symlinkSync('src', path.join(root, 'lnk'));
+  assertAsk(run(path.join(root, 'docs', 'conf-link'), { root, cwd: root }));
+  // Новый файл в каталоге-симлинке: самого файла ещё нет.
+  assertAsk(run(path.join(root, 'lnk', 'new.js'), { root, cwd: root, tool: 'Write' }));
+  // Контроль: обычный файл в docs/ по-прежнему пропускается.
+  assertPass(run(path.join(root, 'docs', 'plain.md'), { root, cwd: root }));
+});
+
 test('вход без file_path → пропуск', () => {
   assertPass(run(null, { raw: JSON.stringify({ tool_name: 'Edit', tool_input: {}, cwd: ROOT }) }));
 });

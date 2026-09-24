@@ -1,6 +1,6 @@
 # MAP.md — карта репозитория RouteHub
 
-Срез на 2026-09-23, ветка `main` (боевой Loon: Worker v1.11.1, конфиг
+Срез на 2026-09-23 (процесс Claude Code дополнен 24.09), ветка `main` (боевой Loon: Worker v1.11.1, конфиг
 C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 Читать этот файл первым, дальше — только файлы под задачу.
 
@@ -15,11 +15,13 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | Профиль/слой Stash | ветка `stash-client` (`src/clients/stash-*.js`), `docs/ADR-02`, `ЭТАП_K_STASH_СТЕНД.md` |
 | Тесты | `tests/harness.js`, `tests/mock-d1.js`, нужный `tests/*.test.js` |
 | Документация | нужный файл `docs/`, таблица актуальности README, `CHANGELOG.md` |
+| Процесс, агенты, скиллы | `CLAUDE.md`, `studio/README.md`, `.claude/agents/` |
 
 ## Корень
 
 | Файл | За что отвечает |
 |---|---|
+| `CLAUDE.md` | правила для сессий Claude Code: жёсткие правила 1–5, процедуры, git и согласие |
 | `routehub-worker.js` | точка входа, только роутинг; импортирует все `src/*.js` и `web/routehub-admin.html` |
 | `routehub.conf` | боевой конфиг Loon, C-draft-43; рендерится шаблоном `src/clients/loon.js` |
 | `wrangler.toml` | деплой: боевой (`routehub-db`), `[env.stash]` (`routehub-stash-db`), cron 2 ч |
@@ -61,6 +63,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `probes-smoke.test.js` | каждая проба `probes/*` доходит до `$done` |
 | `speedtest-ewma.test.js` | EWMA α=0.2 — вес нового замера, флаг `ewma` |
 | `speedtest-jitter.test.js` | `RTT_SAMPLES=5`, джиттер — усечённый размах |
+| `guard-prod.test.js` | хук правила 5: боевые пути → `ask`, прочие молча; `../`, симлинки, сбой → `ask` |
 
 ## scripts/ — код на устройстве (Loon)
 
@@ -133,7 +136,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `ЭТАП_K_SURGE.md` | актуален, в процессе (SG1/3 прогнана) |
 | `ДОКУМЕНТАЦИЯ_LOON_RU.md` | устарел, см. `СВЕРКА_LOON_3.5.md` (перевод 3.3.9, устройство 3.5.0) |
 | `ЭТАП_D_ФОРМУЛА.md` | устарел, см. `ЗАМЕРЫ_И_ВЕСА.md` (веса); версия в тексте v0.4.13, позади v0.7.1 |
-| `СВЕРКА_С_ДОКУМЕНТАЦИЕЙ.md` | архив — ссылается на несуществующий `ПЛАН_РЕАЛИЗАЦИИ_v2.md` |
+| `СВЕРКА_С_ДОКУМЕНТАЦИЕЙ.md` | архив — ссылается на несуществующий `ПЛАН_РЕАЛИЗАЦИИ_v2.md` |
 
 ## docs/archive/ — история, не описание текущего состояния
 
@@ -143,7 +146,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `ДЛЯ_ДИАНЫ_инструкция_и_промпты.md` | вторая инструкция для чатов, расходится с первой |
 | `ИССЛЕДОВАНИЕ_GITHUB.md` | обзор решений GitHub 30.05, исполнено |
 | `МИГРАЦИЯ_НА_WORKERS.md` | план миграции на Workers, выполнено 08.06 |
-| `ОТЧЁТ_ПО_ПРОЕКТУ.md` | ранний отчёт («AI Region Switch») |
+| `ОТЧЁТ_ПО_ПРОЕКТУ.md` | ранний отчёт («AI Region Switch») |
 | `ЭТАП_A_РЕЗУЛЬТАТЫ.md` | промежуточные итоги этапа A, 29.05 |
 | `ЭТАП_B_РЕШЕНИЯ.md` | архитектурные решения этапа B |
 | `ЭТАП_DASH_ПРОГРЕСС.md` | здесь похоронен баг `routehub-rkn.js` |
@@ -152,6 +155,26 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `ЭТАП_D_ПРОГРЕСС.md` | этап D завершён: подписки, AI-селектор, спидтест |
 | `ЭТАП_E_ПРОГРЕСС.md` | `RH-Прямой=select` заменён в C-draft-25 |
 | `ЭТАП_K_EGERN.md` | исследование Egern закрыто |
+
+## .claude/ и studio/ — процесс работы Claude Code
+
+| Файл | Отвечает за |
+|---|---|
+| `.claude/agents/executor-simple.md` | роль: простые задачи пачкой |
+| `.claude/agents/executor-medium.md` | роль: 1–3 связанные задачи |
+| `.claude/agents/executor-complex.md` | роль: одна сложная задача |
+| `.claude/agents/reviewer.md` | роль: ревью диффа до коммита, без записи |
+| `.claude/agents/tester.md` | роль: независимая проверка после исполнителей |
+| `.claude/agents/researcher.md` | роль: факты по документации с URL |
+| `.claude/skills/handoff/SKILL.md` | скилл: передача дел в `studio/handoff/` вместо `/compact` |
+| `.claude/skills/diagnosing-bugs/SKILL.md` | скилл: диагностика поломки, L10 прежде вывода |
+| `.claude/skills/grill-me/SKILL.md` | скилл: все вопросы одним списком с ответами по умолчанию |
+| `.claude/settings.json` | хук `PreToolUse` на `Edit`/`Write`/`NotebookEdit` |
+| `.claude/hooks/guard-prod.js` | правка боевого контура → запрос подтверждения (правило 5) |
+| `studio/README.md` | порядок работы, роли, экономия лимитов |
+| `studio/tasks/BACKLOG.md` | незакрытые пункты бэклога 1–52 |
+| `studio/tasks/T-private-repo.md` | бриф: приватный репозиторий через прокси Worker'а |
+| `studio/tasks/T-workflows.md` | бриф первой сессии: `/context`, проверка хука, CI |
 
 ## Photo/
 

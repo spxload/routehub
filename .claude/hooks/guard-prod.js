@@ -16,12 +16,17 @@
 //           для прочих путей stdout пуст — действует обычный порядок
 //           разрешений, хук ничего не добавляет и ничего не разрешает.
 //   Код 2 не используется: он блокирует вызов, а нужен вопрос, не запрет.
+//   Любое исключение ловится и превращается в «ask»: по документации
+//   падение с кодом 1 — неблокирующая ошибка, правка прошла бы без вопроса.
 //
-// Ограничение: хук видит только инструменты из `matcher` в settings.json.
-// Правка через Bash (`sed -i`, `git apply`) его обходит — это предохранитель,
-// а не замок. Сетевых вызовов и записи на диск нет.
+// Ограничения: хук видит только инструменты из `matcher` в settings.json;
+// правка через Bash (`sed -i`, `git apply`) его обходит — это предохранитель,
+// а не замок. Хуки `.claude/settings.json` действуют только в сессии с одним
+// репозиторием (code.claude.com/docs/en/cloud-environments, «What carries
+// over»). Сетевых вызовов и записи на диск нет.
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 
 const REASON = 'Правило 5: правка боевого контура — только с согласия Дианы';
@@ -34,12 +39,33 @@ function toPosix(p) {
   return String(p).replace(/\\/g, '/');
 }
 
+// Реальный путь: симлинки раскрыты, чтобы `docs/x -> ../routehub.conf` не
+// прошёл мимо. Файла ещё нет (Write создаёт новый) — раскрывается ближайший
+// существующий родитель, хвост дописывается как есть. Прочие ошибки
+// (например, нулевой байт в пути) не глушатся — их ловит обработчик ниже.
+function real(p) {
+  const tail = [];
+  let cur = p;
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(cur), ...tail);
+    } catch (e) {
+      if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') throw e;
+      const up = path.dirname(cur);
+      if (up === cur) return p;
+      tail.unshift(path.basename(cur));
+      cur = up;
+    }
+  }
+}
+
 // Путь файла относительно корня. `../` и относительная запись схлопываются
 // через resolve; файл вне корня получает префикс `../` и боевым не считается;
 // рабочее дерево `.claude/worktrees/<имя>/` сводится к пути внутри него.
 function relTo(root, file) {
   const base = path.resolve(toPosix(root));
-  const rel = toPosix(path.relative(base, path.resolve(base, toPosix(file))));
+  const abs = path.resolve(base, toPosix(file));
+  const rel = toPosix(path.relative(real(base), real(abs)));
   const wt = rel.match(/^\.claude\/worktrees\/[^/]+\/(.+)$/);
   return wt ? wt[1] : rel;
 }
@@ -75,15 +101,14 @@ let raw = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => { raw += chunk; });
 process.stdin.on('end', () => {
-  let input;
+  let rel;
   try {
-    input = JSON.parse(raw);
+    rel = classify(JSON.parse(raw), process.env);
   } catch (e) {
-    // Вход не разобран — путь неизвестен; безопаснее спросить.
-    ask(REASON + ' (вход хука не разобран)');
+    // Вход не разобран или сбой внутри — путь не проверен; безопаснее спросить.
+    ask(REASON + ' (хук не смог проверить путь: ' + e.message + ')');
     process.exit(0);
   }
-  const rel = classify(input, process.env);
   if (rel) ask(REASON + '. Файл: ' + rel);
   process.exit(0);
 });
