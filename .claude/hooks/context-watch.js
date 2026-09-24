@@ -11,10 +11,12 @@
 //
 // ОДИН ФАЙЛ — ЧЕТЫРЕ СОБЫТИЯ (https://code.claude.com/docs/en/hooks):
 //   UserPromptSubmit, PostToolUse — монитор. `additionalContext` доходит до
-//     модели «alongside the submitted prompt» / «next to the tool result»;
-//     PostToolUse нужен, чтобы ступень 3 сработала посреди длинной задачи,
-//     где новых запросов нет. Stop не используется: его `additionalContext`
-//     продолжает ход принудительно — лишний ход ради предупреждения.
+//     модели «alongside the submitted prompt» / «next to the tool result».
+//     На КАЖДОМ UserPromptSubmit — строка остатка («N % до точки сжатия,
+//     осталось ~X тыс.») для планирования задачи по объёму; ступени — по разу.
+//     PostToolUse нужен, чтобы ступень сработала посреди длинной задачи, где
+//     новых запросов нет; строку остатка он не пишет. Stop не используется:
+//     его `additionalContext` продолжает ход принудительно — лишний ход.
 //   SessionStart — `source` = "startup": вызвать скилл `context-audit`;
 //     "compact": напомнить, что контекст уже сжат (вывод SessionStart с
 //     источником compact добавляется в сжатый контекст —
@@ -34,8 +36,12 @@
 // Процент считается от ТОЧКИ АВТОСЖАТИЯ, а не от окна модели: так ступени
 // всегда раньше сжатия, какой бы процент ни выставило облако.
 //   точка = окно_автосжатия × PCT / 100, где
-//   окно_автосжатия = CLAUDE_CODE_AUTO_COMPACT_WINDOW (100 000…1 000 000, не
-//     больше окна модели) или ~967 000 по умолчанию для моделей с окном 1M
+//   окно_автосжатия = CLAUDE_CODE_AUTO_COMPACT_WINDOW, иначе настройка
+//     `autoCompactWindow` (её пишет `/autocompact`) из .claude/settings.local.json,
+//     .claude/settings.json, ~/.claude/settings.json — по старшинству
+//     (https://code.claude.com/docs/en/settings-reference#autocompactwindow);
+//     флаг `--autocompact` и управляемые настройки хуку не видны. Диапазон
+//     100 000…1 000 000, не больше окна модели; по умолчанию ~967 000 для 1M
 //     («compact … at about 967K tokens by default» —
 //     https://code.claude.com/docs/en/model-config#default-auto-compact-thresholds);
 //   окно модели — 1 000 000 у Opus 5.5 (platform context-windows, ссылка
@@ -44,6 +50,17 @@
 //     (https://code.claude.com/docs/en/claude-code-on-the-web#manage-context),
 //     значение документация не называет; в облачной сессии 24.09 наблюдалось
 //     80. Хук наследует окружение Claude Code (hooks, «Common input fields»).
+//
+// СТУПЕНИ 80/90/95 (решение Дианы 24.09 — как можно ближе к сжатию).
+// Остаток на 95 % должен вместить саму передачу дел. Оценка (не замер):
+// скилл ~1,5 тыс. токенов, git log/diff ~2–5, файл передачи ~2,5 (пишется)
+// + ~2,5 (заливка), рассуждение и ответ ~3–5 — итого ~12–17 тыс.; плюс один
+// крупный шаг (чтение файла, вывод тестов) до ~10 тыс. Резерв — 25 тыс.
+// При облачной точке ~773 600 (PCT 80) 5 % = ~38 700 — хватает; при малом
+// окне (100 000 → 5 % = 5 000) не хватит, поэтому ступень 3 сдвигается
+// так, чтобы остаток был не меньше резерва, а ступени 1–2 — не выше неё.
+// Если формат транскрипта сменится и usage не найдётся, модель один раз
+// получает сигнал «объём не отслеживается».
 //
 // НАДЁЖНОСТЬ. Транскрипт читается с хвоста (256 КБ, при нужде ×4 до 16 МБ):
 // строки бывают по 250 КБ, файл — десятки МБ. Любой сбой — тихий выход с
@@ -58,7 +75,8 @@ const os = require('os');
 const path = require('path');
 
 // Ступени, % пути до автосжатия. Сообщение — только при переходе вверх.
-const STEPS = [50, 65, 80];
+const STEPS = [80, 90, 95];
+const HANDOFF_RESERVE = 25000;      // токенов на передачу дел, см. выше
 const MODEL_WINDOW = 1000000;       // Opus 5.5 — 1M
 const MODEL_WINDOW_NO_1M = 200000;  // CLAUDE_CODE_DISABLE_1M_CONTEXT=1
 const AC_WINDOW_DEFAULT = 967000;   // «about 967K tokens by default»
@@ -69,11 +87,14 @@ const TAIL_MAX = 16 * 1024 * 1024;
 const HEAD_MAX = 4 * 1024 * 1024;
 const STATE_DIR = 'routehub-context-watch';
 
-// Скилл handoff вызывает только Диана (`disable-model-invocation: true` —
-// https://code.claude.com/docs/en/skills), поэтому модель предлагает команду.
-const HANDOFF = 'Диане предлагается команда `/handoff <чем займётся следующая сессия>` '
-  + '(аргумент модель пишет готовым; скилл вызывает только Диана), после неё — новая '
-  + 'сессия Code с репозиторием routehub и первым сообщением «Продолжи по studio/handoff/<файл>»';
+// Если у скилла стоит `disable-model-invocation: true`
+// (https://code.claude.com/docs/en/skills), модель его вызвать не может —
+// тогда Диане предлагается команда.
+const SAY_START = '«Контекст подходит к концу — запускаю передачу дел (handoff)»';
+const SAY_NEXT = '«Откройте новую сессию Code с репозиторием routehub и напишите: '
+  + 'Продолжи по studio/handoff/<файл>»';
+const HANDOFF = `Диане — ${SAY_START}; скилл handoff (если модели он недоступен — Диане `
+  + `команда \`/handoff <чем займётся следующая сессия>\`); после записи файла — ${SAY_NEXT}`;
 
 // Как у Claude Code: `500k` читается как 500 и поднимается до минимума (env-vars).
 function int(v) {
@@ -81,9 +102,28 @@ function int(v) {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function compactPoint(env) {
+// autoCompactWindow из файлов настроек: локальные > проекта > пользователя.
+function settingsWindow(env, cwd) {
+  const proj = env.CLAUDE_PROJECT_DIR || cwd;
+  const files = [];
+  if (proj) {
+    files.push(path.join(proj, '.claude', 'settings.local.json'));
+    files.push(path.join(proj, '.claude', 'settings.json'));
+  }
+  if (env.HOME) files.push(path.join(env.HOME, '.claude', 'settings.json'));
+  for (const file of files) {
+    try {
+      const v = JSON.parse(fs.readFileSync(file, 'utf8')).autoCompactWindow;
+      if (Number.isFinite(v)) return v;
+    } catch (e) { /* нет файла или не JSON — следующий */ }
+  }
+  return NaN;
+}
+
+function compactPoint(env, cwd) {
   const model = env.CLAUDE_CODE_DISABLE_1M_CONTEXT === '1' ? MODEL_WINDOW_NO_1M : MODEL_WINDOW;
   let acw = int(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
+  if (Number.isNaN(acw)) acw = settingsWindow(env, cwd);
   acw = Number.isNaN(acw) ? AC_WINDOW_DEFAULT : Math.min(Math.max(acw, AC_WINDOW_MIN), AC_WINDOW_MAX);
   const pct = int(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE);
   return Math.min(acw, model) * (pct >= 1 && pct <= 100 ? pct : 100) / 100;
@@ -116,19 +156,23 @@ function readRange(fd, start, len) {
 }
 
 // Последний объём: с конца файла, окно растёт, пока не найдена запись.
+// Возвращает { used: число | null, blind: ответы есть, а объёма нет }.
 function lastUsed(file) {
   const fd = fs.openSync(file, 'r');
   try {
     const size = fs.fstatSync(fd).size;
+    let answers = false;
     for (let len = TAIL_START; ; len *= 4) {
       const start = Math.max(0, size - Math.min(len, TAIL_MAX));
       const lines = readRange(fd, start, size - start).split('\n');
       if (start > 0) lines.shift(); // первая строка обрезана
       for (let i = lines.length - 1; i >= 0; i--) {
-        const used = usedOf(parse(lines[i]));
-        if (used !== null) return used;
+        const rec = parse(lines[i]);
+        const used = usedOf(rec);
+        if (used !== null) return { used, blind: false };
+        if (rec && rec.type === 'assistant') answers = true;
       }
-      if (start === 0 || len >= TAIL_MAX) return null;
+      if (start === 0 || len >= TAIL_MAX) return { used: null, blind: answers || size > TAIL_START };
     }
   } finally {
     fs.closeSync(fd);
@@ -179,26 +223,39 @@ function writeState(file, st) {
 
 const k = (n) => Math.round(n / 1000);
 
+// Пороги в %: ступень 3 — не позже, чем остаётся резерв; 1–2 — не выше 3.
+function thresholds(point) {
+  const t3 = Math.min(STEPS[2], 100 - HANDOFF_RESERVE / point * 100);
+  const t2 = Math.min(STEPS[1], t3);
+  return [Math.min(STEPS[0], t2), t2, t3];
+}
+
+function remainText(pct, used, point) {
+  return `Контекст: ${Math.floor(pct)} % до точки сжатия, осталось `
+    + `~${k(Math.max(0, point - used))} тыс. токенов.`;
+}
+
 function stepText(step, pct, used, point) {
-  const head = `Монитор контекста: контекст ~${Math.round(pct)} % пути до автосжатия `
-    + `(~${k(used)} тыс. токенов из ~${k(point)} тыс.). `;
+  const head = `Монитор контекста: ${Math.floor(pct)} % пути до автосжатия `
+    + `(~${k(used)} тыс. токенов из ~${k(point)} тыс., осталось ~${k(Math.max(0, point - used))} тыс.). `
+    + 'По правилу CLAUDE.md («Контекст») ';
   if (step === 1) {
-    return head + 'Ступень 1 из 3: по правилу CLAUDE.md («Контекст») текущая задача '
-      + 'доводится до конца, новая большая задача в этой сессии не начинается.';
+    return head + 'ступень 1 из 3 — планируй конец: текущая задача доделывается, если '
+      + 'влезает в остаток; новая большая не начинается; после завершения — передача '
+      + `дел: ${HANDOFF}.`;
   }
   if (step === 2) {
-    return head + 'Ступень 2 из 3: по правилу CLAUDE.md на ближайшей границе задачи '
-      + `${HANDOFF}.`;
+    return head + 'ступень 2 из 3 — завершай: доделать, только если осталось немного, '
+      + `иначе промежуточная передача дел в ближайшей безопасной точке: ${HANDOFF}.`;
   }
-  return head + 'Ступень 3 из 3, СРОЧНО: сейчас же, даже посреди задачи, пока '
-    + `автосжатие не стёрло детали, ${HANDOFF}.`;
+  return head + `ступень 3 из 3 — критично: передача дел сейчас: ${HANDOFF}.`;
 }
 
 function userText(step, pct) {
-  const head = `Контекст ~${Math.round(pct)} % пути до автосжатия. `;
-  if (step === 1) return head + 'Текущую задачу доводим; новую большую — в новой сессии.';
-  return head + 'Пора передать дела: выполните /handoff (Claude подскажет аргумент), затем '
-    + 'откройте новую сессию с первым сообщением «Продолжи по studio/handoff/<файл>».';
+  const head = `Контекст ${Math.floor(pct)} % до точки сжатия. `;
+  if (step === 1) return head + 'Текущая задача доводится, новая большая — в новой сессии.';
+  return head + 'Контекст подходит к концу — передача дел (handoff). Затем откройте '
+    + 'новую сессию Code с репозиторием routehub и напишите: Продолжи по studio/handoff/<файл>.';
 }
 
 function monitor(input, env) {
@@ -206,22 +263,29 @@ function monitor(input, env) {
   const file = input.transcript_path;
   const sf = input.session_id ? stateFile(input.session_id) : null;
   if (!file || !sf || !fs.existsSync(file)) return null;
-  const point = compactPoint(env);
+  const point = compactPoint(env, input.cwd);
+  const prompt = input.hook_event_name === 'UserPromptSubmit';
   const st = readState(sf);
   const parts = [];
   let sys = null;
   let changed = false;
 
-  const used = lastUsed(file);
+  const { used, blind } = lastUsed(file);
   if (used !== null) {
     const pct = used / point * 100;
-    const step = STEPS.filter((s) => pct >= s).length;
+    const step = thresholds(point).filter((s) => pct >= s).length;
     const prev = Number(st.step) || 0;
+    if (prompt) parts.push(remainText(pct, used, point));
     if (step > prev) {
       parts.push(stepText(step, pct, used, point));
       sys = userText(step, pct);
     }
     if (step !== prev) { st.step = step; changed = true; }
+  } else if (blind && prompt && !st.blindWarned) {
+    st.blindWarned = true;
+    changed = true;
+    parts.push('Монитор контекста: в транскрипте нет данных usage — формат мог смениться, '
+      + 'объём контекста не отслеживается. Сказать Диане; остаток — только по /context.');
   }
   if (st.base === undefined) {
     const base = firstUsed(file);
@@ -253,7 +317,7 @@ function sessionStart(input) {
   } else if (input.source === 'compact') {
     text = 'Контекст сессии только что сжат: ранняя часть сохранилась лишь пересказом. '
       + 'По правилу CLAUDE.md («Контекст») факты перед действием сверяются с репозиторием '
-      + `(git log, diff); на ближайшей границе задачи ${HANDOFF}.`;
+      + `(git log, diff); на ближайшей границе задачи — передача дел: ${HANDOFF}.`;
   }
   return text ? { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text } } : null;
 }
@@ -268,8 +332,8 @@ function preCompact(input) {
   st.compactWarned = true;
   // Не записали отметку — не блокируем: иначе повтор тоже упрётся в блок.
   if (!writeState(sf, st)) return null;
-  return 'RouteHub: вместо /compact — передача дел: выполните /handoff и '
-    + 'откройте новую сессию с первым сообщением «Продолжи по studio/handoff/<файл>». '
+  return 'RouteHub: вместо /compact — передача дел: выполните /handoff, затем откройте '
+    + 'новую сессию Code с репозиторием routehub и напишите: Продолжи по studio/handoff/<файл>. '
     + 'Если сжать всё же нужно — повторите /compact: второй раз он пройдёт.';
 }
 
