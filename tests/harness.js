@@ -1,32 +1,26 @@
 // tests/harness.js — общая загрузка Worker'а для всех тестовых файлов.
-// Worker импортирует HTML-страницы (модули типа Text, их подставляет Wrangler
-// при сборке). Node такой импорт не понимает, поэтому тесты грузят копию
-// исходника с заменёнными строками импорта. Остальной код не трогается.
-// Подстановка идёт по ЛЮБОМУ импорту из web/*.html, а не по конкретному имени:
-// раньше здесь было зашито ADMIN_HTML, и добавление второй страницы уронило
-// разом все двенадцать наборов тестов. Такие места в проекте уже подводили
-// (список проб в probes-smoke), поэтому шаблон общий, а не поимённый.
-// Копия кладётся В КОРЕНЬ репозитория, иначе не разрешаются относительные
-// импорты модулей src/*.js.
+// Worker импортирует файлы как модули Text (web/*.html и манифест
+// src/files.js — конфиг, скрипты, пробы, плагины); их подставляет Wrangler
+// при сборке. Node такой импорт не понимает, поэтому до загрузки Worker'а
+// регистрируется хук tests/text-loader.mjs: он отдаёт те же файлы строкой,
+// как Wrangler. Тесты видят реальные тексты (в том числе настоящие HTML-
+// страницы), код Worker'а грузится как есть, без копии с подменёнными
+// импортами. До v1.11.0 ветки (T-private-repo, перенос из main v1.12.0)
+// здесь писалась копия .rh-worker-under-test.mjs с заглушками вместо HTML;
+// копия не видела бы файлов манифеста, а хук видит любые импорты разом.
 //
 // Вынесено 2026-08-16 (v1.9.7): тесты разложены по файлам, чтобы правка
 // одного набора не требовала перезаливки всего файла через GitHub API.
 
-import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { register } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const ROOT = path.resolve(import.meta.dirname, '..');
+export const ROOT = path.resolve(import.meta.dirname, '..');
 export const SRC = fs.readFileSync(path.join(ROOT, 'routehub-worker.js'), 'utf8');
-const HTML_IMPORT = /^import ([A-Za-z_$][\w$]*) from '\.\/web\/[^']+\.html';\s*$/gm;
-const SHIM = SRC.replace(HTML_IMPORT, "const $1 = '<!doctype html><title>test</title>';");
-assert.notEqual(SHIM, SRC, 'строки импорта HTML не найдены — проверить шапку worker.js');
-assert.equal((SRC.match(HTML_IMPORT) || []).length, (SRC.match(/\.html';\s*$/gm) || []).length,
-  'какой-то импорт HTML не подошёл под шаблон — тесты грузили бы Worker не целиком');
-const TMP = path.join(ROOT, '.rh-worker-under-test.mjs');
-fs.writeFileSync(TMP, SHIM);
-const W = await import(pathToFileURL(TMP).href);
+register('./text-loader.mjs', import.meta.url);
+const W = await import(pathToFileURL(path.join(ROOT, 'routehub-worker.js')).href);
 
 export const T = W.__test;
 export const worker = W.default;

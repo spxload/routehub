@@ -21,6 +21,8 @@
 //   src/api.js   — /config, /nodes, /speed, /rkn, /status          (все выше)
 //   src/dash.js  — дашборд rh.box и личный список доменов          (const, store, util)
 //   src/admin.js — админ-панель                                    (const, store, sub, util)
+//   src/files.js — манифест файлов, встроенных в сборку (Text)     (—)
+//   src/repo.js  — /t/<токен>/repo/<путь> и переписчик ссылок      (files, store)
 //   src/clients/loon.js — синтаксис конфига Loon: AI-блоки, подстановки
 //
 // МОДЕЛЬ ОДНОЙ ПОДПИСКИ: /nodes отдаёт оба набора (🛜/📱); каждая функция —
@@ -40,6 +42,7 @@ import * as AI from './src/ai.js';
 import * as API from './src/api.js';
 import * as DASH from './src/dash.js';
 import * as ADMIN from './src/admin.js';
+import * as REPO from './src/repo.js';
 import * as LOON from './src/clients/loon.js';
 import * as STASH from './src/clients/stash.js';
 import * as STASH_PROFILE from './src/clients/stash-profile.js';
@@ -75,6 +78,10 @@ export default {
       // Диагностическая страница, без ключа и токена: см. api/misc.js.
       if (req.method === 'GET' && url.pathname === '/mixed') return API.handleMixed(MIXED_HTML);
       if (req.method === 'GET' && url.pathname === '/config') return await API.handleConfig(url, env, tok);
+      // v1.11.0 (перенос v1.12.0 из main): файлы приватного репозитория из
+      // сборки. Токен — только из пути /t/<токен>/ (не ?token=); без него —
+      // 403 в самом обработчике.
+      if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/repo/')) return await REPO.handleRepo(req, url, env, pm ? tok : '');
       if (req.method === 'GET' && url.pathname === '/nodes') return await API.handleNodes(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/refresh') return await API.handleRefresh(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/dashboard') return await DASH.handleDashboard(url, env, tok);
@@ -118,4 +125,4 @@ export default {
 // STASH_PROFILE — каркас профиля (группы, DNS, версия S-draft). Отдельным
 // ключом по той же причине: у него свои renderConfig и aiBlocks.
 // CLIENTS — реестр клиентских слоёв и выбор активного по env.CLIENT (ADR-01).
-export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, LOON, STASH, STASH_PROFILE, CLIENTS };
+export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...REPO, LOON, STASH, STASH_PROFILE, CLIENTS };

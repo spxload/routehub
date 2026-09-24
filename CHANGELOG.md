@@ -15,6 +15,56 @@ Worker'а — начиная с v1.9.4, для конфига — начиная
 ---
 ## Worker
 
+### v1.11.0 (2026-09-24, ветка stash-client) — ФАЙЛЫ РЕПОЗИТОРИЯ ИЗ СБОРКИ (перенос T-private-repo)
+
+Перенос Worker v1.12.0 из `main` (коммиты `70d6006..70aacb3`, PR #8) руками:
+код ветки разошёлся с `main` (`src/api/*.js`, клиентские слои Stash), файлы
+не копировались. Номер — следующий минор ВЕТКИ: v1.11.0 `main` (отдача в
+`/speed`) здесь по-прежнему нет, одинаковый номер в двух ветках означает
+разное содержание.
+
+Причина та же: `spxload/routehub` станет приватным, а стенд
+`routehub-stash` и override-файлы Stash ходили на `raw.githubusercontent.com`
+и jsDelivr — после перевода 404.
+
+- `src/files.js` — манифест файлов ЭТОЙ ветки: `routehub.conf`, 8
+  `scripts/*.js`, 18 `probes/*.js`, 2 `plugins/*.plugin`, 11
+  `plugins/*.stoverride` (40). Сторож `tests/files-manifest.test.js`: файл на
+  диске = в манифесте, байт в байт; правила Text `wrangler.toml` и хук тестов
+  покрывают одно и то же.
+- `src/repo.js` — маршрут `GET|HEAD /t/<токен>/repo/<путь>`, гейт как в
+  `main`: токен из пути обязателен всегда, ищется среди `reg[*].token`, иначе
+  403; строгая регулярка по сырому пути + манифест, иначе 404; в D1 не пишет,
+  в сеть не ходит. Переписчик принимает ref `main` И `stash-client` (raw и
+  jsDelivr): override стенда ссылаются на обе ветки (ST13–ST17,
+  Stash-Probes, Stash-Collect — `stash-client`; ST6, ST6-cdn, Probe, Stash,
+  FailLog, `[Plugin]` конфига — `main`). Отдаётся копия ЭТОЙ ветки; для ссылок
+  на `main` это допустимо — все их адресаты на 24.09 совпадают с `main` байт в
+  байт (обоснование — в шапке `REPO_LINK_RE`).
+- Ссылки установки Stash (`https://link.stash.ws/install-override/<адрес без
+  схемы>`) в override тоже ведут на прокси стенда: замечание тестировщика
+  24.09 — иначе после перевода репозитория в приватный override не на чем
+  переустановить. Установка: открыть отдаваемый `/t/<токен>/repo/plugins/<файл>`
+  и взять из его шапки ссылку `link.stash.ws`.
+- `src/api/config.js` — шаблон Loon из сборки вместо `fetch(CONFIG_URL)`,
+  `scriptBase` — `<origin>/t/<токен>/repo/`, переписчик после `renderConfig`
+  (только для клиентов с шаблоном); `Cache-Control: no-store` у обоих
+  клиентов. Профиль Stash (`usesTemplate = false`) по логике не менялся;
+  тест сторожит, что в нём нет ссылок на `spxload`.
+- `wrangler.toml` — правила Text расширены (оба окружения), `CONFIG_URL`
+  убран из `[vars]` и `[env.stash.vars]` (код ветки его не читает).
+- Тесты: хук `tests/text-loader.mjs` вместо копии
+  `.rh-worker-under-test.mjs` (строка убрана из `.gitignore`); новые
+  `tests/repo.test.js`, `tests/files-manifest.test.js`, сторож синтаксиса
+  скриптов `tests/scripts-syntax.test.js` из `main` (18b756e, с проверкой
+  шаблона dash — к v0.7.0 применима); `tests/config.test.js` — по образцу
+  `main` плюс два теста профиля Stash. 311 → 365.
+
+`routehub.conf` и `plugins/*` не менялись (пара `routehub.conf`
+main↔stash-client совпадает). Ссылки установщика `link.stash.ws/…` в
+комментариях override по-прежнему ведут на raw GitHub — после перевода
+репозитория override ставится по ссылке `<origin стенда>/t/<токен>/repo/plugins/<файл>`.
+
 ### v1.10.1 + перенос v1.11.1 (2026-09-21, ветка stash-client) — ШИРОКИЙ ПРИЗНАК ОБХОДА
 
 Та же правка, что Worker v1.11.1 в `main` (коммит `73af3f4`), перенесена
