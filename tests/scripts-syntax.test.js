@@ -32,3 +32,18 @@ for (const f of FILES) {
     assert.doesNotThrow(() => new vm.Script(src, { filename: f }));
   });
 }
+
+// Разбор не ловит подстановку: «${…}» внутри шаблона — валидный JS, но
+// тихо меняет страницу. HTML дашборда — чистый текст (инвариант в шапке
+// шаблона), поэтому в его теле нет ни обратных кавычек, ни «${».
+test('HTML-шаблон dash — чистый текст: нет «`» и «${» внутри', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts/routehub-dash.js'), 'utf8');
+  const open = src.indexOf('var HTML = `');
+  assert.ok(open >= 0, 'шаблон var HTML не найден');
+  const bodyStart = open + 'var HTML = `'.length;
+  const close = src.indexOf('`;', bodyStart);
+  assert.ok(close > bodyStart, 'конец шаблона не найден');
+  const body = src.slice(bodyStart, close);
+  assert.ok(body.includes('</html>'), 'шаблон закрылся раньше </html>');
+  assert.equal(body.indexOf('${'), -1, 'подстановка ${ внутри шаблона');
+});
