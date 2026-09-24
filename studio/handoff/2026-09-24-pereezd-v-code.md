@@ -33,11 +33,13 @@ RouteHub переезжает из Cowork в облачные сессии Claud
 
 ## Осталось — по порядку
 
-0. **Первой задачей в Code:** снять `disable-model-invocation: true` в
-   `.claude/skills/handoff/SKILL.md` (решение Дианы 24.09 «Handoff — да»).
-   Из Cowork не снято: проверка разрешений отказала дважды (Self-Modification).
-   До этого монитор предлагает Диане команду `/handoff <аргумент>`.
-1. `studio/tasks/T-workflows.md` — первая сессия Code.
+0. ~~Снять `disable-model-invocation: true` в
+   `.claude/skills/handoff/SKILL.md`~~ — **выполнено 24.09** (`c70e72b`).
+1. ~~`studio/tasks/T-workflows.md`~~ — **выполнено 24.09**: PR #5 (`main`) и
+   #6 (`stash-client`) смержены; `tests.yml` зелёный на обеих ветках;
+   `patch-text.yml` — ветка `patch/<run_id>` + PR, тесты до пуша, отказ на
+   неверном фрагменте проверен; хук `guard-prod` в веб-версии спрашивает
+   подтверждение (итог — в `T-workflows.md`).
 2. `studio/tasks/T-private-repo.md`.
 3. Тестировщик первой волны 22.09 — пункты бэклога 14, 41, 43, 44, 52:
    совпадает ли сделанное с запросом, тесты, мутации. Коммиты: 14 —
