@@ -43,8 +43,9 @@ function rewriteRepoLinks(text, origin, tok) {
   return String(text).replace(REPO_LINK_RE, function (m, p) { return inManifest(p) ? base + p : m; });
 }
 
-// Путь из req.url без разбора URL-парсером: он схлопывает «..» и «%2e%2e»,
-// а белый список должен видеть запрос таким, каким он пришёл.
+// Путь из req.url, а не из разобранного url.pathname. req.url уже
+// нормализован средой («\\» → «/», «..» и «%2e%2e» схлопнуты), %-кодирование
+// прочих символов сохраняется; окончательная защита — манифест FILES.
 function rawPath(req) {
   return String(req.url).replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '').split(/[?#]/)[0];
 }

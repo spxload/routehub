@@ -99,6 +99,8 @@ test('/config отдаёт текст конфига, а не JSON с ошибк
     const r = await worker.fetch(get('k1', TOKEN), env);
     assert.equal(r.status, 200);
     assert.match(r.headers.get('Content-Type') || '', /text\/plain/);
+    // В ссылках токен устройства — промежуточным кэшам ответ хранить нельзя.
+    assert.equal(r.headers.get('Cache-Control'), 'no-store');
     const text = await r.text();
     assert.match(text, /\[General\]/);
     assert.match(text, /C-draft-\d+/);

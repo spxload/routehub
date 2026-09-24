@@ -58,7 +58,8 @@ async function handleConfig(url, env, tok) {
   // [Plugin] и др. ссылки на репозиторий — на прокси (repo.js).
   conf = rewriteRepoLinks(conf, url.origin, reg[key].token);
 
-  return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  // no-store: в ссылках токен устройства (как у /repo).
+  return new Response(conf, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
 }
 
 async function handleStatus(url, env, tok) {
