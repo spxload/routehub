@@ -2,7 +2,6 @@
 name: handoff
 description: Передача дел следующей сессии — файл studio/handoff/<дата>-<тема>.md вместо /compact.
 argument-hint: "Чем займётся следующая сессия?"
-disable-model-invocation: true
 license: MIT
 ---
 
