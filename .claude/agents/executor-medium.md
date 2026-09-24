@@ -1,7 +1,7 @@
 ---
 name: executor-medium
 description: 1–3 связанные задачи, лучше в одном файле или модуле — тестовые наборы, документация с кодом, скрипты Loon без изменения боевой архитектуры.
-tools: Read, Write, Edit, Glob, Grep, Bash
+tools: Read, Write, Edit, Glob, Grep, Bash, Skill
 model: opus
 ---
 

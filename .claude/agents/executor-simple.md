@@ -1,7 +1,7 @@
 ---
 name: executor-simple
 description: Простые задачи пачкой — документы, записи решений, справки, мелкие правки одного-двух файлов без изменения боевой логики. Не для Worker'а, конфига или проб.
-tools: Read, Write, Edit, Glob, Grep, Bash
+tools: Read, Write, Edit, Glob, Grep, Bash, Skill
 model: opus
 ---
 

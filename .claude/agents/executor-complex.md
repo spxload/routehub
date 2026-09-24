@@ -1,7 +1,7 @@
 ---
 name: executor-complex
 description: Одна сложная, самостоятельная задача — новая проба, изменение ядра или клиентского слоя Worker'а, архитектурное изменение схемы контуров. Один агент на одну задачу.
-tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch
+tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch, WebSearch, Skill
 model: opus
 ---
 
