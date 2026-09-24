@@ -64,6 +64,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `speedtest-ewma.test.js` | EWMA α=0.2 — вес нового замера, флаг `ewma` |
 | `speedtest-jitter.test.js` | `RTT_SAMPLES=5`, джиттер — усечённый размах |
 | `guard-prod.test.js` | хук правила 5: боевые пути → `ask`, прочие молча; `../`, симлинки, сбой → `ask` |
+| `context-watch.test.js` | монитор контекста: ступени 50/65/80, память ступени, хвост транскрипта, сбой → тишина; SessionStart, PreCompact |
 
 ## scripts/ — код на устройстве (Loon)
 
@@ -136,7 +137,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `ЭТАП_K_SURGE.md` | актуален, в процессе (SG1/3 прогнана) |
 | `ДОКУМЕНТАЦИЯ_LOON_RU.md` | устарел, см. `СВЕРКА_LOON_3.5.md` (перевод 3.3.9, устройство 3.5.0) |
 | `ЭТАП_D_ФОРМУЛА.md` | устарел, см. `ЗАМЕРЫ_И_ВЕСА.md` (веса); версия в тексте v0.4.13, позади v0.7.1 |
-| `СВЕРКА_С_ДОКУМЕНТАЦИЕЙ.md` | архив — ссылается на несуществующий `ПЛАН_РЕАЛИЗАЦИИ_v2.md` |
+| `СВЕРКА_С_ДОКУМЕНТАЦИЕЙ.md` | архив — ссылается на несуществующий `ПЛАН_РЕАЛИЗАЦИИ_v2.md` |
 
 ## docs/archive/ — история, не описание текущего состояния
 
@@ -146,7 +147,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `ДЛЯ_ДИАНЫ_инструкция_и_промпты.md` | вторая инструкция для чатов, расходится с первой |
 | `ИССЛЕДОВАНИЕ_GITHUB.md` | обзор решений GitHub 30.05, исполнено |
 | `МИГРАЦИЯ_НА_WORKERS.md` | план миграции на Workers, выполнено 08.06 |
-| `ОТЧЁТ_ПО_ПРОЕКТУ.md` | ранний отчёт («AI Region Switch») |
+| `ОТЧЁТ_ПО_ПРОЕКТУ.md` | ранний отчёт («AI Region Switch») |
 | `ЭТАП_A_РЕЗУЛЬТАТЫ.md` | промежуточные итоги этапа A, 29.05 |
 | `ЭТАП_B_РЕШЕНИЯ.md` | архитектурные решения этапа B |
 | `ЭТАП_DASH_ПРОГРЕСС.md` | здесь похоронен баг `routehub-rkn.js` |
@@ -169,8 +170,10 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `.claude/skills/handoff/SKILL.md` | скилл: передача дел в `studio/handoff/` вместо `/compact` |
 | `.claude/skills/diagnosing-bugs/SKILL.md` | скилл: диагностика поломки, L10 прежде вывода |
 | `.claude/skills/grill-me/SKILL.md` | скилл: все вопросы одним списком с ответами по умолчанию |
-| `.claude/settings.json` | хук `PreToolUse` на `Edit`/`Write`/`NotebookEdit` |
+| `.claude/skills/context-audit/SKILL.md` | скилл: опись контекста в начале сессии и что отключить под задачу |
+| `.claude/settings.json` | хуки: `PreToolUse` (guard-prod); `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PreCompact` (context-watch) |
 | `.claude/hooks/guard-prod.js` | правка боевого контура → запрос подтверждения (правило 5) |
+| `.claude/hooks/context-watch.js` | монитор контекста → ступени и `/handoff`; аудит при старте; первый ручной `/compact` → блок |
 | `studio/README.md` | порядок работы, роли, экономия лимитов |
 | `studio/tasks/BACKLOG.md` | незакрытые пункты бэклога 1–52 |
 | `studio/tasks/T-private-repo.md` | бриф: приватный репозиторий через прокси Worker'а |
