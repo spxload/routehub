@@ -38,7 +38,7 @@ const TOKEN_REQUIRED_DEFAULT = false;
 
 const SETTINGS_KEY = 'settings';
 
-const WORKER_VER = 'v1.11.1';
+const WORKER_VER = 'v1.12.0';
 
 const TOKEN_LEN = 32;
 
