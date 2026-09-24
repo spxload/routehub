@@ -64,7 +64,6 @@ export function makeEnv(initial, extra) {
     ADMIN_KEY: 'ADMIN-TEST-KEY',
     SUBSCRIPTION_URL: 'https://example.invalid/sub',
     SUB_HWID: 'hwid',
-    CONFIG_URL: 'https://raw.example.invalid/spxload/routehub/main/routehub.conf',
   };
   for (const k in (extra || {})) env[k] = extra[k];
   return env;

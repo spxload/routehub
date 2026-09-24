@@ -20,17 +20,27 @@ compatibility_date = "2026-06-01"
 [triggers]
 crons = ["0 */2 * * *"]
 
+# v1.11.0 (T-private-repo, перенос из main v1.12.0): в сборку как Text
+# вбираются и файлы, которые тянет устройство, — routehub.conf, scripts/*.js,
+# probes/*.js, plugins/*.plugin, plugins/*.stoverride. Список импортов —
+# src/files.js; отдаёт их маршрут /t/<токен>/repo/<путь> (src/repo.js).
+# Префикс **/ обязателен: без него правило не срабатывает (проверено dry-run
+# 24.09 в main). Действует только на статически импортированные файлы:
+# src/*.js под **/scripts/*.js не подпадает. fallthrough = true — правило не
+# отключает встроенные правила Wrangler (Text для *.txt, *.sql и т. д.).
 [[rules]]
 type = "Text"
-globs = ["**/*.html"]
+globs = ["**/*.html", "**/scripts/*.js", "**/probes/*.js", "**/*.plugin", "**/*.stoverride", "**/*.conf"]
+fallthrough = true
 
 [[d1_databases]]
 binding = "RH_DB"
 database_name = "routehub-db"
 database_id = "b03b5540-80aa-43e6-9dce-92bd8e221507"
 
-[vars]
-CONFIG_URL = "https://raw.githubusercontent.com/spxload/routehub/main/routehub.conf"
+# [vars] с CONFIG_URL УБРАН в v1.11.0 (как в main v1.12.0): routehub.conf
+# встроен в сборку, Worker его больше не запрашивает, а база скриптов
+# строится от адреса запроса. Других переменных верхнего уровня нет.
 
 # ───────────────────────────────────────────────────────────────────────────
 # СТЕНД STASH (ADR-01, 2026-08-16). Деплоится из ЭТОЙ ЖЕ ветки командой
@@ -49,23 +59,22 @@ name = "routehub-stash"
 
 [[env.stash.rules]]
 type = "Text"
-globs = ["**/*.html"]
+globs = ["**/*.html", "**/scripts/*.js", "**/probes/*.js", "**/*.plugin", "**/*.stoverride", "**/*.conf"]
+fallthrough = true
 
 [[env.stash.d1_databases]]
 binding = "RH_DB"
 database_name = "routehub-stash-db"
 database_id = "6ba57fd5-c707-410c-a2ea-428156d06f88"
 
-# routehub-stash.yaml ЕЩЁ НЕ СОЗДАН — появится на шаге 4 плана Stash, когда
-# будет ясно, нужен ли стенду свой конфиг. До тех пор запрос конфига стендом
-# вернёт 404; на боевой контур это не влияет.
+# CONFIG_URL (routehub-stash.yaml, так и не созданный) УБРАН в v1.11.0:
+# профиль Stash собирается кодом (usesTemplate = false), а шаблон Loon — из
+# сборки; код ветки переменную больше не читает.
 # CLIENT — развилка клиентского слоя (ADR-01, src/clients/registry.js).
 # На верхнем уровне переменная НЕ задаётся сознательно: её отсутствие, как и
 # неизвестное значение, даёт клиента loon — боевой контур не должен зависеть
-# от наличия строки в этом файле. Помнить: vars окружения НЕ наследуются,
-# поэтому CONFIG_URL здесь повторён целиком.
+# от наличия строки в этом файле. Помнить: vars окружения НЕ наследуются.
 [env.stash.vars]
-CONFIG_URL = "https://raw.githubusercontent.com/spxload/routehub/main/routehub-stash.yaml"
 CLIENT = "stash"
 
 [env.stash.triggers]

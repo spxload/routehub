@@ -2,11 +2,15 @@
 // Эндпоинт /config: сбор контекста и рендер конфига клиентским слоем.
 // Выделен из src/api.js 2026-08-25 (ветка stash-client): файл перешагнул
 // порог 15 КБ. Логика НЕ менялась — только раскладка по файлам.
+// Worker v1.11.0 (перенос T-private-repo из main v1.12.0): шаблон Loon — из
+// сборки (files.js), ссылки на файлы репозитория — на прокси /t/<токен>/repo/.
 // История версий — CHANGELOG.md в корне репозитория.
 
 import { buildAiTiers } from '../ai.js';
 import { pickClient } from '../clients/registry.js';
 import { KEY_RE } from '../const.js';
+import { FILES } from '../files.js';
+import { repoBase, rewriteRepoLinks } from '../repo.js';
 import { ensureFlags, kvGetJSON, kvPutJSON, loadRegistry, tokenGate } from '../store.js';
 import { getSub } from '../sub.js';
 import { confVersion } from '../util.js';
@@ -33,16 +37,14 @@ async function handleConfig(url, env, tok) {
   reg[key].last_config_ts = new Date().toISOString();
 
   // ШАБЛОН НУЖЕН НЕ ВСЕМ. Loon правит готовый routehub.conf из репозитория;
-  // профиль Stash собирается кодом целиком, и файла по CONFIG_URL для него
-  // нет — поход за ним кончился бы 404 и пятисоткой на устройстве.
+  // профиль Stash собирается кодом целиком, шаблона для него нет.
   // Признак объявляет сам клиентский слой (usesTemplate), а не эта функция.
+  const usesTemplate = client.config.usesTemplate !== false;
   let conf = '';
-  if (client.config.usesTemplate !== false) {
-    // Обход кэша: no-store (кэш Workers) + ?t=now (CDN GitHub считает ресурс новым)
-    const cfgUrl = env.CONFIG_URL + (env.CONFIG_URL.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
-    const cr = await fetch(cfgUrl, { headers: { 'User-Agent': 'routehub-worker' }, cache: 'no-store' });
-    if (!cr.ok) throw new Error('config fetch ' + cr.status);
-    conf = await cr.text();
+  if (usesTemplate) {
+    // v1.11.0: шаблон из сборки (files.js), не с GitHub — репозиторий
+    // становится приватным. CONFIG_URL больше не читается.
+    conf = FILES['routehub.conf'];
     const cv = confVersion(conf);
     if (cv && reg[key].conf_ver !== cv) reg[key].conf_ver = cv;
   } else if (client.config.VERSION && reg[key].conf_ver !== client.config.VERSION) {
@@ -68,15 +70,22 @@ async function handleConfig(url, env, tok) {
     dev: reg[key],
     blocks: client.config.aiBlocks(buildAiTiers(masterLines, state)),
     subParams: subParams,
-    scriptBase: env.CONFIG_URL.replace(/[^/]+$/, ''),
+    // Скрипты — через прокси файлов с токеном устройства (repo.js).
+    scriptBase: repoBase(url.origin, reg[key].token),
     // Клиенту, который собирает профиль сам, нужны исходные данные, а не
     // только посчитанные блоки. Loon эти поля игнорирует.
     masterLines: masterLines,
     state: state,
   });
 
+  // [Plugin] и другие прямые ссылки шаблона на spxload/routehub — на прокси.
+  // Профиль Stash собирается кодом и таких ссылок не содержит (сторож —
+  // tests/config.test.js), его выдача здесь не трогается.
+  if (usesTemplate) conf = rewriteRepoLinks(conf, url.origin, reg[key].token);
+
   const ct = client.config.contentType || 'text/plain; charset=utf-8';
-  return new Response(conf, { headers: { 'Content-Type': ct } });
+  // no-store: в ссылках токен устройства (как у /repo) — и у Loon, и у Stash.
+  return new Response(conf, { headers: { 'Content-Type': ct, 'Cache-Control': 'no-store' } });
 }
 
 export { handleConfig };
