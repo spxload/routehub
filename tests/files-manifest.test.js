@@ -89,7 +89,7 @@ test('wrangler.toml: правила Text боевого и стенда один
 
 // Override стенда ссылаются на ветки main И stash-client — обе переписываются.
 test('ссылки на spxload/routehub в конфиге и плагинах ведут только на встроенные файлы', () => {
-  const re = /https:\/\/(?:raw\.githubusercontent\.com\/spxload\/routehub\/(?:main|stash-client)|cdn\.jsdelivr\.net\/gh\/spxload\/routehub@(?:main|stash-client))\/([\w./-]+)/g;
+  const re = /(?:https:\/\/|install-override\/)(?:raw\.githubusercontent\.com\/spxload\/routehub\/(?:main|stash-client)|cdn\.jsdelivr\.net\/gh\/spxload\/routehub@(?:main|stash-client))\/([\w./-]+)/g;
   const bad = [];
   for (const p of Object.keys(FILES)) {
     for (const m of FILES[p].matchAll(re)) if (!Object.prototype.hasOwnProperty.call(FILES, m[1])) bad.push(p + ' -> ' + m[1]);

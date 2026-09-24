@@ -43,7 +43,7 @@ const REPO_RAW_RE = /^\/t\/([A-Za-z0-9]{16,64})\/repo\/(routehub\.conf|(?:script
 // (сторож tests/clients-stash-sets.test.js). Прочие файлы ветки на main-копии
 // не ссылаются. Если main-адресат разойдётся с веткой, стенд отдаст версию
 // ветки — для стенда это и есть рабочая версия.
-const REPO_LINK_RE = /https:\/\/(?:raw\.githubusercontent\.com\/spxload\/routehub\/(?:main|stash-client)|cdn\.jsdelivr\.net\/gh\/spxload\/routehub@(?:main|stash-client))\/([\w./-]+)/g;
+const REPO_LINK_RE = /(https:\/\/link\.stash\.ws\/install-override\/|https:\/\/)(?:raw\.githubusercontent\.com\/spxload\/routehub\/(?:main|stash-client)|cdn\.jsdelivr\.net\/gh\/spxload\/routehub@(?:main|stash-client))\/([\w./-]+)/g;
 
 function inManifest(p) { return Object.prototype.hasOwnProperty.call(FILES, p); }
 
@@ -51,9 +51,15 @@ function repoBase(origin, tok) { return origin + '/t/' + tok + '/repo/'; }
 
 // Переписать ссылки на файлы репозитория в ссылки прокси с токеном tok.
 // Путь вне манифеста не трогается: такой ссылки прокси всё равно не отдаст.
+// Ссылка установки Stash (link.stash.ws/install-override/<хост>/…) несёт адрес
+// БЕЗ схемы — её тоже ведём на прокси, иначе после перевода репозитория в
+// приватный установить override будет неоткуда (замечание тестировщика 24.09).
 function rewriteRepoLinks(text, origin, tok) {
   const base = repoBase(origin, tok);
-  return String(text).replace(REPO_LINK_RE, function (m, p) { return inManifest(p) ? base + p : m; });
+  return String(text).replace(REPO_LINK_RE, function (m, pre, p) {
+    if (!inManifest(p)) return m;
+    return pre === 'https://' ? base + p : pre + base.replace(/^https?:\/\//, '') + p;
+  });
 }
 
 // Путь из req.url, а не из разобранного url.pathname. req.url уже

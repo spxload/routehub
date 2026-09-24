@@ -49,6 +49,9 @@ function expected(disk, tok) {
     for (const pre of ['https://raw.githubusercontent.com/spxload/routehub/main/', 'https://cdn.jsdelivr.net/gh/spxload/routehub@main/',
       'https://raw.githubusercontent.com/spxload/routehub/stash-client/', 'https://cdn.jsdelivr.net/gh/spxload/routehub@stash-client/']) {
       out = out.split(pre + p).join(base + p);
+      // Ссылка установки Stash: тот же адрес без схемы после install-override/.
+      const inst = 'https://link.stash.ws/install-override/';
+      out = out.split(inst + pre.slice('https://'.length) + p).join(inst + base.slice('https://'.length) + p);
     }
   }
   return out;
@@ -238,6 +241,28 @@ test('прокси не пишет в D1', async () => {
 });
 
 // ---------------------------------------------------------------- переписчик
+test('rewriteRepoLinks: ссылка установки Stash ведёт на прокси без схемы', () => {
+  const o = ORIGIN, t = TA, host = o.replace(/^https:\/\//, '');
+  const R = (s) => T.rewriteRepoLinks(s, o, t);
+  assert.equal(R('# https://link.stash.ws/install-override/raw.githubusercontent.com/spxload/routehub/stash-client/plugins/RouteHub-Stash-ST13.stoverride'),
+    '# https://link.stash.ws/install-override/' + host + '/t/' + t + '/repo/plugins/RouteHub-Stash-ST13.stoverride');
+  assert.equal(R('https://link.stash.ws/install-override/cdn.jsdelivr.net/gh/spxload/routehub@main/plugins/RouteHub-Stash.stoverride'),
+    'https://link.stash.ws/install-override/' + host + '/t/' + t + '/repo/plugins/RouteHub-Stash.stoverride');
+  // Вне манифеста и чужой ref — без изменений.
+  for (const keep of [
+    'https://link.stash.ws/install-override/raw.githubusercontent.com/spxload/routehub/main/docs/x.stoverride',
+    'https://link.stash.ws/install-override/raw.githubusercontent.com/spxload/routehub/egern/plugins/RouteHub-Stash.stoverride',
+  ]) assert.equal(R(keep), keep);
+});
+
+test('в отдаваемых override не остаётся ни одной ссылки на spxload', async () => {
+  const env = envTwo();
+  for (const p of Object.keys(FILES).filter((f) => f.endsWith('.stoverride'))) {
+    const body = await (await worker.fetch(get('/repo/' + p, TA), env)).text();
+    assert.ok(!/spxload/.test(body), p + ' всё ещё ссылается на spxload');
+  }
+});
+
 test('rewriteRepoLinks: только spxload/routehub и только пути из манифеста', () => {
   const o = ORIGIN, t = TA, b = o + '/t/' + t + '/repo/';
   const R = (s) => T.rewriteRepoLinks(s, o, t);
@@ -260,10 +285,8 @@ test('rewriteRepoLinks: только spxload/routehub и только пути �
     'https://raw.githubusercontent.com/spxload/routehub/stash/routehub.conf',
     'https://cdn.jsdelivr.net/gh/spxload/routehub@stash-client2/routehub.conf',
     'https://raw.githubusercontent.com/spxload/routehub/main/probes/routehub-probe-dnstime.js',
-    'https://link.stash.ws/install-override/raw.githubusercontent.com/spxload/routehub/stash-client/plugins/RouteHub-Stash-ST13.stoverride',
     'https://raw.githubusercontent.com/spxload/other/main/routehub.conf',
     'https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Loon/Privacy/Privacy.list',
     'https://cdn.jsdelivr.net/gh/Orz-3/mini@master/Color/AI.png',
-    'https://link.stash.ws/install-override/raw.githubusercontent.com/spxload/routehub/main/plugins/RouteHub-Probe.stoverride',
   ]) assert.equal(R(keep), keep, keep);
 });
