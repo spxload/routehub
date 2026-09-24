@@ -166,7 +166,8 @@ test('REPO_RAW_RE: только routehub.conf и одно имя в scripts|prob
   }
   for (const bad of ['docs/a.md', 'scripts/sub/a.js', 'scripts/../a.js', 'scripts/..', 'scripts/.hidden',
     'scripts/a%2e.js', 'scripts%2Fa.js', 'README.md', 'routehub.conf/', 'xrouteHub.conf', 'routehub.confx',
-    'web/routehub-admin.html', 'scripts/', 'scripts/a.js?x', 'scripts/a b.js']) {
+    'web/routehub-admin.html', 'scripts/', 'scripts/a.js?x', 'scripts/a b.js',
+    'Scripts/routehub-dash.js', 'ROUTEHUB.CONF', 'PLUGINS/RouteHub-Dash.plugin']) {
     assert.ok(!T.REPO_RAW_RE.test(t + bad), bad);
   }
   assert.ok(!T.REPO_RAW_RE.test('/t/short/repo/routehub.conf'), 'короткий токен');
