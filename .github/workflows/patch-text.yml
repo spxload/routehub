@@ -1,0 +1,51 @@
+name: Точечная правка текста
+
+# Замена одного фрагмента в текстовом файле репозитория без пересылки файла целиком.
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: 'Путь к файлу'
+        required: true
+      old:
+        description: 'Точный фрагмент (должен встречаться ровно один раз)'
+        required: true
+      new:
+        description: 'Новый фрагмент'
+        required: true
+      message:
+        description: 'Описание правки'
+        required: false
+        default: 'Точечная правка'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Замена
+        env:
+          P: ${{ inputs.path }}
+          OLD: ${{ inputs.old }}
+          NEW: ${{ inputs.new }}
+        run: |
+          python3 - <<'EOF'
+          import os, sys
+          p, old, new = os.environ['P'], os.environ['OLD'], os.environ['NEW']
+          t = open(p, encoding='utf-8').read()
+          c = t.count(old)
+          if c != 1:
+              sys.exit(f'Фрагмент найден {c} раз — нужен ровно 1')
+          open(p, 'w', encoding='utf-8').write(t.replace(old, new))
+          print('OK')
+          EOF
+      - name: Сохранить
+        env:
+          MSG: ${{ inputs.message }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "$MSG" && git push
