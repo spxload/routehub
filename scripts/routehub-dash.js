@@ -19,7 +19,7 @@
 // v0.4.8: кнопка Loon = nsloon-ссылка; убран засев whoosh.bike (+чистка).
 // =============================================================
 
-var VERSION = 'dash v0.8.0';
+var VERSION = 'dash v0.8.1';
 var KEY = 'k1', ORIGIN = 'https://routehub.proton4iker.workers.dev';
 try {
   var a = (typeof $argument !== 'undefined' && $argument) ? String($argument) : '';
@@ -431,7 +431,7 @@ function ageTxt(n){
   return 'скорость '+a+' · пинг '+p;
 }
 
-// v0.8.0: отдача рядом с загрузкой (ADR-05). Поле `up` есть с Worker v1.11.0;
+// v0.8.0: отдача рядом с загрузкой (ADR-05). Поле «up» есть с Worker v1.11.0;
 // нет поля — старый Worker, строка прежняя. Есть, но null — узел ещё не
 // мерялся отдачей (прочерк, а не 0: ноль значит «тело не ушло»).
 // На балл (кольцо) отдача не влияет — только показ.
