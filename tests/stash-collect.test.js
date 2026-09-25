@@ -33,9 +33,18 @@ const SECRET = 'Bearer ОЧЕНЬ-СЕКРЕТНО';
 
 // Служебные группы (v0.2.1, журнал выбора): по умолчанию — штатное
 // состояние, RH-Главный и RH-RU на DIRECT, RH-Обход смотрит на обходной узел.
+// Обёртка S-draft-8 (по умолчанию включена, как в профиле): первым членом
+// пула стоит ручной select RH-АВТО-W-Ручной / -C-Ручной, в нём только
+// рабочие узлы. wrap: false — прежний профиль без ручных групп.
+//   now    — кого выбрал fallback пула (по умолчанию ручную группу);
+//   manual — кого выбрала ручная группа (по умолчанию первый узел);
+//   manualType — поле type ручной группы (null — без поля);
+//   net    — на какого ребёнка смотрят родители: 'wifi' | 'cell'.
+const MAN_W = 'RH-АВТО-W-Ручной', MAN_C = 'RH-АВТО-C-Ручной';
 function proxiesBody(opts = {}) {
   const { tail = '21↓68 / 7↓96', now = null, alive2 = true,
-    main = 'DIRECT', ru = 'DIRECT', byp = null, noMain = false, more = [] } = opts;
+    main = 'DIRECT', ru = 'DIRECT', byp = null, noMain = false, more = [],
+    wrap = true, manual, manualType = 'Selector', net = 'wifi' } = opts;
   const n1 = full(B1, tail), n2 = full(B2, tail), nb = full(BB, tail);
   const service = {
     'RH-Главный': { type: 'Fallback', now: main, all: ['DIRECT', 'RH-АВТО'] },
@@ -51,14 +60,25 @@ function proxiesBody(opts = {}) {
     extraNames.push(nm);
     extra[nm] = { type: 'Vless', alive: x.alive !== false, delay: x.delay || 0 };
   }
+  const t = net === 'cell' ? '-C' : '-W';
+  const workW = [n1, n2, ...extraNames], workC = [n1, n2];
+  const manSel = (all) => {
+    const g = { now: manual !== undefined ? manual : n1, all };
+    if (manualType) g.type = manualType;
+    return g;
+  };
+  const wrapped = wrap ? { [MAN_W]: manSel(workW), [MAN_C]: manSel(workC) } : {};
+  const head = (m) => (wrap ? [m] : []);
+  const poolNow = (m) => now || (wrap ? m : n1);
   return JSON.stringify({
     proxies: {
       ...service,
-      'RH-AI': { type: 'Selector', now: 'RH-AI-W' },
-      'RH-АВТО': { type: 'Selector', now: 'RH-АВТО-W' },
-      'RH-Звонки': { type: 'Selector', now: 'RH-Звонки-W' },
-      'RH-АВТО-W': { type: 'Fallback', now: now || n1, all: [n1, n2, ...extraNames, nb] },
-      'RH-АВТО-C': { type: 'Fallback', now: n1, all: [n1, n2, nb] },
+      'RH-AI': { type: 'Selector', now: 'RH-AI' + t },
+      'RH-АВТО': { type: 'Selector', now: 'RH-АВТО' + t },
+      'RH-Звонки': { type: 'Selector', now: 'RH-Звонки' + t },
+      ...wrapped,
+      'RH-АВТО-W': { type: 'Fallback', now: net === 'wifi' ? poolNow(MAN_W) : (wrap ? MAN_W : n1), all: [...head(MAN_W), ...workW, nb] },
+      'RH-АВТО-C': { type: 'Fallback', now: net === 'cell' ? poolNow(MAN_C) : (wrap ? MAN_C : n1), all: [...head(MAN_C), ...workC, nb] },
       // Живая форма записи узла у Stash 3.4.1 (ST9): одно поле `delay`,
       // истории НЕТ. У второго узла нарочно оставлена `history` — это
       // запасной путь разбора, и он должен оставаться рабочим.
@@ -96,6 +116,7 @@ function run(store, opts = {}) {
     pingMs = 30, loadedMs = 60, downMs = 200,
     main, ru, byp, noMain,    // выбор служебных групп (журнал v0.2.1)
     more,                     // доп. узлы пула (v0.2.2)
+    wrap, manual, manualType, net, // обёртка S-draft-8 (v0.2.3)
   } = opts;
 
   const calls = [];
@@ -113,7 +134,7 @@ function run(store, opts = {}) {
     const ok = (body, ms = 1) => setTimeout(() => cb(null, { status: 200, headers: {} }, body), ms);
     const fail = (ms = 1) => setTimeout(() => cb('нет ответа', null, null), ms);
 
-    if (url.indexOf('/proxies') >= 0) return ctlSilent ? fail() : ok(proxiesBody({ tail, now, alive2, main, ru, byp, noMain, more }));
+    if (url.indexOf('/proxies') >= 0) return ctlSilent ? fail() : ok(proxiesBody({ tail, now, alive2, main, ru, byp, noMain, more, wrap, manual, manualType, net }));
     if (url.indexOf('/connections') >= 0) return ctlSilent ? fail() : ok(connBody(tail));
     if (url.indexOf('ipify') >= 0) {
       if (pin === 'dead' && pinName) return fail();
@@ -374,7 +395,7 @@ test('RH-Главный ушёл с DIRECT: тревога ПЕРВОЙ стро
   const head = reportLines(r)[0];
   assert.ok(head.indexOf('⚠ ТРЕВОГА') === 0, 'тревога не первой строкой: ' + head);
   assert.ok(head.indexOf('RH-Главный не на DIRECT') >= 0, head);
-  assert.ok(head.indexOf('RH-Главный → RH-АВТО → RH-АВТО-W → ' + B1) >= 0, 'цепочка не раскрыта: ' + head);
+  assert.ok(head.indexOf('RH-Главный → RH-АВТО → RH-АВТО-W → RH-АВТО-W-Ручной → ' + B1) >= 0, 'цепочка не раскрыта: ' + head);
   assert.equal(lastLog(store).sel, head);
   assert.equal(lastLog(store).g['RH-Главный'], 'RH-АВТО');
 });
@@ -665,4 +686,110 @@ test('сводки v0.2.2 не порождают запросов и не тр�
   for (const it of body.wifi) {
     for (const k of Object.keys(it)) assert.ok(allowed.indexOf(k) >= 0, 'в /speed ушло новое поле ' + k);
   }
+});
+
+// ── v0.2.3: ОБЁРТКА S-draft-8 — РУЧНАЯ ГРУППА ПЕРВЫМ ЧЛЕНОМ ПУЛА ───────
+// now пула теперь обычно ИМЯ РУЧНОЙ ГРУППЫ, а не узла. Проверка «обходной
+// ли выбран» по имени группы отвечала бы «рабочий» всегда — решает конец
+// цепочки до узла. Ручная группа — не узел: в пул, пиновку и выгрузку она
+// попасть не должна.
+const ipifyCalls = (r) => r.calls.filter((c) => c.url.indexOf('ipify') >= 0);
+const poolLine = (r) => r.state.logs.find((s) => s.indexOf('пул RH-АВТО-') >= 0) || '';
+
+test('обёртка: пул через ручную группу — рабочий узел, в пуле только узлы', async () => {
+  const store = makeStore();
+  const r1 = await settle(run(store, { pin: 'works' }));
+  assert.ok(poolLine(r1).indexOf('пул RH-АВТО-W: 2 узлов, выбран рабочий узел (через RH-АВТО-W-Ручной)') >= 0,
+    'сеть, пул или решение по цепочке прочитаны неверно: ' + poolLine(r1));
+  assert.ok(ipifyCalls(r1).length > 0, 'самопроверка не пошла при рабочем узле за ручной группой');
+  const r2 = await settle(run(store, { pin: 'works' }));
+  assert.equal(downloads(r2).length, 2, 'мерить надо оба рабочих узла');
+  for (const r of [r1, r2]) {
+    for (const c of r.calls) {
+      assert.ok(!c.pin || c.pin.indexOf('Ручной') < 0, 'ручная группа запинована как узел: ' + c.pin);
+      assert.ok(c.url.indexOf(encodeURIComponent('Ручной')) < 0 && c.url.indexOf('Ручной') < 0,
+        'ручная группа в адресе запроса: ' + c.url);
+    }
+  }
+  assert.deepEqual(r2.state.post.body.wifi.map((x) => x.name).sort(), [B1, B2].sort());
+  assert.ok(!('RH-АВТО-W-Ручной' in JSON.parse(store['rh_stash_wifi'])), 'ручная группа попала в кэш');
+  assert.ok(reportLines(r2)[0].indexOf('выбор штатный') === 0, reportLines(r2)[0]);
+});
+
+test('обёртка: fallback пула ушёл с ручной группы на обход — ни проверки, ни замера', async () => {
+  const r = await settle(run(makeStore(), { pin: 'works', now: full(BB, '21↓68 / 7↓96') }));
+  assert.equal(ipifyCalls(r).length, 0, 'самопроверка при выбранном обходном узле');
+  assert.equal(downloads(r).length, 0);
+  assert.ok(poolLine(r).indexOf('ОБХОДНОЙ или неизвестно') >= 0, poolLine(r));
+  assert.ok(!bypassTouched(r), 'обходной узел задет запросом');
+  // Уход fallback на обход — штатный последний резерв, а не расхождение с
+  // профилем: тревоги о ручной группе здесь быть не должно.
+  assert.ok(reportLines(r)[0].indexOf('выбор штатный') === 0, reportLines(r)[0]);
+});
+
+test('обёртка: ручная группа на обходном узле (подставной контроллер) — тревога, а не «рабочий»', async () => {
+  const store = makeStore();
+  const nb = full(BB, '21↓68 / 7↓96');
+  await settle(run(store, { pin: 'works' }));                     // вердикт копится
+  const r = await settle(run(store, { pin: 'works', manual: nb }));
+  assert.equal(ipifyCalls(r).length, 0, 'самопроверка при обходном узле за ручной группой');
+  assert.equal(downloads(r).length, 0, 'закачка при обходном узле за ручной группой');
+  assert.ok(!bypassTouched(r), 'обходной узел задет запросом');
+  assert.ok(poolLine(r).indexOf('ОБХОДНОЙ или неизвестно') >= 0, 'назван рабочим: ' + poolLine(r));
+  const head = reportLines(r)[0];
+  assert.ok(head.indexOf('⚠ ТРЕВОГА') === 0, 'тревоги нет первой строкой: ' + head);
+  assert.ok(head.indexOf('ручная группа RH-АВТО-W-Ручной на обходном узле') >= 0, head);
+  assert.ok(head.indexOf('RH-АВТО-W → RH-АВТО-W-Ручной → ' + BB) >= 0, 'цепочка не раскрыта: ' + head);
+  assert.equal(lastLog(store).sel, head, 'тревога не попала в хранимый журнал');
+});
+
+test('обёртка: тревога ручной группы дописывается к тревоге RH-Главный, а не затирает её', async () => {
+  const nb = full(BB, '21↓68 / 7↓96');
+  const r = await settle(run(makeStore(), { pin: 'works', manual: nb, main: 'RH-АВТО' }));
+  const head = reportLines(r)[0];
+  assert.ok(head.indexOf('⚠ ТРЕВОГА ВЫБОРА: RH-Главный не на DIRECT') === 0, head);
+  assert.ok(head.indexOf('; ручная группа RH-АВТО-W-Ручной на обходном узле') >= 0, head);
+});
+
+test('обёртка: у ручной группы пусто now (с типом и без) — выбор неизвестен, фазы нет', async () => {
+  for (const manualType of ['Selector', null]) {
+    const store = makeStore();
+    store['rh_stash_pin'] = JSON.stringify({ ok: true, firm: true, streak: 2, why: 'тест', ts: Date.now() });
+    const r = await settle(run(store, { pin: 'works', manual: '', manualType }));
+    assert.equal(ipifyCalls(r).length, 0, 'тип ' + manualType + ': самопроверка при неизвестном выборе');
+    assert.equal(downloads(r).length, 0, 'тип ' + manualType + ': закачка при неизвестном выборе');
+    assert.ok(poolLine(r).indexOf('ОБХОДНОЙ или неизвестно') >= 0, 'тип ' + manualType + ': ' + poolLine(r));
+  }
+});
+
+test('конец цепочки, которого нет в /proxies, — выбор неизвестен, фазы нет (отсутствие ≠ рабочий)', async () => {
+  const ghost = full('🇸🇪 Швеция [VPN] 09', '21↓68 / 7↓96');   // в ответе /proxies записи нет
+  for (const o of [{ manual: ghost }, { wrap: false, now: ghost }]) {
+    const store = makeStore();
+    store['rh_stash_pin'] = JSON.stringify({ ok: true, firm: true, streak: 2, why: 'тест', ts: Date.now() });
+    const r = await settle(run(store, { pin: 'works', ...o }));
+    const tag = JSON.stringify(Object.keys(o));
+    assert.equal(ipifyCalls(r).length, 0, tag + ': самопроверка при неизвестном узле');
+    assert.equal(downloads(r).length, 0, tag + ': закачка при неизвестном узле');
+    assert.ok(poolLine(r).indexOf('ОБХОДНОЙ или неизвестно') >= 0, tag + ': ' + poolLine(r));
+  }
+});
+
+test('обёртка на сотовой: сеть cell, пул RH-АВТО-C через свою ручную группу', async () => {
+  const store = makeStore();
+  await settle(run(store, { pin: 'works', net: 'cell' }));
+  const r = await settle(run(store, { pin: 'works', net: 'cell' }));
+  assert.ok(poolLine(r).indexOf('сеть cell, пул RH-АВТО-C: 2 узлов, выбран рабочий узел (через RH-АВТО-C-Ручной)') >= 0,
+    poolLine(r));
+  assert.deepEqual(r.state.post.body.cell.map((x) => x.name).sort(), [B1, B2].sort());
+  assert.equal(r.state.post.body.wifi.length, 0, 'Wi-Fi слот заполнен на сотовой');
+});
+
+test('без обёртки (профиль до S-draft-8) сборщик работает по-прежнему', async () => {
+  const store = makeStore();
+  await settle(run(store, { pin: 'works', wrap: false }));
+  const r = await settle(run(store, { pin: 'works', wrap: false }));
+  assert.ok(poolLine(r).indexOf('пул RH-АВТО-W: 2 узлов, выбран рабочий узел') >= 0, poolLine(r));
+  assert.ok(poolLine(r).indexOf('через') < 0, poolLine(r));
+  assert.equal(downloads(r).length, 2);
 });

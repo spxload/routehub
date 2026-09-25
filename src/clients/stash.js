@@ -6,10 +6,14 @@
 // выдача `proxies:` для поставщика прокси (см. nodeSet ниже). Каркас профиля
 // (режим, DNS, поставщик, правила) — clients/stash-profile.js.
 //
-// СХЕМА (ADR-02_ГРУППЫ_STASH.md, вариант В). На каждую функцию — три группы:
-//   RH-X-W  fallback, узлы в порядке композитного балла Wi-Fi
-//   RH-X-C  fallback, ТЕ ЖЕ узлы в порядке балла сотовой
-//   RH-X    select, дети [RH-X-W, RH-X-C] + ssid-policy {cellular, default}
+// СХЕМА (ADR-02_ГРУППЫ_STASH.md, вариант В + обёртка S-draft-8). На каждую
+// функцию — пять групп:
+//   RH-X          select, дети [RH-X-W, RH-X-C] + ssid-policy {cellular, default}
+//   RH-X-W-Ручной select, рабочие узлы в порядке балла Wi-Fi, БЕЗ обхода
+//   RH-X-W        fallback: [RH-X-W-Ручной, узлы в порядке балла Wi-Fi, обход]
+//   RH-X-C-Ручной select, то же по баллу сотовой
+//   RH-X-C        fallback: [RH-X-C-Ручной, ТЕ ЖЕ узлы по баллу сотовой, обход]
+// Ручная группа, её состав и граничные случаи — clients/stash-manual.js.
 // Узел описан ровно один раз; два набора имён, как в Loon, больше не нужны.
 // Переключение по сети делает сам Stash через ssid-policy, поэтому
 // scripts/routehub-netwatch.js в контур Stash НЕ переносится и в выдаче
@@ -27,6 +31,7 @@
 
 import { buildAiTiers } from '../ai.js';
 import { parseNodeLink } from './stash-nodes.js';
+import { netPair, workingOnly } from './stash-manual.js';
 import { aiRanker, collect, orderNames, rankAuto, rankCall } from './stash-order.js';
 import { nodeToYaml, nodesToYaml } from './stash-yaml.js';
 
@@ -183,23 +188,35 @@ function renderNodes(masterLines, state, opts) {
 // в `fallback`, см. clients/stash-profile.js).
 const GROUP_INTERVAL = 600;
 
-function childGroup(name, names, membership, provider) {
-  const g = { name: name, type: 'fallback', interval: GROUP_INTERVAL };
-  if (membership === 'provider') { g.use = [provider]; g.filter = nameFilter(names); }
-  else g.proxies = names;
+// head — группы перед узлами (ручная, см. clients/stash-manual.js); в форме
+// (Б) они идут явным `proxies:` рядом с use + filter.
+function withMembers(g, names, membership, provider, head) {
+  if (membership === 'provider') {
+    if (head && head.length) g.proxies = head;
+    g.use = [provider]; g.filter = nameFilter(names);
+  } else g.proxies = (head || []).concat(names);
   return g;
+}
+
+function childGroup(name, names, membership, provider, head) {
+  return withMembers({ name: name, type: 'fallback', interval: GROUP_INTERVAL }, names, membership, provider, head);
 }
 
 // ── СБОРКА ───────────────────────────────────────────────────────────
 // opts: { membership: 'proxies' | 'provider', provider: <имя>, label: bool }
-// Возвращает массив объектов групп в порядке: родитель, -W, -C — по каждой
-// функции. Так же они идут в routehub.conf, и так же читаются глазами.
+// Возвращает массив объектов групп в порядке: родитель, -W-Ручной, -W,
+// -C-Ручной, -C — по каждой функции. Родитель, -W, -C идут так же, как в
+// routehub.conf; ручная группа — перед своим fallback, как в пробе ST19.
 
 function buildGroups(masterLines, state, opts) {
   const o = opts || {};
   const membership = o.membership === 'provider' ? 'provider' : 'proxies';
   const provider = o.provider || PROVIDER;
   const col = nodeSet(masterLines, state, o);
+  // Форма членства замкнута здесь: clients/stash-manual.js получает её
+  // функциями, а не импортом (обратный импорт дал бы цикл модулей).
+  const fill = function (g, names) { return withMembers(g, names, membership, provider); };
+  const child = function (name, names, head) { return childGroup(name, names, membership, provider, head); };
   const specs = [
     { name: 'RH-AI', rank: aiRanker(buildAiTiers(masterLines || [], state || {})) },
     { name: 'RH-АВТО', rank: rankAuto },
@@ -214,8 +231,12 @@ function buildGroups(masterLines, state, opts) {
       proxies: [w, c],
       'ssid-policy': { cellular: c, default: w },
     });
-    out.push(childGroup(w, orderNames(col.items, 'w', col.maxW, sp.rank), membership, provider));
-    out.push(childGroup(c, orderNames(col.items, 'c', col.maxC, sp.rank), membership, provider));
+    const work = workingOnly(sp.rank);
+    [['w', w, col.maxW], ['c', c, col.maxC]].forEach(function (x) {
+      netPair(x[1], orderNames(col.items, x[0], x[2], sp.rank),
+        orderNames(col.items, x[0], x[2], work), fill, child)
+        .forEach(function (g) { out.push(g); });
+    });
   });
   return out;
 }
@@ -237,3 +258,4 @@ function renderGroups(masterLines, state, opts) {
 
 export { BENCH_TIMEOUT, BENCH_TIMEOUT_BYPASS, BENCH_URL, GROUP_INTERVAL, PROVIDER, buildGroups, childGroup, contentType, nameFilter, nodeSet, renderGroups, renderNodes };
 export { nodeLabel } from './stash-order.js';
+export { MANUAL_SUFFIX, manualName } from './stash-manual.js';

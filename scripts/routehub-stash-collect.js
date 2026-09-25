@@ -1,11 +1,25 @@
 // =============================================================
 // routehub-stash-collect.js — RouteHub, сборщик метрик узлов для Stash
-var VERSION = 'stash-collect v0.2.2 (2026-09-22)';
+var VERSION = 'stash-collect v0.2.3 (2026-09-25)';
 //
 // Тип: cron (каждые 20 мин). Аргумент: "<key>|<origin>|<opts>" —
 // та же форма, что у routehub-speedtest.js в Loon. `origin` включает префикс
 // токена целиком, если он нужен: <origin>/t/<токен>; дальше скрипт добавляет
 // /speed. Валидность проверяется до первого сетевого вызова.
+//
+// v0.2.3 — под обёртку профиля S-draft-8: первым членом RH-АВТО-W/-C стоит
+//   ручной select RH-АВТО-W-Ручной / -C-Ручной (src/clients/stash-manual.js).
+//   * ВТОРОЙ РУБЕЖ ПРАВИЛА 1 — ПО КОНЦУ ЦЕПОЧКИ. now пула теперь обычно имя
+//     ручной группы, а не узла, и проверка «не обход ли это» по имени
+//     группы всегда отвечала бы «рабочий». Решение принимается по chainOf
+//     до узла: обходной узел в конце, группа в конце (пустое now, петля,
+//     глубина), конец, которого нет в /proxies, или пустая цепочка —
+//     «не рабочий», активной фазы нет.
+//   * Ручная группа на обходном узле (по составу профиля невозможно, но
+//     ответ контроллера нам не подконтролен) — тревога первой строкой.
+//   * Ручная группа в пул замеров не входит: отсекается по имени (MANUAL)
+//     до прочих фильтров. Это второй слой — её отсекли бы и looksLikeNode
+//     (в имени нет «[»), и isGroup. Ни одного нового запроса (правила 1, 2).
 //
 // v0.2.2 — доля потерь ядра и сравнение delay ядра с нашим rtt. Оба пункта
 //   закрывают хвосты ADR-04 (§6.7 п. 3 и §7 п. 2). Оба — ВЫЧИСЛЕНИЯ НАД
@@ -118,7 +132,8 @@ var VERSION = 'stash-collect v0.2.2 (2026-09-22)';
 //      запрос без действующей пиновки уходит по текущей политике, а
 //      последний запас fallback — как раз обходной узел. Поэтому и
 //      самопроверка, и активная фаза запускаются, только если пул ПРЯМО
-//      СЕЙЧАС смотрит на необходной узел (поле now у группы -W/-C).
+//      СЕЙЧАС смотрит на необходной узел (цепочка now от группы -W/-C
+//      до узла, v0.2.3: через ручную группу S-draft-8).
 // ПРАВИЛО 2 (диагностика не пишет в боевую маршрутизацию): к контроллеру
 // идут только GET. PUT /proxies/{имя} и PATCH /configs в этом файле нет и
 // быть не должно; тест tests/stash-collect.test.js роняет прогон, если они
@@ -219,6 +234,10 @@ var G_BYP = 'RH-Обход';
 var DIRECT = 'DIRECT';
 var POOL_W = 'RH-АВТО-W';
 var POOL_C = 'RH-АВТО-C';
+// Суффикс ручной группы (S-draft-8): RH-АВТО-W-Ручной — первый член пула.
+// Та же строка, что MANUAL_SUFFIX в src/clients/stash-manual.js; сцепку
+// держит tests/stash-collect-coupling.test.js.
+var MANUAL = '-Ручной';
 var BYPASS = 'Обход';
 var METRIC_SEP = ' · ';
 
@@ -269,7 +288,14 @@ function baseName(n) {
   return (i >= 0 ? s.slice(0, i) : s).replace(/^\s+|\s+$/g, '');
 }
 function isBypass(name) { return String(name).indexOf(BYPASS) >= 0; }
+function isManual(name) { var s = String(name); return s.length > MANUAL.length && s.slice(-MANUAL.length) === MANUAL; }
 function looksLikeNode(n) { return typeof n === 'string' && n.length >= 5 && n.indexOf('[') >= 0; }
+// Запись группы, даже если тип не распознан: у узла Stash (ST9) нет ни now,
+// ни all. Нужна там, где ошибка в сторону «узел» пропустила бы обход.
+function groupLike(p) {
+  return !!p && (isGroup(p) || p.all !== undefined || p.All !== undefined ||
+    p.now !== undefined || p.Now !== undefined);
+}
 function isGroup(p) {
   var t = String((p && (p.type || p.Type)) || '').toLowerCase();
   return t === 'selector' || t === 'fallback' || t === 'urltest' || t === 'url-test' ||
@@ -467,13 +493,30 @@ function stepInventory(next) {
     // ВТОРОЙ РУБЕЖ ПРАВИЛА 1. Если пиновка молча не работает, запрос уходит
     // по текущей политике. Поэтому спрашиваем ядро, кого политика выбрала
     // прямо сейчас: обходной — активной фазы не будет.
-    var nowNode = String(g.now || g.Now || '');
-    NOW_OK = !!nowNode && !isBypass(nowNode);
+    // v0.2.3: now пула — обычно ручная группа (S-draft-8), поэтому решает
+    // КОНЕЦ цепочки до узла, а не имя первого звена. Конец, который сам
+    // группа (пустое now, петля, предел глубины) или которого нет в
+    // /proxies вовсе, — выбор неизвестен: отсутствие записи не читается как
+    // «рабочий узел».
+    var chain = chainOf(MAP, poolName);
+    var nowNode = chain.length ? chain[chain.length - 1] : '';
+    var endP = MAP[nowNode];
+    NOW_OK = !!nowNode && !isBypass(nowNode) && !!endP && !groupLike(endP);
+    var viaMan = isManual(chain[0] || '');
+    if (viaMan && isBypass(nowNode)) {
+      // По составу профиля невозможно: в ручной группе обходных узлов нет.
+      // Значит ответ контроллера не совпадает с профилем — это тревога, а
+      // не «рабочий»: трафик функции идёт по платному узлу.
+      var msg = 'ручная группа ' + chain[0] + ' на обходном узле: ' +
+        [poolName].concat(chain).join(' → ') + ' (ОБХОД, платный трафик)';
+      SEL_HEAD = (SEL_HEAD.indexOf('⚠') === 0) ? (SEL_HEAD + '; ' + msg) : ('⚠ ТРЕВОГА ВЫБОРА: ' + msg);
+    }
 
     var members = (g.all || g.All) || [];
     for (var m = 0; m < members.length; m++) {
       var nm = members[m];
       if (!nm || isBypass(nm)) continue;      // первый рубеж, до любого вызова
+      if (isManual(nm)) continue;             // ручная группа — не узел (v0.2.3)
       if (!looksLikeNode(nm)) continue;       // служебные члены (DIRECT и пр.)
       var p2 = MAP[nm];
       if (!p2 || isGroup(p2)) continue;
@@ -490,7 +533,8 @@ function stepInventory(next) {
     }
     if (!POOL.length) { FATAL = 'пул ' + poolName + ' пуст'; next(); return; }
     say('сеть ' + NET + ', пул ' + poolName + ': ' + POOL.length + ' узлов, выбран ' +
-      (NOW_OK ? 'рабочий' : 'ОБХОДНОЙ или неизвестно') + ' узел');
+      (NOW_OK ? 'рабочий' : 'ОБХОДНОЙ или неизвестно') + ' узел' +
+      (viaMan ? ' (через ' + chain[0] + ')' : ''));
     next();
   });
 }

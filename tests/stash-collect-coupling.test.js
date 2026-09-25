@@ -51,6 +51,7 @@ const C = {
   G_MAIN: strConst('G_MAIN'),
   G_RU: strConst('G_RU'),
   G_BYP: strConst('G_BYP'),
+  MANUAL: strConst('MANUAL'),
 };
 
 // ── Профиль на подставной подписке ───────────────────────────────────
@@ -102,8 +103,12 @@ test('пул сборщика — существующие группы, и он
   assert.equal(GROUPS[parent]['ssid-policy'].cellular, C.POOL_C);
 });
 
+// Члены пула, которые сборщик считает узлами: ручную группу (S-draft-8) он
+// отсекает по суффиксу MANUAL — та же проверка, что isManual в сборщике.
+const poolNodes = (name) => GROUPS[name].proxies.filter((n) => !(n.length > C.MANUAL.length && n.endsWith(C.MANUAL)));
+
 test('обходной узел опознаётся пометкой, которую ищет сборщик (правило 1)', () => {
-  const members = GROUPS[C.POOL_W].proxies;
+  const members = poolNodes(C.POOL_W);
   const byp = members.filter((n) => n.indexOf(C.BYPASS) >= 0);
   assert.equal(byp.length, 1, 'пометка «' + C.BYPASS + '» не находит обходной узел в профиле');
   // И обратно: рабочие узлы под неё не подпадают, иначе сборщик выбросил бы
@@ -115,8 +120,33 @@ test('члены пула проходят фильтр looksLikeNode сборщ
   // Сборщик отбрасывает членов без скобки в имени: так отсеиваются служебные
   // политики. Если провайдер однажды сменит формат имён, пул опустеет.
   const re = /\[/;
-  for (const n of GROUPS[C.POOL_W].proxies) {
+  const nodes = poolNodes(C.POOL_W);
+  assert.equal(nodes.length, GROUPS[C.POOL_W].proxies.length - 1, 'суффикс MANUAL отсёк не одну ручную группу');
+  for (const n of nodes) {
     assert.ok(n.length >= 5 && re.test(n), 'член пула не пройдёт фильтр сборщика: ' + n);
+  }
+});
+
+test('обёртка S-draft-8: имя ручной группы сборщика — из той же константы, что у рендерера', () => {
+  // Разойдись суффикс — сборщик перестал бы узнавать ручную группу: решение
+  // по цепочке осталось бы верным, но отсечение из пула и строка отчёта
+  // «через …-Ручной» молча пропали бы.
+  assert.equal(C.MANUAL, T.STASH.MANUAL_SUFFIX, 'суффикс ручной группы у сборщика и рендерера разошёлся');
+  for (const pool of [C.POOL_W, C.POOL_C]) {
+    const man = pool + C.MANUAL;
+    assert.equal(T.STASH.manualName(pool), man);
+    assert.ok(GROUPS[man], 'рендерер не строит ручную группу ' + man);
+    assert.equal(GROUPS[man].type, 'select');
+    assert.equal(GROUPS[pool].proxies[0], man, 'ручная группа не первый член ' + pool);
+    // Ручная группа не должна выглядеть узлом ни для одного фильтра сборщика.
+    assert.ok(man.indexOf('[') < 0 && man.indexOf(C.BYPASS) < 0, 'имя ручной группы похоже на узел или обход');
+    // Хвост -W/-C у самого пула сохранён: по нему сборщик читает сеть.
+    assert.ok(/-[WC]$/.test(pool));
+  }
+  // Родители по-прежнему смотрят на fallback, а не на ручную группу.
+  for (const p of C.PARENTS) {
+    const sp = GROUPS[p]['ssid-policy'];
+    assert.ok(!sp.default.endsWith(C.MANUAL) && !sp.cellular.endsWith(C.MANUAL), p + ' смотрит на ручную группу');
   }
 });
 
