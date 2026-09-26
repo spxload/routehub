@@ -14,6 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { T, worker, req, DE, NL, US, KZ } from './harness.js';
 import { makeEnv, nodeLine } from './mock-d1.js';
+import { orderNames, rankAuto } from '../src/clients/stash-order.js';
 
 assert.equal(typeof T.STASH.buildGroups, 'function', 'неймспейс STASH пропал из __test');
 assert.equal(typeof T.CLIENTS.pickClient, 'function', 'неймспейс CLIENTS пропал из __test');
@@ -51,13 +52,19 @@ function groups(opts) {
   return out;
 }
 
-test('на каждую функцию три группы: родитель select и пара fallback', () => {
+// Узлы fallback-группы без ручной группы, стоящей первым членом (S-draft-8).
+function nodesOf(g, name) {
+  const p = g[name].proxies;
+  assert.equal(p[0], S.manualName(name), name + ': первым членом не ручная группа');
+  return p.slice(1);
+}
+
+test('на каждую функцию пять групп: родитель, ручная и fallback на каждую сеть', () => {
   const list = S.buildGroups(LINES, STATE);
-  assert.deepEqual(list.map(function (g) { return g.name; }), [
-    'RH-AI', 'RH-AI-W', 'RH-AI-C',
-    'RH-АВТО', 'RH-АВТО-W', 'RH-АВТО-C',
-    'RH-Звонки', 'RH-Звонки-W', 'RH-Звонки-C',
-  ]);
+  const fns = ['RH-AI', 'RH-АВТО', 'RH-Звонки'];
+  assert.deepEqual(list.map(function (g) { return g.name; }), [].concat.apply([], fns.map(function (n) {
+    return [n, n + '-W-Ручной', n + '-W', n + '-C-Ручной', n + '-C'];
+  })));
   list.forEach(function (g) {
     assert.equal(g.type, /-[WC]$/.test(g.name) ? 'fallback' : 'select');
   });
@@ -76,18 +83,18 @@ test('ssid-policy у родителя задан обоими зарезерви
 test('порядок в -W и -C разный, состав одинаковый', () => {
   const g = groups();
   ['RH-AI', 'RH-АВТО', 'RH-Звонки'].forEach(function (n) {
-    const w = g[n + '-W'].proxies, c = g[n + '-C'].proxies;
+    const w = nodesOf(g, n + '-W'), c = nodesOf(g, n + '-C');
     assert.deepEqual(w.slice().sort(), c.slice().sort(), n + ': состав пары разошёлся');
     assert.notDeepEqual(w, c, n + ': порядок в -W и -C совпал');
   });
   // Конкретно: по Wi-Fi выше Германия #1, по сотовой — Германия #2.
-  const w = g['RH-АВТО-W'].proxies, c = g['RH-АВТО-C'].proxies;
+  const w = nodesOf(g, 'RH-АВТО-W'), c = nodesOf(g, 'RH-АВТО-C');
   assert.ok(w[0].indexOf('Германия #1') >= 0, 'Wi-Fi: первым не Германия #1');
   assert.ok(c[0].indexOf('Германия #2') >= 0, 'сотовая: первым не Германия #2');
 });
 
 test('каскад RH-АВТО: регион, потом игры, потом обход', () => {
-  const p = groups()['RH-АВТО-W'].proxies;
+  const p = nodesOf(groups(), 'RH-АВТО-W');
   const at = function (s) { return p.findIndex(function (n) { return n.indexOf(s) >= 0; }); };
   assert.ok(at('Германия') < at('США'), 'Европа должна стоять выше Америки');
   assert.ok(at('США') < at('Казахстан'), 'Америка должна стоять выше СНГ');
@@ -97,7 +104,7 @@ test('каскад RH-АВТО: регион, потом игры, потом о
 });
 
 test('RH-AI: СНГ и игровые исключены, обходной последний', () => {
-  const p = groups()['RH-AI-W'].proxies;
+  const p = nodesOf(groups(), 'RH-AI-W');
   assert.ok(!p.some(function (n) { return n.indexOf('Казахстан') >= 0; }), 'СНГ попал в AI');
   assert.ok(!p.some(function (n) { return n.indexOf('[Игры]') >= 0; }), 'игровой узел попал в AI');
   assert.ok(p[p.length - 1].indexOf('[Обход]') >= 0, 'обходной узел не последний');
@@ -105,7 +112,7 @@ test('RH-AI: СНГ и игровые исключены, обходной по�
 });
 
 test('RH-Звонки: годные для голоса выше остальных', () => {
-  const p = groups()['RH-Звонки-W'].proxies;
+  const p = nodesOf(groups(), 'RH-Звонки-W');
   const at = function (s) { return p.findIndex(function (n) { return n.indexOf(s) >= 0; }); };
   // Германия #2 по Wi-Fi имеет jit 20 / bl 40 / rtt 150 — голосовой маркер
   // ей не положен, а Нидерландам положен.
@@ -133,13 +140,132 @@ test('метку можно выключить одним флагом', () => {
 test('форма членства (Б): use + filter вместо явных имён', () => {
   const g = S.buildGroups(LINES, STATE, { membership: 'provider', provider: 'RH-Sub' })
     .find(function (x) { return x.name === 'RH-АВТО-W'; });
-  assert.equal(g.proxies, undefined, 'в форме (Б) явных имён быть не должно');
+  // Явно — только ручная группа (S-draft-8): её имени у поставщика нет.
+  assert.deepEqual(g.proxies, ['RH-АВТО-W-Ручной'], 'в форме (Б) явных имён узлов быть не должно');
   assert.deepEqual(g.use, ['RH-Sub']);
   const re = new RegExp(g.filter);
   assert.ok(re.test(NAMES.byp), 'filter не ловит имя своего узла');
   assert.ok(!re.test('чужой узел'), 'filter ловит постороннее имя');
   // Спецсимволы имени ([VPN], #) экранируются, а не работают как регексп.
   assert.ok(!re.test('xVPNx Германия #1'), 'скобки имени не экранированы');
+});
+
+// ── S-draft-8: ОБЁРТКА — РУЧНАЯ ГРУППА ПЕРВЫМ ЧЛЕНОМ FALLBACK ─────────
+// Решение Дианы 25.09 по пробе ST19: узел функции выбирается руками в
+// select «-Ручной», fallback пропускает его, когда выбранный узел мёртв.
+// Сторожим: в ручной группе нет обхода (выбрать платный узел руками нельзя),
+// её порядок — порядок рабочих узлов fallback (пока никто не выбирал,
+// поведение прежнее), она первая в fallback, обход — последним.
+const CHILDREN = ['RH-AI-W', 'RH-AI-C', 'RH-АВТО-W', 'RH-АВТО-C', 'RH-Звонки-W', 'RH-Звонки-C'];
+const isByp = function (n) { return T.tagOf(n) === 'bypass' || n.indexOf(T.BYPASS_WORD) >= 0; };
+
+test('ручная группа: select без единого обходного узла, у всех шести детей', () => {
+  const g = groups();
+  CHILDREN.forEach(function (name) {
+    const man = g[S.manualName(name)];
+    assert.ok(man, 'нет ручной группы у ' + name);
+    assert.equal(man.type, 'select');
+    assert.equal(man.interval, undefined, 'у select интервала замера быть не должно');
+    assert.ok(man.proxies.length > 0, name + ': ручная группа пуста');
+    assert.ok(!man.proxies.some(isByp), name + ': в ручной группе обходной узел: ' + JSON.stringify(man.proxies));
+  });
+});
+
+test('ручная группа: порядок = порядок рабочих узлов fallback, первым — лучший по баллу', () => {
+  const g = groups();
+  CHILDREN.forEach(function (name) {
+    const work = nodesOf(g, name).filter(function (n) { return !isByp(n); });
+    assert.deepEqual(g[S.manualName(name)].proxies, work, name + ': состав или порядок ручной группы разошёлся с fallback');
+  });
+  // Конкретно: пока никто не выбирал, ручная группа стоит на том же узле,
+  // что прежний fallback, — Германия #1 по Wi-Fi и #2 по сотовой.
+  assert.ok(g['RH-АВТО-W-Ручной'].proxies[0].indexOf('Германия #1') >= 0);
+  assert.ok(g['RH-АВТО-C-Ручной'].proxies[0].indexOf('Германия #2') >= 0);
+});
+
+test('fallback: ручная группа первой, дальше прежний список, обход последним', () => {
+  const g = groups();
+  const old = {};
+  CHILDREN.forEach(function (name) {
+    const p = g[name].proxies;
+    assert.equal(p[0], S.manualName(name), name + ': ручная группа не первая');
+    assert.equal(p.filter(function (n) { return n === S.manualName(name); }).length, 1);
+    assert.equal(g[name].type, 'fallback');
+    assert.equal(g[name].interval, S.GROUP_INTERVAL);
+    assert.ok(isByp(p[p.length - 1]), name + ': обход не последним');
+    assert.equal(p.filter(isByp).length, 1, name + ': обходной узел не один');
+    old[name] = p.slice(1);
+  });
+  // «Прежний список» — буквально: те же узлы в том же порядке, что выдаёт
+  // каскад без обёртки (orderNames по тому же рангу).
+  const col = S.nodeSet(LINES, STATE, {});
+  assert.deepEqual(old['RH-АВТО-W'], orderNames(col.items, 'w', col.maxW, rankAuto));
+});
+
+test('форма (Б): ручная группа — use + filter по рабочим именам, обход фильтр не ловит', () => {
+  const g = groups({ membership: 'provider', provider: 'RH-Sub' });
+  CHILDREN.forEach(function (name) {
+    const man = g[S.manualName(name)];
+    assert.equal(man.type, 'select');
+    assert.equal(man.proxies, undefined, name + ': явные имена узлов в форме (Б)');
+    assert.deepEqual(man.use, ['RH-Sub']);
+    const re = new RegExp(man.filter);
+    assert.ok(!re.test(NAMES.byp), name + ': filter ручной группы ловит обходной узел');
+    assert.deepEqual(g[name].proxies, [S.manualName(name)], name + ': fallback без ручной группы');
+    assert.ok(new RegExp(g[name].filter).test(NAMES.byp), name + ': обход выпал из fallback');
+  });
+  const re = new RegExp(g['RH-АВТО-W-Ручной'].filter);
+  assert.ok(re.test(groups()['RH-АВТО-W-Ручной'].proxies[0]), 'filter не ловит рабочий узел');
+});
+
+test('пустой рабочий набор: ручной группы нет, fallback прежний, висячих ссылок нет', () => {
+  const byp = nodeLine(NAMES.byp), game = nodeLine(NAMES.game);
+  // Только обход: ни у одной функции выбирать не из чего.
+  const only = {};
+  S.buildGroups([byp], {}).forEach(function (x) { only[x.name] = x; });
+  CHILDREN.forEach(function (name) {
+    assert.equal(only[S.manualName(name)], undefined, name + ': ручная группа без членов');
+    assert.deepEqual(only[name].proxies, [NAMES.byp], name + ': fallback изменился');
+  });
+  assert.ok(S.renderGroups([byp], {}).indexOf(S.MANUAL_SUFFIX) < 0, 'ручная группа в YAML без рабочих узлов');
+  // Игровой узел и обход: в RH-АВТО рабочий есть, в RH-AI и RH-Звонки — нет.
+  const mix = {};
+  S.buildGroups([game, byp], {}).forEach(function (x) { mix[x.name] = x; });
+  assert.deepEqual(mix['RH-АВТО-W-Ручной'].proxies, [NAMES.game]);
+  assert.deepEqual(mix['RH-АВТО-W'].proxies, ['RH-АВТО-W-Ручной', NAMES.game, NAMES.byp]);
+  assert.equal(mix['RH-AI-W-Ручной'], undefined);
+  assert.deepEqual(mix['RH-AI-W'].proxies, [NAMES.byp]);
+  assert.equal(mix['RH-Звонки-C-Ручной'], undefined);
+  // Форма (Б) решается тем же условием: без рабочих узлов filter был бы NEVER.
+  const b = S.buildGroups([byp], {}, { membership: 'provider' });
+  assert.ok(!b.some(function (x) { return x.name.endsWith(S.MANUAL_SUFFIX); }), 'форма (Б): пустая ручная группа');
+  assert.ok(!b.some(function (x) { return Array.isArray(x.proxies) && x.proxies.some(function (n) { return n.endsWith(S.MANUAL_SUFFIX); }); }));
+});
+
+test('каждый член каждой группы профиля существует: узел, группа или DIRECT', () => {
+  const sets = [LINES, [nodeLine(NAMES.byp)], [nodeLine(NAMES.game), nodeLine(NAMES.byp)], []];
+  sets.forEach(function (lines, k) {
+    const gs = T.STASH_PROFILE.profileGroups(lines, STATE, {});
+    const known = Object.create(null);
+    known.DIRECT = true;
+    gs.forEach(function (x) { known[x.name] = true; });
+    S.nodeSet(lines, STATE, {}).nodes.forEach(function (n) { known[n.name] = true; });
+    gs.forEach(function (x) {
+      (x.proxies || []).forEach(function (n) {
+        assert.ok(known[n], 'набор ' + k + ': член ' + n + ' группы ' + x.name + ' ни на что не ссылается');
+      });
+      if (x.type === 'select' && !x['ssid-policy']) assert.ok(x.proxies.length > 0, 'набор ' + k + ': пустой select ' + x.name);
+    });
+  });
+});
+
+test('YAML: ручная группа — select перед своим fallback, родитель смотрит на fallback', () => {
+  const y = S.renderGroups(LINES, STATE);
+  const man = y.indexOf("- name: 'RH-АВТО-W-Ручной'\n    type: 'select'\n    proxies:\n");
+  const fb = y.indexOf("- name: 'RH-АВТО-W'\n    type: 'fallback'\n    interval: 600\n    proxies:\n      - 'RH-АВТО-W-Ручной'\n");
+  assert.ok(man >= 0, 'ручная группа не выведена как select со списком');
+  assert.ok(fb > man, 'fallback не ведёт на ручную группу первым членом или стоит раньше неё');
+  assert.ok(y.indexOf("default: 'RH-АВТО-W'") >= 0 && y.indexOf("cellular: 'RH-АВТО-C'") >= 0);
 });
 
 test('пустой список в форме (Б) не превращается в «все узлы поставщика»', () => {

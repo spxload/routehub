@@ -111,7 +111,12 @@ function byName(list) {
 test('Stash, правило 1: обход 🇩🇪 не встаёт в тир страны ни в RH-AI, ни в RH-АВТО', () => {
   const G = byName(T.STASH_PROFILE.profileGroups(LINES, STATE, {}));
   for (const gname of ['RH-AI-W', 'RH-AI-C', 'RH-АВТО-W', 'RH-АВТО-C', 'RH-Звонки-W', 'RH-Звонки-C']) {
-    const p = G[gname].proxies;
+    // S-draft-8: первым членом стоит ручная группа — каскад узлов идёт за ней,
+    // а в самой ручной группе обходных узлов нет вовсе.
+    const man = T.STASH.manualName(gname);
+    assert.equal(G[gname].proxies[0], man, gname + ': первым членом не ручная группа');
+    assert.ok(!G[man].proxies.some(function (n) { return n.indexOf('Обход') >= 0; }), man + ': обходной узел в ручной группе');
+    const p = G[gname].proxies.slice(1);
     assert.ok(Array.isArray(p) && p.length, gname + ': пустая группа');
     assert.ok(p[0].indexOf('Обход') < 0, gname + ': обходной узел открывает каскад');
     const firstByp = p.findIndex(function (n) { return n.indexOf('Обход') >= 0; });
@@ -135,7 +140,8 @@ test('Stash, правило 1: обход — единственный узел 
   const lines = [BYP, '[VPN] ' + NL + ' Нидерланды #1'].map(nodeLine);
   assert.deepEqual(T.buildAiTiers(lines, {}), []);
   const G = byName(T.STASH.buildGroups(lines, {}, {}));
-  assert.equal(G['RH-AI-W'].proxies[0], '[VPN] ' + NL + ' Нидерланды #1', 'обход открыл RH-AI');
+  assert.equal(G['RH-AI-W'].proxies[1], '[VPN] ' + NL + ' Нидерланды #1', 'обход открыл RH-AI');
+  assert.deepEqual(G['RH-AI-W-Ручной'].proxies, ['[VPN] ' + NL + ' Нидерланды #1'], 'обход в ручной группе RH-AI');
 });
 
 // Сборщик Stash и проба ST15 держат свой признак (скрипты устройства, в
