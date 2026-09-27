@@ -306,3 +306,44 @@ test('aliveField / historyField: по умолчанию полей нет; с �
   w.g.DIRECT.alive = true;
   assert.equal((await ask(w, 'get', gp('DIRECT'))).json.alive, true);
 });
+
+// ST22: поставщики прокси и группы use + filter (tests/fake-stash-use.js).
+test('use + filter: состав из поставщика, порядок поставщика по умолчанию, useOrder filter — порядок фильтра', async () => {
+  const prov = { proxies: [{ name: 'М-9' }, { name: 'У3' }, { name: 'У2' }, { name: 'У1' }, { name: 'Чужой' }] };
+  const mk = (o) => createStash({ ...o, providers: { p: prov }, groups: {
+    Ф: { type: 'Selector', use: ['p'], filter: '^(?:У1|У2|У3|М-\\d+)$' },
+    Слот: { type: 'Selector', use: ['p'], filter: '^У2$' },
+    Голова: { type: 'Selector', use: ['p'], filter: '^У1$', all: ['DIRECT'] },
+    Старая: { type: 'Selector', now: 'DIRECT', all: ['DIRECT', 'REJECT'] },
+  } });
+  const w = mk({});
+  assert.deepEqual((await ask(w, 'get', gp('Ф'))).json.all, ['М-9', 'У3', 'У2', 'У1']);
+  assert.deepEqual((await ask(w, 'get', gp('Слот'))).json, { name: 'Слот', type: 'Selector', now: 'У2', all: ['У2'] });
+  assert.deepEqual((await ask(w, 'get', gp('Голова'))).json.all, ['DIRECT', 'У1'], 'явные члены — перед узлами поставщика');
+  assert.equal((await ask(w, 'get', gp('Старая'))).json.now, 'DIRECT', 'группы без use — как прежде');
+  const wf = mk({ useOrder: 'filter' });
+  assert.deepEqual((await ask(wf, 'get', gp('Ф'))).json.all, ['У1', 'У2', 'У3', 'М-9']);
+  // Выбор держится, пока член в составе; поставщик сменил состав — первый член.
+  assert.equal((await put(w, 'Ф', 'У2')).status, 204);
+  assert.equal((await ask(w, 'get', gp('Ф'))).json.now, 'У2');
+  w.providers.p = { proxies: [{ name: 'М-10' }, { name: 'У3' }, { name: 'У2' }, { name: 'У1' }] };
+  assert.deepEqual((await ask(w, 'get', gp('Ф'))).json, { name: 'Ф', type: 'Selector', now: 'У2', all: ['М-10', 'У3', 'У2', 'У1'] });
+  w.providers.p = { proxies: [{ name: 'У1' }] };
+  assert.equal((await ask(w, 'get', gp('Ф'))).json.now, 'У1');
+  assert.equal((await put(w, 'Ф', 'У3')).status, 400, 'члена нет в составе — proxy not exist');
+});
+
+test('GET /providers/proxies/{имя}: тело как в ядре, updatedAt только если задан; неизвестный — 404; не GET — 405', async () => {
+  const w = createStash({ providers: { p: { proxies: [{ name: 'А', type: 'Socks5' }, { name: 'Б' }] },
+    q: { proxies: [], vehicleType: 'File', updatedAt: '2026-09-27T10:00:00Z' } } });
+  const r = await ask(w, 'get', '/providers/proxies/p');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, { name: 'p', type: 'Proxy', vehicleType: 'HTTP', proxies: [{ name: 'А', type: 'Socks5' }, { name: 'Б', type: 'Socks5' }] });
+  assert.equal((await ask(w, 'get', '/providers/proxies/q')).json.updatedAt, '2026-09-27T10:00:00Z');
+  assert.deepEqual(Object.keys((await ask(w, 'get', '/providers/proxies')).json.providers), ['p', 'q']);
+  const n = await ask(w, 'get', '/providers/proxies/' + encodeURIComponent('нет'));
+  assert.equal(n.status, 404);
+  assert.equal(n.body, '{"message":"Resource not found"}');
+  assert.equal((await ask(w, 'put', '/providers/proxies/p', { body: {} })).status, 405);
+  assert.equal((await ask(createStash(), 'get', '/providers/proxies/p')).status, 404, 'по умолчанию поставщиков нет');
+});

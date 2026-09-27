@@ -1,4 +1,4 @@
-// Профиль Stash S-draft-9 (сейчас S-draft-10, #SUBSCRIBED — в
+// Профиль Stash S-draft-9 (сейчас S-draft-11; #SUBSCRIBED убран — сторож в
 // tests/stash-subscribed.test.js): резолв имён обходных серверов и
 // наблюдательные группы (src/clients/stash-dns.js, src/clients/stash-watch.js).
 //
@@ -47,9 +47,9 @@ function section(text, key) {
   return out;
 }
 
-test('версия профиля — S-draft-10; строка версии — сразу после #SUBSCRIBED', () => {
-  assert.equal(P.VERSION, 'S-draft-10');
-  assert.equal(TEXT.split('\n')[1], '# RouteHub — профиль Stash, S-draft-10');
+test('версия профиля — S-draft-11; строка версии — первая (#SUBSCRIBED убран)', () => {
+  assert.equal(P.VERSION, 'S-draft-11');
+  assert.equal(TEXT.split('\n')[0], '# RouteHub — профиль Stash, S-draft-11');
 });
 
 // ── DNS ──────────────────────────────────────────────────────────────────

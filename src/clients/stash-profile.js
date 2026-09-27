@@ -76,8 +76,8 @@ import { watchGroups } from './stash-watch.js';
 import { nodeToYaml, nodesToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
-// (поле conf_ver) и во второй строке профиля (первая — #SUBSCRIBED).
-const VERSION = 'S-draft-10';
+// (поле conf_ver) и в первой строке профиля.
+const VERSION = 'S-draft-11';
 
 // Поставщик прокси. interval — как часто Stash перечитывает файл узлов;
 // 600 с выбрано потому, что ПОРЯДОК членов групп меняется перевыдачей
@@ -99,18 +99,12 @@ const TEST_TIMEOUT = BENCH_TIMEOUT;
 // ctx: { key, base, masterLines, state, membership, provider, label }
 // base — origin с встроенным токеном, из него строится адрес поставщика.
 
-// S-draft-10: ПЕРВАЯ строка — `#SUBSCRIBED <адрес профиля>`: по ней Stash
-// считает профиль управляемым провайдером и сам перекачивает его с этого
-// адреса (stash.wiki/en/features/service-provider-subscription; по умолчанию
-// раз в 12 ч, срок Диана ставит на странице конфигурации — совет ≈ 1 ч).
-// Без метки узлы, вшитые в профиль, устаревают до ручного обновления.
-// Адрес — тот же, что даёт админка (config_url): base (origin запроса + токен
-// устройства, src/api/config.js) + /config?key=; запрос с ?token= получит
-// равносильную форму /t/<токен>/. ЦЕНА: каждое обновление перезагружает
-// конфигурацию и сбрасывает закрепления fallback / url-test (ST20); выбор
-// select («-Ручной») сохраняется.
-function subscribeUrl(o) { return String(o.base || '') + '/config?key=' + String(o.key || ''); }
-
+// S-draft-11: строки `#SUBSCRIBED <адрес>` (S-draft-10) в выдаче НЕТ. Worker
+// отдавал одну, а в файле на устройстве их оказалось две: вторую Stash
+// дописывает сам, сохраняя профиль, скачанный по ссылке, — он и так считает
+// его подписанным, наша строка лишняя. Обновление профиля по сроку
+// работает только на переднем плане (экран «Ресурсы»); в фоне — поставщики
+// прокси и наборы правил (опыт ST22).
 function renderProfile(ctx) {
   const o = ctx || {};
   const provider = o.provider || PROVIDER;
@@ -132,7 +126,6 @@ function renderProfile(ctx) {
     interval: PROVIDER_INTERVAL,
   };
   const out = [
-    '#SUBSCRIBED ' + subscribeUrl(o),
     '# RouteHub — профиль Stash, ' + VERSION,
     '# Собран Worker\'ом для ключа ' + String(o.key || '') + '. Правки в этом файле',
     '# не переживут следующую перевыдачу: менять надо src/clients/stash-*.js.',
@@ -183,5 +176,5 @@ export {
   DNS_BOOT, DNS_BYPASS_NS, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, G_BYPASS, G_MAIN, G_RU,
   PROVIDER_INTERVAL, PROVIDER_PATH,
   TEST_TIMEOUT, TEST_URL, VERSION, aiBlocks, bypassNsPolicy, contentType, profileGroups,
-  rankBypass, renderConfig, renderProfile, serviceGroups, subParamsFromConf, subscribeUrl, usesTemplate,
+  rankBypass, renderConfig, renderProfile, serviceGroups, subParamsFromConf, usesTemplate,
 };
