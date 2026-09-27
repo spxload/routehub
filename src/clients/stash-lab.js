@@ -1,7 +1,8 @@
 // routehub — модуль clients/stash-lab.js
 // КЛИЕНТСКИЙ СЛОЙ STASH: МУЛЯЖИ ДЛЯ ОПЫТОВ ЛАБОРАТОРИИ (сейчас ST22).
-// Маршрут GET /lab/t22-nodes (routehub-worker.js) — файл поставщика прокси
-// для тестовых групп override RouteHub-Stash-Lab. История — CHANGELOG.md.
+// Маршруты (routehub-worker.js): GET /lab/t22-nodes — файл поставщика прокси
+// для тестовых групп override RouteHub-Stash-Lab; GET /lab/pulse — адрес
+// проверки узла-«пульса». История — CHANGELOG.md.
 //
 // ЗАЧЕМ. Экран Stash «Ресурсы» (27.09): профиль обновляется только на
 // переднем плане, в фоне при включённом VPN — только наборы правил и
@@ -52,10 +53,35 @@ function renderT22(ms) {
     nodesToYaml(t22Nodes(ms));
 }
 
-// env нужен только для развилки клиента; в базу и в сеть обработчик не ходит.
-function handleT22Nodes(env, ms) {
+// ЖУРНАЛ ОПЫТА (решение Дианы 27.09). В фоне контроллер Stash отдаёт EOF
+// окнами по 30+ мин (ST21), и проба не видит, проверяет ли ядро узлы и
+// скачивает ли поставщика, пока приложение закрыто. Это видно с нашей
+// стороны: каждый запрос ядра к /lab/pulse (адрес проверки узла-«пульса»)
+// и к /lab/t22-nodes — строка в журнале Worker'а (Workers Logs, wrangler.toml
+// [env.stash.observability]). В строке только метка опыта и время: ни IP, ни
+// заголовков, ни User-Agent (служебные invocation-записи там же выключены).
+const PULSE_PATH = '/lab/pulse';
+const PULSE_TAG_RE = /^[a-z0-9-]{1,16}$/;
+
+function labLog(log, rec) { try { (log || console.log)(JSON.stringify(rec)); } catch (e) { /* журнал не роняет ответ */ } }
+function pulseTag(url) {
+  const t = url && url.searchParams ? url.searchParams.get('t') : null;
+  return typeof t === 'string' && PULSE_TAG_RE.test(t) ? t : 'bad';
+}
+
+// 204 без тела: ядру для проверки задержки нужен любой быстрый ответ.
+function handlePulse(url, env, ms, log) {
   if (clientId(env) !== 'stash') return new Response('routehub-worker: not found', { status: 404 });
   const now = ms === undefined ? Date.now() : ms;
+  labLog(log, { lab: 'pulse', t: pulseTag(url), ts: new Date(now).toISOString() });
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+}
+
+// env нужен только для развилки клиента; в базу и в сеть обработчик не ходит.
+function handleT22Nodes(env, ms, log) {
+  if (clientId(env) !== 'stash') return new Response('routehub-worker: not found', { status: 404 });
+  const now = ms === undefined ? Date.now() : ms;
+  labLog(log, { lab: 't22-nodes', ts: new Date(now).toISOString(), окно: t22Window(now) });
   return new Response(renderT22(now), { headers: {
     'Content-Type': 'text/yaml; charset=utf-8',
     // Метка меняется раз в минуту; кэш (Cloudflare, Stash) спрятал бы смену.
@@ -63,4 +89,4 @@ function handleT22Nodes(env, ms) {
   } });
 }
 
-export { T22_MARK, T22_PATH, T22_PREFIX, T22_SLOTS, T22_WINDOW_MS, handleT22Nodes, renderT22, t22Nodes, t22Window };
+export { PULSE_PATH, T22_MARK, T22_PATH, T22_PREFIX, T22_SLOTS, T22_WINDOW_MS, handlePulse, handleT22Nodes, pulseTag, renderT22, t22Nodes, t22Window };

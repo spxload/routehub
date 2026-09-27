@@ -82,6 +82,7 @@ export default {
       // ST22: муляжи поставщика для тестовых групп override Lab — без токена и
       // ключа, только TEST-NET, без D1; отвечает лишь стенд Stash (clients/stash-lab.js).
       if (req.method === 'GET' && url.pathname === STASH_LAB.T22_PATH) return STASH_LAB.handleT22Nodes(env);
+      if (req.method === 'GET' && url.pathname === STASH_LAB.PULSE_PATH) return STASH_LAB.handlePulse(url, env);
       if (req.method === 'GET' && url.pathname === '/config') return await API.handleConfig(url, env, tok);
       // v1.11.0 (перенос v1.12.0 из main): файлы приватного репозитория из
       // сборки. Токен — только из пути /t/<токен>/ (не ?token=); без него —
@@ -129,6 +130,6 @@ export default {
 // Новый клиент добавляется отдельным ключом (STASH), а не спредом.
 // STASH_PROFILE — каркас профиля (группы, DNS, версия S-draft). Отдельным
 // ключом по той же причине: у него свои renderConfig и aiBlocks.
-// STASH_LAB — муляжи опытов лаборатории Stash (/lab/t22-nodes).
+// STASH_LAB — муляжи опытов лаборатории Stash (/lab/t22-nodes, /lab/pulse).
 // CLIENTS — реестр клиентских слоёв и выбор активного по env.CLIENT (ADR-01).
 export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...REPO, LOON, STASH, STASH_PROFILE, STASH_LAB, CLIENTS };

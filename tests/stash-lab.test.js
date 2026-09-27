@@ -32,11 +32,16 @@ import { createStash, sandbox, settle } from './fake-stash.js';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
+// Стенд: поставщик муляжей и адрес проверки узла-«пульса» — без токена и ключа.
+const STAND = 'https://routehub-stash.proton4iker.workers.dev';
+
 // ── ЕДИНСТВЕННЫЙ УКАЗАТЕЛЬ ТЕКУЩЕГО ОПЫТА ────────────────────────────────
 const LAB_SOURCE = 'probes/routehub-probe-stash22.js';
 // Узлы и группы опыта в override — ровно эти строки (формат фиксирован).
 const LAB_NODES = [
-  '  - name: RH-Прямо-RU', '    type: direct', '    benchmark-url: http://ya.ru/', '    benchmark-timeout: ' + T.STASH.BENCH_TIMEOUT];
+  '  - name: RH-Прямо-RU', '    type: direct', '    benchmark-url: http://ya.ru/', '    benchmark-timeout: ' + T.STASH.BENCH_TIMEOUT,
+  '  - name: RH-Т22-Пульс', '    type: direct', '    benchmark-url: ' + STAND + T.STASH_LAB.PULSE_PATH + '?t=u60',
+  '    benchmark-timeout: ' + T.STASH.BENCH_TIMEOUT];
 const T22_FILTER = "'^(?:RH-Т22-1|RH-Т22-2|RH-Т22-3|RH-Т22-Метка-\\d+)$'";
 const slot = (n) => ['  - name: RH-Т22-С' + n, '    type: select', '    use:', '      - rh-t22', "    filter: '^RH-Т22-" + n + "$'"];
 const LAB_GROUPS = [
@@ -44,9 +49,9 @@ const LAB_GROUPS = [
   '  - name: RH-Т22-Фильтр', '    type: select', '    use:', '      - rh-t22', '    filter: ' + T22_FILTER,
   ...slot(1), ...slot(2), ...slot(3),
   '  - name: RH-Т22-F', '    type: fallback', '    interval: 3600', '    proxies:',
-  '      - RH-Т22-С1', '      - RH-Т22-С2', '      - RH-Т22-С3'];
+  '      - RH-Т22-С1', '      - RH-Т22-С2', '      - RH-Т22-С3',
+  '  - name: RH-Т22-Пульс60', '    type: url-test', '    interval: 60', '    lazy: false', '    proxies:', '      - RH-Т22-Пульс'];
 // Поставщик опыта: только муляжи стенда (/lab/t22-nodes), без токена и ключа.
-const STAND = 'https://routehub-stash.proton4iker.workers.dev';
 const LAB_PROVIDERS = ['  rh-t22:', '    url: ' + STAND + T.STASH_LAB.T22_PATH, '    path: ./providers/rh-t22.yaml', '    interval: 300'];
 
 const LAB = 'probes/routehub-lab.js';
@@ -217,15 +222,18 @@ test('узлы и группы опыта: direct / url-test / select / fallback
   for (const l of groups) if (/^ {4}interval: /.test(l)) assert.ok(Number(l.slice(14)) >= 60, 'проверка чаще раза в минуту: ' + l);
 });
 
-test('поставщик опыта — только муляжи стенда /lab/t22-nodes, без токена и ключа', () => {
+test('поставщик опыта — только муляжи стенда /lab/t22-nodes, без токена и ключа; пульс — только /lab/pulse', () => {
   assert.deepEqual(section('proxy-providers'), LAB_PROVIDERS);
+  const bench = OV.split('\n').filter((l) => /^\s*benchmark-url: /.test(l)).map((l) => l.trim().slice(15));
+  assert.deepEqual(bench, ['http://ya.ru/', STAND + '/lab/pulse?t=u60'], 'адреса проверки узлов Lab');
   const urls = OV.split('\n').filter((l) => /^\s*url: /.test(l)).map((l) => l.trim().slice(5));
   for (const u of urls) {
     assert.ok(u === RAW + LAB || u === STAND + '/lab/t22-nodes', 'чужой адрес в override: ' + u);
     assert.ok(!/\/t\/|[?&](key|token)=/.test(u), 'токен или ключ в адресе: ' + u);
   }
   const hosts = [...OV.matchAll(/[\w.-]+\.workers\.dev[^\s'"]*/g)].map((m) => m[0]);
-  assert.deepEqual([...new Set(hosts)], [STAND.slice(8) + '/lab/t22-nodes'], 'другие адреса Worker\'ов в override');
+  assert.deepEqual([...new Set(hosts)].sort(), [STAND.slice(8) + '/lab/pulse?t=u60', STAND.slice(8) + '/lab/t22-nodes'], 'другие адреса Worker\'ов в override');
+  for (const h of hosts) assert.ok(!/\/t\/|[?&](key|token)=/.test(h), 'токен или ключ: ' + h);
 });
 
 test('прежние override ST21 и Watch удалены и нигде не упоминаются в плагинах и манифесте', () => {
@@ -251,13 +259,15 @@ test('override Lab разбирается настоящим YAML-парсеро
   assert.deepEqual(d['script-providers'], { 'rh-lab': { url: RAW + LAB, interval: 300 } });
   assert.deepEqual(d.cron.script.map((s) => [s.name, s.cron]), [['rh-lab', '* * * * *']]);
   assert.deepEqual(d.tiles.map((t) => t.name), ['rh-lab']);
-  assert.deepEqual(d.proxies, [{ name: 'RH-Прямо-RU', type: 'direct', 'benchmark-url': 'http://ya.ru/', 'benchmark-timeout': T.STASH.BENCH_TIMEOUT }]);
+  assert.deepEqual(d.proxies, [{ name: 'RH-Прямо-RU', type: 'direct', 'benchmark-url': 'http://ya.ru/', 'benchmark-timeout': T.STASH.BENCH_TIMEOUT },
+    { name: 'RH-Т22-Пульс', type: 'direct', 'benchmark-url': STAND + '/lab/pulse?t=u60', 'benchmark-timeout': T.STASH.BENCH_TIMEOUT }]);
   const F = '^(?:RH-Т22-1|RH-Т22-2|RH-Т22-3|RH-Т22-Метка-\\d+)$';
   const S = (n) => ({ name: 'RH-Т22-С' + n, type: 'select', use: ['rh-t22'], filter: '^RH-Т22-' + n + '$' });
   assert.deepEqual(d['proxy-groups'], [
     { name: 'RH-Тест-RU', type: 'url-test', interval: 60, lazy: false, proxies: ['RH-Прямо-RU'] },
     { name: 'RH-Т22-Фильтр', type: 'select', use: ['rh-t22'], filter: F }, S(1), S(2), S(3),
-    { name: 'RH-Т22-F', type: 'fallback', interval: 3600, proxies: ['RH-Т22-С1', 'RH-Т22-С2', 'RH-Т22-С3'] }]);
+    { name: 'RH-Т22-F', type: 'fallback', interval: 3600, proxies: ['RH-Т22-С1', 'RH-Т22-С2', 'RH-Т22-С3'] },
+    { name: 'RH-Т22-Пульс60', type: 'url-test', interval: 60, lazy: false, proxies: ['RH-Т22-Пульс'] }]);
   // Фильтр — регулярка, которую понимает и JS (RE2 ядра — подмножество): все
   // имена муляжей стенда проходят, и ничего сверх них.
   const re = new RegExp(d['proxy-groups'][1].filter);

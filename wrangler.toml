@@ -77,5 +77,19 @@ database_id = "6ba57fd5-c707-410c-a2ea-428156d06f88"
 [env.stash.vars]
 CLIENT = "stash"
 
+# Журнал Worker'а стенда (решение Дианы 27.09): строки опытов лаборатории
+# (/lab/pulse, /lab/t22-nodes — clients/stash-lab.js) — метка и время, без IP
+# и заголовков. invocation_logs = false выключает служебную запись о каждом
+# запросе (в ней — Request и метаданные Cloudflare). Бесплатно: 200 000
+# событий в сутки, хранение 3 дня (developers.cloudflare.com/workers/
+# observability/logs/workers-logs). Смотреть: Workers & Pages →
+# routehub-stash → Observability. Боевой Worker (верхний уровень) не трогается.
+[env.stash.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.stash.observability.logs]
+invocation_logs = false
+
 [env.stash.triggers]
 crons = []

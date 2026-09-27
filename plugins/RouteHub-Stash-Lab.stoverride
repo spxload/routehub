@@ -59,6 +59,11 @@ category: "RouteHub"
 # Фильтр (select, use + filter по всем именам — чей порядок в .all), С1..С3
 # (группы-слоты: select, один узел через filter), F (fallback из слотов,
 # interval 3600). Ни одно правило на них не ведёт.
+# ПУЛЬС (27.09). Узел RH-Т22-Пульс (direct) в группе RH-Т22-Пульс60 (url-test,
+# раз в минуту, lazy: false): его адрес проверки — /lab/pulse стенда, и
+# каждая проверка ядра — строка в журнале Worker'а (метка u60 и время, без
+# IP). Так видно, идут ли проверки, пока Stash закрыт: контроллер в фоне
+# отдаёт EOF. Трафик — прямой HTTPS-запрос в минуту, обход не участвует.
 # РИСК ST22. Секция proxy-providers в override вики не описана отдельно;
 # словари override сливаются по ключам (stash.wiki/en/configuration/
 # override), map-ключ script-providers в override работает (ST20). Если
@@ -94,6 +99,10 @@ proxies:
   - name: RH-Прямо-RU
     type: direct
     benchmark-url: http://ya.ru/
+    benchmark-timeout: 5
+  - name: RH-Т22-Пульс
+    type: direct
+    benchmark-url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=u60
     benchmark-timeout: 5
 
 proxy-providers:
@@ -136,3 +145,9 @@ proxy-groups:
       - RH-Т22-С1
       - RH-Т22-С2
       - RH-Т22-С3
+  - name: RH-Т22-Пульс60
+    type: url-test
+    interval: 60
+    lazy: false
+    proxies:
+      - RH-Т22-Пульс
