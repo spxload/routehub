@@ -82,7 +82,8 @@ export default {
       // ST22: муляжи поставщика для тестовых групп override Lab — без токена и
       // ключа, только TEST-NET, без D1; отвечает лишь стенд Stash (clients/stash-lab.js).
       if (req.method === 'GET' && url.pathname === STASH_LAB.T22_PATH) return STASH_LAB.handleT22Nodes(env);
-      if (req.method === 'GET' && url.pathname === STASH_LAB.PULSE_PATH) return STASH_LAB.handlePulse(url, env);
+      // Пульс — GET и HEAD: ядра Clash-семейства проверяют узел запросом HEAD.
+      if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === STASH_LAB.PULSE_PATH) return STASH_LAB.handlePulse(url, env);
       if (req.method === 'GET' && url.pathname === '/config') return await API.handleConfig(url, env, tok);
       // v1.11.0 (перенос v1.12.0 из main): файлы приватного репозитория из
       // сборки. Токен — только из пути /t/<токен>/ (не ?token=); без него —

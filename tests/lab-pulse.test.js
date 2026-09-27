@@ -66,6 +66,14 @@ test('живой маршрут пульса: стенд — 204, строка �
   for (const s of out) assert.ok(!/203\.0\.113|SECRET|Stash\/3/.test(s), 'в журнал попали данные запроса: ' + s);
 });
 
+test('живой маршрут пульса принимает HEAD (так проверяют узел ядра Clash-семейства): 204 и одна строка журнала', async () => {
+  const { r, out } = await captured(() => worker.fetch(req(BASE + '?t=u60', { method: 'HEAD' }), strictEnv('stash')));
+  assert.equal(r.status, 204);
+  const lines = out.filter((s) => s.indexOf('"lab"') >= 0);
+  assert.equal(lines.length, 1, 'HEAD без строки журнала — пустой журнал прочтут как «в фоне не проверяет»');
+  assert.equal(JSON.parse(lines[0]).t, 'u60');
+});
+
 test('поставщик муляжей: одна строка журнала — lab, время и окно; тоже без данных запроса', async () => {
   const log = [];
   const r = L.handleT22Nodes({ CLIENT: 'stash' }, MS + 5, (s) => log.push(s));
@@ -85,7 +93,7 @@ test('боевой Loon (CLIENT не задан или чужой) пульса 
     assert.equal(r.status, 404);
     assert.equal(out.filter((s) => s.indexOf('"lab"') >= 0).length, 0);
   }
-  assert.equal((await worker.fetch(req(BASE + '?t=u60', { method: 'POST' }), strictEnv('stash'))).status, 404, 'только GET');
+  assert.equal((await worker.fetch(req(BASE + '?t=u60', { method: 'POST' }), strictEnv('stash'))).status, 404, 'только GET и HEAD');
 });
 
 test('wrangler.toml: журнал включён только у стенда, служебные invocation-записи выключены', () => {
