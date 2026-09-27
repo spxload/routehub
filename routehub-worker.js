@@ -82,6 +82,9 @@ export default {
       // ST22: муляжи поставщика для тестовых групп override Lab — без токена и
       // ключа, только TEST-NET, без D1; отвечает лишь стенд Stash (clients/stash-lab.js).
       if (req.method === 'GET' && url.pathname === STASH_LAB.T22_PATH) return STASH_LAB.handleT22Nodes(env);
+      // ST23: порядок узлов по окну 10 мин; в журнал — только asn / название сети
+      // источника (req.cf), без IP и заголовков (обоснование — clients/stash-lab.js).
+      if (req.method === 'GET' && url.pathname === STASH_LAB.T23_PATH) return STASH_LAB.handleT23Nodes(env, undefined, undefined, req.cf);
       // Пульс — GET и HEAD: ядра Clash-семейства проверяют узел запросом HEAD.
       if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === STASH_LAB.PULSE_PATH) return STASH_LAB.handlePulse(url, env);
       if (req.method === 'GET' && url.pathname === '/config') return await API.handleConfig(url, env, tok);
@@ -131,6 +134,6 @@ export default {
 // Новый клиент добавляется отдельным ключом (STASH), а не спредом.
 // STASH_PROFILE — каркас профиля (группы, DNS, версия S-draft). Отдельным
 // ключом по той же причине: у него свои renderConfig и aiBlocks.
-// STASH_LAB — муляжи опытов лаборатории Stash (/lab/t22-nodes, /lab/pulse).
+// STASH_LAB — муляжи опытов лаборатории Stash (/lab/t22-nodes, /lab/t23-nodes, /lab/pulse).
 // CLIENTS — реестр клиентских слоёв и выбор активного по env.CLIENT (ADR-01).
 export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...REPO, LOON, STASH, STASH_PROFILE, STASH_LAB, CLIENTS };

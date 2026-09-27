@@ -11,7 +11,8 @@
 //     первый член (сброс при обновлении поставщика тест моделирует сам);
 //   * тело ответа поставщика — как в ядре Clash: name, type, vehicleType,
 //     proxies[{name, type}], updatedAt — ТОЛЬКО если задан в записи
-//     (есть ли поле у Stash — неизвестно, проба пишет «нет данных»).
+//     (есть ли поле у Stash — неизвестно, проба пишет «нет данных»);
+//     alive узла — тоже только если задан в записи узла (ST23).
 //
 // Опции createStash: providers — { имя: { proxies: [{ name, type? }],
 // vehicleType?, updatedAt? } } (w.providers, можно менять на ходу);
@@ -53,7 +54,7 @@ export function installUse(w, o) {
   function body(n) {
     const pv = w.providers[n];
     const e = { name: n, type: 'Proxy', vehicleType: pv.vehicleType || 'HTTP',
-      proxies: pv.proxies.map((q) => ({ name: q.name, type: q.type || 'Socks5' })) };
+      proxies: pv.proxies.map((q) => ({ name: q.name, type: q.type || 'Socks5', ...('alive' in q ? { alive: q.alive } : {}) })) };
     if ('updatedAt' in pv) e.updatedAt = pv.updatedAt;
     return e;
   }

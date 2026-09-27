@@ -1,5 +1,5 @@
 name: "RouteHub — лаборатория (текущий опыт стенда Stash)"
-desc: "Постоянный override опытов: раз в минуту запускает текущую пробу RouteHub (сейчас опыта нет — холостой прогон, один $done). Узлов, групп, правил и MITM нет, ничего не читает и не пишет, обходной трафик не тратит."
+desc: "Постоянный override опытов: раз в минуту запускает текущую пробу RouteHub (сейчас ST23 — только чтение двух тестовых групп и поставщика). Узлы опыта — direct и муляж TEST-NET на стенде; правил и MITM нет, в контроллер не пишет, обходной трафик не тратит."
 author: "RouteHub"
 category: "RouteHub"
 
@@ -35,17 +35,18 @@ category: "RouteHub"
 # Подробный журнал Stash — отдельный override RouteHub-Stash-Debug: его
 # постоянно держать нельзя, поэтому он сюда не входит.
 #
-# ── ТЕКУЩИЙ ОПЫТ: НЕТ (ХОЛОСТОЙ, S-draft-12, 27.09) ────────────────────────
-# probes/routehub-lab.js = одна строка `$done({})`: cron и плитка крутятся
-# вхолостую, скрипт ничего не читает и не пишет. Опыты ST21 (RH-Прямо-RU /
-# RH-Тест-RU) и ST22 (поставщик rh-t22, группы RH-Т22-*, узел-пульс
-# RH-Т22-Пульс / RH-Т22-Пульс60) закончены, итоги — CHANGELOG.md. Секций
-# proxies / proxy-providers / proxy-groups здесь больше нет: прямые узлы
-# RH-RU живут в профиле (RH-Прямо-RU-1/-2, S-draft-12). Эндпоинты стенда
-# /lab/pulse и /lab/t22-nodes оставлены, но без этих узлов и поставщика
-# запросов к ним с устройства нет.
+# ── ТЕКУЩИЙ ОПЫТ: ST23 (27.09, согласие Дианы «Все да») ───────────────────
+# Путь А: держит ли fallback с `use:` ПОРЯДОК ПОСТАВЩИКА и берёт ли ПЕРВЫЙ
+# ЖИВОЙ. Поставщик rh-t23 = /lab/t23-nodes стенда (без токена): окно 10 мин,
+# чётное — A, B, C; нечётное — Муляж, C, B, A. A/B/C — type direct с
+# проверкой по /lab/pulse стенда (трафик — ответ 204), Муляж — socks5
+# TEST-NET, порт 1 (соединения нет). Группы: RH-Т23-F (fallback, use),
+# RH-Т23-FF (то же + filter), RH-Т23-U30 (url-test, interval 30 — частота
+# проверки при 30 с; единственный член — узел-пульс стенда). Правил нет —
+# трафик в эти группы не идёт. Проба probes/routehub-lab.js = ST23: только
+# GET двух групп и поставщика, ни PUT, ни /delay.
 # После обновления на телефоне — нажать «обновить» у этого override: иначе
-# Stash держит прежние узлы и группы опыта.
+# Stash не увидит поставщика и групп ST23.
 
 script-providers:
   rh-lab:
@@ -65,3 +66,34 @@ tiles:
     content: 'Нажми: итог; выгрузка — журнал скрипта'
     icon: 'eye'
     backgroundColor: '#3A3A3C'
+
+proxies:
+  - name: RH-Т23-Пульс30
+    type: direct
+    benchmark-url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=u30
+    benchmark-timeout: 5
+
+proxy-providers:
+  rh-t23:
+    url: https://routehub-stash.proton4iker.workers.dev/lab/t23-nodes
+    path: ./providers/rh-t23.yaml
+    interval: 300
+
+proxy-groups:
+  - name: RH-Т23-F
+    type: fallback
+    interval: 60
+    use:
+      - rh-t23
+  - name: RH-Т23-FF
+    type: fallback
+    interval: 60
+    use:
+      - rh-t23
+    filter: '^RH-Т23-'
+  - name: RH-Т23-U30
+    type: url-test
+    interval: 30
+    lazy: false
+    proxies:
+      - RH-Т23-Пульс30
