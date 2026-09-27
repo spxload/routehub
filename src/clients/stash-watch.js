@@ -24,8 +24,9 @@ import { BENCH_TIMEOUT } from './stash-nodeset.js';
 // под whitelist жив (docs/СРАВНЕНИЕ_КЛИЕНТОВ_И_WHITELIST.md, разд. 4), и RH-RU
 // осталась бы на нём. Адреса взяты из самого category-ru.list — это ровно
 // тот трафик, что обслуживает RH-RU; оба отсутствуют в whitelist-domains.list
-// и hxehex-whitelist.list, а их IP — в подсетях whitelist-ips.list (сверка
-// 27.09, ревью); оба отвечают на HEAD по http (301).
+// и hxehex-whitelist.list, а их IP (186.2.163.8, 194.48.203.4) НЕ входят ни в
+// одну подсеть whitelist-ips.list (сверка 27.09, ревью и тестировщик); оба
+// отвечают на HEAD по http (301).
 // Банки и платёжные домены списка отброшены (дух правила 4: автоматом их не
 // дёргаем); `2ip.ru` — в whitelist. Взяты:
 //   * avtoto.ru — магазин автозапчастей, сеть DDoS-Guard;
