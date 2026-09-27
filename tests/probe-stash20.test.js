@@ -21,14 +21,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
+import { createStash, sandbox, settle as settleOnce, SECRET } from './fake-stash.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FILE = 'probes/routehub-probe-stash20.js';
 const OV_FILE = 'plugins/RouteHub-Stash-ST20.stoverride';
 const CODE = fs.readFileSync(path.join(ROOT, FILE), 'utf8');
 
-const SECRET = 'Bearer ОЧЕНЬ-СЕКРЕТНО';
 const PRIVATE_HOST = 'очень-личный-сайт.example';
 const NODE = 'Узел-Обход-DE-личный';
 const P = 'RH-Т20-';
@@ -40,13 +39,13 @@ const T_START = 1_800_000_000_000;
 const MIN = 60000;
 
 // ── ПОДСТАВНОЙ КОНТРОЛЛЕР ────────────────────────────────────────────────
+// Транспорт, часы, журнал, EOF и песочник — общий tests/fake-stash.js; здесь —
+// модель ядра: проверки здоровья по interval, события, метки окна. Закрепление
+// (fixed/fixedAt) ставит общий контроллер, модель решает, живо ли оно.
 function world(o = {}) {
-  const w = { clock: { t: T_START }, calls: [], store: {}, notes: [], step: o.step || 30, hang: !!o.hang,
-    eofLeft: o.eof || 0, fail: o.fail || null, down: o.down || [], model: o.model || 'survive',
-    connReset: !!o.connReset, putReject: o.putReject || null };
   const core = { start: T_START - (o.coreAgo === undefined ? 10 * MIN : o.coreAgo) };
   const sel = (all) => ({ type: 'Selector', all, now: all[0] });
-  const auto = (type, interval, all) => ({ type, interval, all, pin: null, last: -Infinity, alive: {} });
+  const auto = (type, interval, all) => ({ type, interval, all, fixed: null, last: -Infinity, alive: {} });
   const g = {
     [D1]: sel(['DIRECT']), [D2]: sel(['DIRECT']), [MANUAL]: sel(['DIRECT', DUMMY]), [CANARY]: sel([D1, D2]),
     [F30]: auto('Fallback', 30, [D1, D2]), [F3600]: auto('Fallback', 3600, [D1, D2]),
@@ -69,8 +68,8 @@ function world(o = {}) {
   }
   function check(x) {
     for (const m of x.all) x.alive[m] = aliveNow(m);
-    if (w.model === 'interval') x.pin = null;
-    if (w.model === 'onefail' && x.pin && !x.alive[x.pin]) x.pin = null;
+    if (w.model === 'interval') x.fixed = null;
+    if (w.model === 'onefail' && x.fixed && !x.alive[x.fixed]) x.fixed = null;
   }
   function checksUpTo(t) {
     for (const x of autos()) {
@@ -79,11 +78,11 @@ function world(o = {}) {
       for (;;) { const at = core.start + k * iv; if (at > t) break; check(x); x.last = at; k++; }
     }
   }
-  function clearPins() { for (const x of autos()) x.pin = null; }
+  function clearPins() { for (const x of autos()) x.fixed = null; }
   function apply(e) {
     if (e.kind === 'restart') {
       core.start = e.at;
-      for (const x of autos()) { x.pin = null; x.last = -Infinity; x.alive = {}; }
+      for (const x of autos()) { x.fixed = null; x.last = -Infinity; x.alive = {}; }
       if (o.selReset) for (const x of Object.values(g)) if (x.type === 'Selector') x.now = x.all[0];
     }
     if (e.kind === 'rebuild') {
@@ -101,10 +100,10 @@ function world(o = {}) {
     if (x.type === 'Selector') return x.now;
     // 'ttl' — закрепление снимается по времени от записи, независимо от проверок.
     const ttl = o.ttlOf ? o.ttlOf(n, w) : o.ttl;
-    if (ttl && x.pin && w.clock.t - x.pinAt >= ttl) x.pin = null;
+    if (ttl && x.fixed && w.clock.t - x.fixedAt >= ttl) x.fixed = null;
     const first = x.all.find((m) => x.alive[m]) || x.all[0];
-    if (w.model === 'eternal') return x.pin || first;
-    return x.pin && x.alive[x.pin] ? x.pin : first;
+    if (w.model === 'eternal') return x.fixed || first;
+    return x.fixed && x.alive[x.fixed] ? x.fixed : first;
   }
   const hist = () => (o.noHist ? [] : [{ time: new Date(core.start).toISOString(), delay: 0 }]);
   function entry(n) {
@@ -113,96 +112,54 @@ function world(o = {}) {
     if (x.all) { e.all = x.all; e.now = nowOf(n); }
     return e;
   }
-  w.g = g; w.nowOf = (n) => { advance(w.clock.t); return nowOf(n); }; w.core = core;
 
-  w.handle = (method, opt, cb) => {
-    const url = String(opt.url || '');
-    const p = url.replace(/^http:\/\/127\.0\.0\.1:9090/, '');
-    w.calls.push({ method, p, auth: opt.headers && opt.headers.Authorization, body: opt.body || null,
-      timeout: opt.timeout, t: w.clock.t });
-    if (w.hang) return;
-    advance(w.clock.t);
-    const reply = (st, body) => setTimeout(() => { w.clock.t += w.step; cb(null, { status: st, headers: {} }, body); }, 1);
-    const eof = () => setTimeout(() => { w.clock.t += w.step; cb('Get "' + url + '": EOF', null, null); }, 1);
-    if (w.eofLeft > 0) { w.eofLeft--; return eof(); }
-    if (w.down.some(([a, b]) => w.clock.t >= a && w.clock.t < b)) return eof();
-    if (/[^\x00-\x7F]/.test(url)) return reply(400, 'bad path');
-    if (w.fail && w.fail(method, decodeURIComponent(p), w)) return reply(500, 'oops');
-    if (p === '/') return reply(200, '{"hello":"stash"}');
-    if (p === '/proxies' && method === 'get') {
-      const px = {};
-      for (const n of Object.keys(g)) {
-        px[n] = entry(n);
-        if (o.hideNow && o.hideNow(n, w)) delete px[n].now;   // группа есть, `now` не отдан
+  const w = createStash({
+    groups: g, step: o.step, hang: o.hang, eof: o.eof, fail: o.fail, builtins: false, entry,
+    eofWhen: () => w.down.some(([a, b]) => w.clock.t >= a && w.clock.t < b),
+    onRequest: () => advance(w.clock.t),
+    putReject: (name) => !!(w.putReject && w.putReject(name)) && '{"message":"must be one of Selector / Fallback"}',
+    route: (method, p, opt, reply) => {
+      if (p === '/proxies' && method === 'get') {
+        const px = {};
+        for (const n of Object.keys(g)) {
+          px[n] = entry(n);
+          if (o.hideNow && o.hideNow(n, w)) delete px[n].now;   // группа есть, `now` не отдан
+        }
+        return reply(200, JSON.stringify({ proxies: px }));
       }
-      return reply(200, JSON.stringify({ proxies: px }));
-    }
-    if (p === '/connections') {
-      const s = Math.floor((w.clock.t - core.start) / 1000);
-      const body = { connections: [{ id: '1', chains: [NODE], metadata: { host: PRIVATE_HOST } }] };
-      if (!o.noTotals) { body.uploadTotal = s * 7; body.downloadTotal = s * 13; }
-      return reply(200, JSON.stringify(body));
-    }
-    const m = p.match(/^\/proxies\/([^/?]+)(\/delay)?/);
-    if (m) {
-      const name = decodeURIComponent(m[1]);
-      const x = g[name];
-      if (!x) return reply(404, '{"message":"Resource not found"}');
-      if (m[2]) { if (w.connReset && 'pin' in x) x.pin = null; return reply(200, '{"delay":42}'); }
-      if (method === 'get') return reply(200, JSON.stringify(entry(name)));
-      if (method === 'put') {
-        if (w.putReject && w.putReject(name)) return reply(400, '{"message":"must be one of Selector / Fallback"}');
-        const want = JSON.parse(opt.body).name;
-        if (!x.all || x.all.indexOf(want) < 0) return reply(400, '{"message":"Selector update error: proxy not exist"}');
-        if ('pin' in x) { x.pin = want; x.pinAt = w.clock.t; } else x.now = want;
-        return reply(204, '');
+      if (p === '/connections') {
+        const s = Math.floor((w.clock.t - core.start) / 1000);
+        const body = { connections: [{ id: '1', chains: [NODE], metadata: { host: PRIVATE_HOST } }] };
+        if (!o.noTotals) { body.uploadTotal = s * 7; body.downloadTotal = s * 13; }
+        return reply(200, JSON.stringify(body));
       }
-      return reply(405, 'Method Not Allowed');
-    }
-    return reply(404, '404 page not found');
-  };
+      const m = p.match(/^\/proxies\/([^/?]+)\/delay/);
+      if (m) {
+        const x = g[decodeURIComponent(m[1])];
+        if (!x) return reply(404, '{"message":"Resource not found"}');
+        if (w.connReset && 'fixed' in x) x.fixed = null;
+        return reply(200, '{"delay":42}');
+      }
+      return undefined;
+    },
+  });
+  Object.assign(w, { down: o.down || [], model: o.model || 'survive', connReset: !!o.connReset,
+    putReject: o.putReject || null, core });
+  w.nowOf = (n) => { advance(w.clock.t); return nowOf(n); };
   return w;
 }
 
 function sandboxFor(w, { tile = false, storeWrite = null } = {}) {
-  const state = { done: null, doneCalls: 0, note: null, log: null };
-  const RealDate = Date;
-  function FakeDate(...a) { return a.length ? new RealDate(...a) : new RealDate(w.clock.t); }
-  FakeDate.now = () => w.clock.t;
-  const sb = {
-    console: { log: (s) => { state.log = String(s); } },
-    JSON, Math, Date: FakeDate, Object, Array, String, Number, Boolean, RegExp, Error,
-    isNaN, parseInt, parseFloat, isFinite, encodeURIComponent, decodeURIComponent,
+  return sandbox(w, CODE, FILE, {
+    forbid: ['post', 'patch', 'delete'], storeWrite, noteTag: { tile },
     // Сторож (75 с) — 400 мс настоящего времени, остальное — 1 мс.
-    setTimeout: (fn, ms) => setTimeout(fn, ms >= 60000 ? 400 : 1),
-    clearTimeout,
-    $script: { name: 'rh-st20', type: tile ? 'tile' : 'cron' },
-    $environment: { 'controller-url': 'http://127.0.0.1:9090', 'controller-authorization': SECRET, 'stash-version': '3.4.1' },
-    $notification: { post: (t, s, b, opts) => { state.note = { t, s, b, o: opts || null }; w.notes.push({ at: w.clock.t, s, tile }); } },
-    $persistentStore: { read: (k) => (k in w.store ? w.store[k] : null),
-      write: storeWrite || ((v, k) => { w.store[k] = v; return true; }) },
-    $httpClient: {
-      get: (opt, cb) => w.handle('get', opt, cb),
-      put: (opt, cb) => w.handle('put', opt, cb),
-      post: () => { throw new Error('проба не должна слать POST'); },
-      patch: () => { throw new Error('проба не должна менять настройки'); },
-      delete: () => { throw new Error('проба не должна удалять'); },
-    },
-    $done: (v) => { state.doneCalls++; state.done = v || {}; },
-  };
-  sb.globalThis = sb;
-  state.sb = sb;
-  vm.runInContext(CODE, vm.createContext(sb), { filename: FILE });
-  return state;
+    timer: (ms) => (ms >= 60000 ? 400 : 1),
+    extra: { $script: { name: 'rh-st20', type: tile ? 'tile' : 'cron' } },
+  });
 }
 
 async function settle(state, ms = 5000) {
-  const until = Date.now() + ms;
-  while (!state.done && Date.now() < until) await new Promise((r) => setTimeout(r, 2));
-  assert.ok(state.done, 'проба не дошла до $done');
-  await new Promise((r) => setTimeout(r, 10));
-  assert.equal(state.doneCalls, 1, 'ровно один $done на любой ветви');
-  return state;
+  return settleOnce(state, ms, 10);
 }
 
 async function runOnce(w, opts = {}) {

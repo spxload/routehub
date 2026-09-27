@@ -16,7 +16,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
+import { createStash, sandbox, settle as settleOnce, SECRET } from './fake-stash.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FILE = 'probes/routehub-probe-stash19.js';
@@ -24,7 +24,6 @@ const CMD_FILE = 'probes/routehub-probe-stash19-cmd.js';
 const CODE = fs.readFileSync(path.join(ROOT, FILE), 'utf8');
 const CMD_CODE = fs.readFileSync(path.join(ROOT, CMD_FILE), 'utf8');
 
-const SECRET = 'Bearer ОЧЕНЬ-СЕКРЕТНО';
 const PRIVATE_HOST = 'очень-личный-сайт.example';
 const P = 'RH-Т19-';
 const DUMMY = P + 'Муляж', ALIAS = P + 'Прямо';
@@ -32,8 +31,9 @@ const TEST_GROUPS = ['Здоров', 'Мёртв', 'Ручной', 'Обёртк
 const CRON_WRITABLE = ['Здоров', 'Мёртв', 'Ручной', 'Скорость', 'Баланс', 'Сеть'].map((x) => P + x);
 
 // ── ПОДСТАВНОЙ КОНТРОЛЛЕР ────────────────────────────────────────────────
+// Транспорт, часы, журнал и песочник — общий tests/fake-stash.js; здесь —
+// модель закрепления fallback во времени и маршруты карты рычагов ST19.
 function world(opts = {}) {
-  const clock = { t: 1_800_000_000_000 };
   const model = opts.model || 'sticky';
   const g = {
     [ALIAS]: { type: 'Selector', now: 'DIRECT', all: ['DIRECT'] },
@@ -48,10 +48,6 @@ function world(opts = {}) {
     'RH-AI': { type: 'Selector', now: 'RH-AI-W', all: ['RH-AI-W', 'RH-AI-C'] },
   };
   if (opts.noGroups) for (const k of Object.keys(g)) if (k.startsWith(P)) delete g[k];
-  const w = { clock, g, calls: [], store: {}, model, eofLeft: opts.eof || 0, hang: !!opts.hang, step: opts.step || 30,
-    fail: opts.fail || null, manualStart: opts.manualStart || null, eofWhen: opts.eofWhen || null,
-    wrapNoSkip: !!opts.wrapNoSkip };
-  if (w.manualStart) g[P + 'Ручной'].now = w.manualStart;
 
   function alive(n) {
     if (n === DUMMY) return false;
@@ -62,102 +58,57 @@ function world(opts = {}) {
     if (w.wrapNoSkip && n === P + 'Ручной') return true;   // ядро не смотрит внутрь select
     return alive(nowOf(n));
   }
+  // Закрепление (fixed/fixedAt) ставит общий контроллер; модель решает, живо ли оно.
   function nowOf(n) {
     const x = g[n];
     if (x.type !== 'Fallback') return x.now;
-    if (x.pin) {
-      const expired = model === 'reset' && clock.t - x.pinAt >= 60000;
-      const dead = model === 'deadskip' && !alive(x.pin);
-      if (!expired && !dead) return x.pin;
-      if (expired) x.pin = null;
+    if (x.fixed) {
+      const expired = model === 'reset' && w.clock.t - x.fixedAt >= 60000;
+      const dead = model === 'deadskip' && !alive(x.fixed);
+      if (!expired && !dead) return x.fixed;
+      if (expired) x.fixed = null;
     }
     return x.all.find(alive);
   }
-  w.nowOf = nowOf;
 
-  w.handle = (method, o, cb) => {
-    const url = String(o.url || '');
-    const p = url.replace(/^http:\/\/127\.0\.0\.1:9090/, '');
-    w.calls.push({ method, p, auth: o.headers && o.headers.Authorization, body: o.body || null, timeout: o.timeout });
-    if (w.hang) return;
-    const reply = (st, body) => setTimeout(() => { clock.t += w.step; cb(null, { status: st, headers: {} }, body); }, 1);
-    if (w.eofLeft > 0) { w.eofLeft--; return setTimeout(() => cb('Get "' + url + '": EOF', null, null), 1); }
-    // Обрыв, на который уходит время ответа (как настоящий EOF по тайм-ауту).
-    if (w.eofWhen && w.eofWhen(method, decodeURIComponent(p), w.calls.length)) {
-      return setTimeout(() => { clock.t += w.step; cb('Get "' + url + '": EOF', null, null); }, 1);
-    }
-    if (/[^\x00-\x7F]/.test(url)) return reply(400, 'bad path');
-    // Точечный сбой: предикат по методу, пути и номеру вызова.
-    if (w.fail && w.fail(method, decodeURIComponent(p), w.calls.length, o)) return reply(500, 'oops');
-    const m = p.match(/^\/proxies\/([^/?]+)(\/delay)?/);
-    if (m && !m[2]) {
-      const name = decodeURIComponent(m[1]);
-      if (name === DUMMY) return reply(200, JSON.stringify({ name, type: 'Socks5', alive: false, delay: 0, history: [] }));
-      const x = g[name];
-      if (!x) return reply(404, '{"message":"Resource not found"}');
-      if (method === 'get') return reply(200, JSON.stringify({ alive: alive(name), all: x.all, delay: 0, name, now: nowOf(name), type: x.type }));
-      if (method === 'put') {
-        const want = JSON.parse(o.body).name;
-        if (x.all.indexOf(want) < 0) return reply(400, '{"message":"Selector update error: proxy not exist"}');
-        if (x.type === 'URLTest' || x.type === 'LoadBalance') return reply(400, '{"message":"Must be a Selector"}');
-        if (x.type === 'Fallback') { x.pin = want; x.pinAt = clock.t; } else x.now = want;
-        return reply(204, '');
+  const w = createStash({
+    groups: g, step: opts.step, hang: opts.hang, eof: opts.eof, eofStep: false, eofWhen: opts.eofWhen,
+    fail: opts.fail, builtins: false, urltest: 'reject', msg: { selectorOnly: '{"message":"Must be a Selector"}' },
+    nowOf: (n) => nowOf(n),
+    entry: (name, x) => ({ alive: alive(name), all: x.all, delay: 0, name, now: nowOf(name), type: x.type }),
+    route: (method, p, o, reply) => {
+      const m = p.match(/^\/proxies\/([^/?]+)(\/delay)?/);
+      if (m && m[2]) return reply(200, '{"delay":42}');
+      if (m && decodeURIComponent(m[1]) === DUMMY) {
+        return reply(200, JSON.stringify({ name: DUMMY, type: 'Socks5', alive: false, delay: 0, history: [] }));
       }
-      return reply(405, 'Method Not Allowed');
-    }
-    if (m && m[2]) return reply(200, '{"delay":42}');
-    if (p === '/') return reply(200, '{"hello":"stash","mixed-port":7890}');
-    if (p === '/configs') return reply(200, '{"mode":"rule","mixed-port":7890}');
-    if (p === '/providers/proxies') return reply(200, '{"providers":{"RH-Lastdep":{"vehicleType":"HTTP","proxies":[1,2,3]}}}');
-    if (p === '/connections') {
-      return reply(200, JSON.stringify({ connections: [{ id: '1', chains: ['узел', 'RH-AI-W'], upload: 1, download: 2,
-        metadata: { host: PRIVATE_HOST, network: 'tcp' } }] }));
-    }
-    if (p.startsWith('/connections/')) return reply(405, 'Method Not Allowed');
-    if (p.startsWith('/providers/proxies/')) return reply(404, '{"message":"Resource not found"}');
-    if (p.startsWith('/group')) return reply(404, '404 page not found');
-    if (p.startsWith('/cache/')) return reply(405, 'Method Not Allowed');
-    if (p.startsWith('/rules') || p.startsWith('/providers/rules')) return reply(200, '{"rules":[1,2],"providers":{}}');
-    return reply(404, '404 page not found');
-  };
+      if (m) return undefined;                           // группы — общий контроллер
+      if (p === '/') return reply(200, '{"hello":"stash","mixed-port":7890}');
+      if (p === '/configs') return reply(200, '{"mode":"rule","mixed-port":7890}');
+      if (p === '/providers/proxies') return reply(200, '{"providers":{"RH-Lastdep":{"vehicleType":"HTTP","proxies":[1,2,3]}}}');
+      if (p === '/connections') {
+        return reply(200, JSON.stringify({ connections: [{ id: '1', chains: ['узел', 'RH-AI-W'], upload: 1, download: 2,
+          metadata: { host: PRIVATE_HOST, network: 'tcp' } }] }));
+      }
+      if (p.startsWith('/connections/')) return reply(405, 'Method Not Allowed');
+      if (p.startsWith('/providers/proxies/')) return reply(404, '{"message":"Resource not found"}');
+      if (p.startsWith('/group')) return reply(404, '404 page not found');
+      if (p.startsWith('/cache/')) return reply(405, 'Method Not Allowed');
+      if (p.startsWith('/rules') || p.startsWith('/providers/rules')) return reply(200, '{"rules":[1,2],"providers":{}}');
+      return reply(404, '404 page not found');
+    },
+  });
+  Object.assign(w, { model, manualStart: opts.manualStart || null, wrapNoSkip: !!opts.wrapNoSkip });
+  if (w.manualStart) g[P + 'Ручной'].now = w.manualStart;
   return w;
 }
 
 function sandboxFor(w, code, file, extra = {}) {
-  const state = { done: null, doneCalls: 0, note: null };
-  const RealDate = Date;
-  function FakeDate(...a) { return a.length ? new RealDate(...a) : new RealDate(w.clock.t); }
-  FakeDate.now = () => w.clock.t;
-  const sb = Object.assign({
-    console: { log: () => {} },
-    JSON, Math, Date: FakeDate, Object, Array, String, Number, Boolean, RegExp, Error,
-    isNaN, parseInt, parseFloat, isFinite, encodeURIComponent, decodeURIComponent,
-    setTimeout: (fn, ms) => setTimeout(fn, Math.max(1, Math.round((ms || 0) / 1000))),
-    clearTimeout,
-    $environment: { 'controller-url': 'http://127.0.0.1:9090', 'controller-authorization': SECRET, 'stash-version': '3.4.1' },
-    $notification: { post: (t, s, b, o) => { state.note = { t, s, b, o: o || null }; } },
-    $persistentStore: { read: (k) => (k in w.store ? w.store[k] : null), write: (v, k) => { w.store[k] = v; return true; } },
-    $httpClient: {
-      get: (o, cb) => w.handle('get', o, cb),
-      put: (o, cb) => w.handle('put', o, cb),
-      post: () => { throw new Error('проба не должна слать POST'); },
-      patch: () => { throw new Error('проба не должна менять настройки'); },
-      delete: () => { throw new Error('проба не должна удалять'); },
-    },
-    $done: (v) => { state.doneCalls++; state.done = v || {}; },
-  }, extra);
-  sb.globalThis = sb;
-  vm.runInContext(code, vm.createContext(sb), { filename: file });
-  return state;
+  return sandbox(w, code, file, { extra, forbid: ['post', 'patch', 'delete'] });
 }
 
 async function settle(state, ms = 5000) {
-  const until = Date.now() + ms;
-  while (!state.done && Date.now() < until) await new Promise((r) => setTimeout(r, 3));
-  assert.ok(state.done, 'проба не дошла до $done');
-  await new Promise((r) => setTimeout(r, 120));
-  assert.equal(state.doneCalls, 1, 'ровно один $done на любой ветви');
-  return state;
+  return settleOnce(state, ms, 120);
 }
 
 async function runOnce(w) {
