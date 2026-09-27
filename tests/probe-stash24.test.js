@@ -83,8 +83,16 @@ function world(o = {}) {
   w.rules = o.rules || RULES_OK;
   return w;
 }
+// Время песочницы сжато в 1000 раз: сторож 75 с = 75 мс реального времени,
+// и под нагрузкой (параллельный прогон всех тестов) он срабатывал раньше,
+// чем подставной контроллер успевал ответить на 10 запросов. Поэтому сторож
+// (и любой таймер ≥ 60 с) в обычных прогонах ждёт 4 с реального времени —
+// меньше предела settle (5 с), но с запасом на нагрузку; повтор EOF (1 с)
+// по-прежнему 1 мс. Проверка сторожа (контроллер висит) идёт с fastGuard —
+// прежним сжатием, иначе settle её не дождётся.
+const slowGuard = (ms) => ((ms || 0) >= 60000 ? 4000 : Math.max(1, Math.round((ms || 0) / 1000)));
 async function run(w, o = {}) {
-  const s = sandbox(w, CODE, FILE, { extra: o.tile ? { $script: { type: 'tile' } } : {}, ...(o.sb || {}) });
+  const s = sandbox(w, CODE, FILE, { extra: o.tile ? { $script: { type: 'tile' } } : {}, ...(o.fastGuard ? {} : { timer: slowGuard }), ...(o.sb || {}) });
   await settle(s, 5000, o.grace === undefined ? 20 : o.grace);
   return s;
 }
@@ -174,6 +182,7 @@ test('касание T: после чтения группы T и /rules, оди
   assert.deepEqual([d2.касание.код, d2.касание.обрыв], [null, true]);
   assert.equal(Object.keys(d2.сейчас).length, 4);
   assert.equal(state(w2).журнал[0].касание, 'обрыв');
+  assert.deepEqual(state(w2).касания, { сделано: 0, обрыв: 1, пропущено: 0 }, 'обрыв касания засчитан как сделанное');
 });
 
 test('сверка /rules: правило касания после RULE-SET / GEOIP / MATCH / SUFFIX, нет правила, чужой прокси — касания нет', async () => {
@@ -188,6 +197,9 @@ test('сверка /rules: правило касания после RULE-SET / G
     ['нет правила касания в /rules', [R('Domain', 'a.example', 'DIRECT')]],
     ['правило хоста касания ведёт в DIRECT', [R('Domain', TOUCH_HOST, 'DIRECT'), touch]],
     ['правило хоста касания ведёт в RH-AI', [R('DOMAIN', TOUCH_HOST.toUpperCase(), 'RH-AI'), touch]],
+    // DOMAIN — точное совпадение хоста: правило на часть имени — не правило касания.
+    ['нет правила касания в /rules', [R('Domain', 'android.com', 'RH-Т24-T'), R('Match', '', 'RH-Главный')]],
+    ['нет правила касания в /rules', [R('Domain', 'check.android.com', 'RH-Т24-T'), R('RuleSet', 'rh-ads', 'REJECT')]],
   ];
   for (const [why, rules] of cases) {
     const w = world({ rules });
@@ -197,7 +209,8 @@ test('сверка /rules: правило касания после RULE-SET / G
     assert.equal(d.правило_касания, why);
   }
   // Разрешено: перед правилом касания — только чужие DOMAIN; тип в любом регистре.
-  for (const rules of [[R('Domain', 'a.example', 'DIRECT'), R('DOMAIN', TOUCH_HOST, 'RH-Т24-T'), R('Match', '', 'X')], [R('domain', TOUCH_HOST, 'RH-Т24-T')]]) {
+  for (const rules of [[R('Domain', 'a.example', 'DIRECT'), R('DOMAIN', TOUCH_HOST, 'RH-Т24-T'), R('Match', '', 'X')], [R('domain', TOUCH_HOST, 'RH-Т24-T')],
+    [R('Domain', 'check.android.com', 'DIRECT'), R('Domain', 'x' + TOUCH_HOST, 'DIRECT'), R('Domain', TOUCH_HOST, 'RH-Т24-T')]]) {
     const w = world({ rules });
     await run(w);
     assert.equal(touchCalls(w), 1, JSON.stringify(rules));
@@ -224,6 +237,13 @@ test('ответ /rules непонятного формата или не про
     assert.equal(touchCalls(w), 0);
     assert.deepEqual(d.касание, { пропущено: 'нет данных: /rules не прочитан' });
   }
+  // Одиночный обрыв /rules (EOF, ST18) — повтор, как у прочих чтений; касание идёт.
+  const w1 = world();
+  let once = 0;
+  w1.eofWhen = (m, p) => p === '/rules' && once++ === 0;
+  await run(w1);
+  assert.equal(w1.calls.filter((c) => c.p === '/rules').length, 2, 'нет повтора /rules после EOF');
+  assert.equal(touchCalls(w1), 1);
 });
 
 test('касание пропущено по группе: нет группы T, now T не TA/TB, группа T не прочитана, контроллер молчит — ни /rules, ни касания', async () => {
@@ -275,6 +295,15 @@ test('вердикт T: без единого касания — «T не кас
   const w2 = world({ notice: { [P + 'T']: 0 } });
   await series(w2, MS + 9 * MIN + 30000, 2);
   assert.equal(dump(await run(w2, { tile: true })).ans.вывод[P + 'T'], 'замечает за ≤ 1 мин');
+  // Обрыв без пропусков: оговорка с числом обрывов, а не чистый вывод.
+  const w3 = world({ notice: { [P + 'T']: 0 } });
+  w3.eofWhen = (m, p) => p === '/generate_204';
+  await series(w3, MS + 9 * MIN + 30000, 1);
+  w3.eofWhen = null;
+  await series(w3, MS + 10 * MIN + 30000, 1);
+  const d3 = dump(await run(w3, { tile: true })).ans;
+  assert.equal(state(w3).касания.пропущено, 0);
+  assert.equal(d3.вывод[P + 'T'], 'замечает за ≤ 1 мин (касаний 2, обрывов 1, пропущено 0)');
 });
 
 test('замечает и возвращается: задержка от начала окна, нижняя граница — прошлое чтение с A; вердикт по группе', async () => {
@@ -334,6 +363,29 @@ test('«не заметил за окно» — только когда мёрт
   d = dump(await run(w3, { tile: true })).ans;
   assert.equal(d.вывод[P + 'N'], 'замечает за ≤ 1 мин');
   assert.equal(d.возврат[P + 'N'], 'не вернулся за окно');
+});
+
+test('возврат: без опоры (прошлое B — два окна назад) — не «вернулся»; короткие данные в живом окне — не «не вернулся»', async () => {
+  // Уход в K0+1 засчитан, затем EOF-пропуск двух окон; первое чтение K0+4 (живое) — A.
+  const w = world({ notice: { [P + 'L']: 0 }, back: { [P + 'L']: 0 } });
+  await series(w, MS + 9 * MIN + 30000, 2);                     // K0 — A, K0+1 — B
+  w.clock.t = MS + 4 * WIN + 30000;
+  let d = dump(await run(w, { tile: true })).ans;
+  assert.deepEqual(state(w).переходы.map((x) => [x.г, x.вид]), [['L', 'ушёл']], 'возврат засчитан без опоры');
+  assert.equal(d.возврат[P + 'L'], 'нет данных');
+  // Живое окно после мёртвого: B только до 4,5-й минуты, дальше EOF, окно закрыто.
+  const w2 = world({ notice: { [P + 'N']: 0 }, back: { [P + 'N']: 99 } });
+  await series(w2, MS + 9 * MIN + 30000, 2);                    // K0 — A, K0+1 — B
+  await series(w2, MS + 2 * WIN + 30000, 5);                    // K0+2 — B, 0,5…4,5 мин
+  w2.clock.t = MS + 3 * WIN + 30000;
+  d = dump(await run(w2, { tile: true })).ans;
+  assert.equal(d.возврат[P + 'N'], 'нет данных', 'короткие данные прочитаны как «не вернулся»');
+  // Для сравнения: B и на 8,5-й минуте — «не вернулся за окно».
+  const w3 = world({ notice: { [P + 'N']: 0 }, back: { [P + 'N']: 99 } });
+  await series(w3, MS + 9 * MIN + 30000, 2);
+  await series(w3, MS + 2 * WIN + 8 * MIN + 30000, 1);
+  w3.clock.t = MS + 3 * WIN + 30000;
+  assert.equal(dump(await run(w3, { tile: true })).ans.возврат[P + 'N'], 'не вернулся за окно');
 });
 
 test('нет данных ≠ замечает: нет now, now не A/B, B без опоры (первое чтение, пропуск окна) — не переход', async () => {
@@ -435,7 +487,7 @@ test('замок, сторож, EOF с повтором: один $done, жур�
   assert.equal(w.calls.length, 0);
   const wh = world();
   wh.hang = true;
-  const sh = await run(wh, { grace: 300 });
+  const sh = await run(wh, { grace: 300, fastGuard: true });
   assert.match(sh.done.content, /КОНТРОЛЛЕР НЕ ОТВЕТИЛ \(сторож\)/);
   assert.equal(wh.store.RH_ST24, undefined);
   assert.equal(wh.store.RH_ST24_lock, '');
