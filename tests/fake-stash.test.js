@@ -197,6 +197,12 @@ test('обходной узел: PUT и /delay отвечают как устр�
   const w2 = createStash({ groups: { Р: { type: 'Selector', now: node, all: [node] } } });
   await settle(sandbox(w2, code, 'bypass.js'), 5000, 150, { allowBypass: true });
   assert.deepEqual(w2.bypass, [{ delay: 'Р', leaf: node }]);
+  // Слово в начале имени («Обход 🇺🇸 США #3») — тоже обход (BYPASS_WORD в любом месте).
+  const head = BYPASS_WORD + ' US #3';
+  const w3 = createStash({ groups: { Р: { type: 'Selector', now: 'DIRECT', all: ['DIRECT', head] } } });
+  assert.equal((await put(w3, 'Р', head)).status, 204);
+  await ask(w3, 'get', gp('Р') + '/delay');
+  assert.deepEqual(w3.bypass, [{ group: 'Р', want: head }, { delay: 'Р', leaf: head }]);
 });
 
 test('маршруты: свой route раньше общего; /proxies — список; DIRECT встроен, builtins: false — нет', async () => {
@@ -237,6 +243,8 @@ test('песочник: $environment, уведомление с буфером, 
   assert.equal(w.store.K, 'v1');
   const st2 = sandbox(createStash(), '$httpClient.delete({ url: "http://127.0.0.1:9090/x" }, function (e, r) { $done({ s: r.status }); });', 'd.js');
   assert.equal((await settle(st2, 1000, 5)).done.s, 404, 'DELETE по умолчанию разрешён');
+  const d = '$done(["post", "patch"].filter(function (m) { try { $httpClient[m]({ url: "x" }, function () {}); return false; } catch (x) { return true; } }));';
+  assert.deepEqual(plain((await settle(sandbox(createStash(), d, 'f.js'), 1000, 5)).done), ['post', 'patch'], 'POST и PATCH запрещены по умолчанию');
 });
 
 test('таймеры: по умолчанию ms/1000; stretch растягивает до timer (дефект ST14)', async () => {
@@ -259,4 +267,6 @@ test('settle: второй $done ловится, даже запоздалый; 
   await assert.rejects(settle(sandbox(w, '1;', 'z.js'), 50, 5), /не дошла до \$done/);
   const one = await settle(sandbox(w, '$done({ ok: 1 });', 'o.js'), 1000, 5);
   assert.equal(one.doneCalls, 1);
+  const bare = await settle(sandbox(w, '$done();', 'b.js'), 1000, 5);
+  assert.deepEqual(plain(bare.done), {}, '$done() без аргумента — пустой объект, как у Stash');
 });
