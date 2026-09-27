@@ -1,19 +1,19 @@
-// Профиль Stash S-draft-10: метка `#SUBSCRIBED <url>` первой строкой.
+// Профиль Stash S-draft-11: строки `#SUBSCRIBED` в выдаче НЕТ (S-draft-10 её
+// добавлял — снято).
 //
-// ЗАЧЕМ. Узлы вшиты в профиль (S-draft-4), а профиль Stash без метки сам не
-// обновляется: провайдер сменил узлы — вне дома интернета нет до ручного
-// обновления. С меткой первой строкой Stash считает профиль управляемым
-// провайдером и перекачивает его с указанного адреса
-// (stash.wiki/en/features/service-provider-subscription).
+// ЗАЧЕМ СНЯТО. Worker отдавал одну строку, а в файле на устройстве их две:
+// вторую дописывает сам Stash, сохраняя профиль, скачанный по ссылке
+// (проверено 27.09: живой /config — одна строка, файл на устройстве — две).
+// Stash и так считает такой профиль подписанным; наша строка лишняя. Да и
+// обновление по сроку идёт только на переднем плане (экран «Ресурсы») —
+// фоновому обновлению узлов она не помогает (опыт ST22).
 //
-// Что сторожится и почему:
-//   * метка — ровно ПЕРВАЯ строка и ровно одна: иначе Stash её не узнает;
-//   * адрес в метке — тот, по которому профиль скачан (/t/<токен>/config?key=),
-//     сверка на живом эндпоинте, а не только на renderProfile: не тот адрес —
-//     тихий отказ (Stash обновляется не с того ключа или получает 403);
-//   * адрес совпадает с config_url админки — оттуда Диана берёт ссылку;
-//   * YAML-комментарий не ломает разбор (PyYAML, если есть на машине);
-//   * Loon и routehub.conf не тронуты (правило парности, боевой контур).
+// Что сторожится:
+//   * ни в одной форме членства, ни на живом /config нет строки #SUBSCRIBED;
+//   * первая строка — шапка с версией (как до S-draft-10);
+//   * функции subscribeUrl в слое нет (мёртвый код не возвращается);
+//   * Loon и routehub.conf не тронуты;
+//   * профиль разбирается PyYAML (если есть на машине).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,6 +28,7 @@ const TOKEN = 'b'.repeat(32);
 const ORIGIN = 'https://w.invalid';
 const LINES = [nodeLine('[VPN] ' + DE + ' Германия #1'), nodeLine('[Обход] ' + DE + ' Германия #7')];
 const CTX = { key: 'k2', base: ORIGIN + '/t/' + TOKEN, masterLines: LINES, state: {} };
+const HEAD = '# RouteHub — профиль Stash, ' + P.VERSION;
 
 function envFor(client) {
   return makeEnv({
@@ -42,35 +43,20 @@ async function fetchText(url, client) {
 }
 const first = (t) => t.split('\n')[0];
 
-test('renderProfile: первая строка — #SUBSCRIBED base + /config?key=, в обеих формах членства', () => {
-  const want = '#SUBSCRIBED ' + ORIGIN + '/t/' + TOKEN + '/config?key=k2';
+test('renderProfile: строки #SUBSCRIBED нет ни в одной форме членства; первая строка — шапка', () => {
   for (const t of [P.renderProfile(CTX), P.renderProfile({ ...CTX, membership: 'provider' })]) {
-    const lines = t.split('\n');
-    assert.equal(lines[0], want);
-    assert.equal(lines[1], '# RouteHub — профиль Stash, ' + P.VERSION, 'прежняя шапка — следующей строкой');
-    assert.equal(lines.filter((l) => l.indexOf('#SUBSCRIBED') >= 0).length, 1, 'метка не одна');
+    assert.ok(t.indexOf('SUBSCRIBED') < 0, 'метка вернулась');
+    assert.equal(first(t), HEAD);
   }
-  assert.equal(P.subscribeUrl(CTX), want.slice('#SUBSCRIBED '.length));
+  assert.equal(P.subscribeUrl, undefined, 'subscribeUrl вернулся в слой');
 });
 
-test('живой /config (CLIENT=stash): адрес в метке — ровно адрес запроса', async () => {
-  const url = ORIGIN + '/t/' + TOKEN + '/config?key=k1';
-  const t = await fetchText(url, 'stash');
-  assert.equal(first(t), '#SUBSCRIBED ' + url);
-  assert.ok(t.split('\n').slice(1).every((l) => !/^\s*#SUBSCRIBED/.test(l)), '#SUBSCRIBED не только первой строкой');
-});
-
-test('запрос с ?token= — метка в форме /t/<токен>/, и по ней профиль отдаётся с той же меткой', async () => {
-  const canon = ORIGIN + '/t/' + TOKEN + '/config?key=k1';
-  const t = await fetchText(ORIGIN + '/config?key=k1&token=' + TOKEN, 'stash');
-  assert.equal(first(t), '#SUBSCRIBED ' + canon);
-  assert.equal(first(await fetchText(canon, 'stash')), '#SUBSCRIBED ' + canon, 'обновление по метке меняет адрес');
-});
-
-test('адрес в метке совпадает с config_url админки (оттуда Диана берёт ссылку)', async () => {
-  const row = T.deviceRow(new URL(ORIGIN + '/admin/keys'), 'k1', { token: TOKEN });
-  const t = await fetchText(row.config_url, 'stash');
-  assert.equal(first(t), '#SUBSCRIBED ' + row.config_url);
+test('живой /config (CLIENT=stash): строки #SUBSCRIBED нет, первая — шапка', async () => {
+  for (const url of [ORIGIN + '/t/' + TOKEN + '/config?key=k1', ORIGIN + '/config?key=k1&token=' + TOKEN]) {
+    const t = await fetchText(url, 'stash');
+    assert.ok(t.indexOf('SUBSCRIBED') < 0, url);
+    assert.equal(first(t), HEAD);
+  }
 });
 
 test('Loon: /config без #SUBSCRIBED, routehub.conf не тронут', async () => {
@@ -80,16 +66,14 @@ test('Loon: /config без #SUBSCRIBED, routehub.conf не тронут', async 
 });
 
 const PY = spawnSync('python3', ['-c', 'import yaml'], { encoding: 'utf8' });
-test('профиль с меткой разбирается настоящим YAML-парсером (обе формы)', { skip: PY.status !== 0 && 'нет python3 + PyYAML' }, () => {
+test('профиль разбирается настоящим YAML-парсером (обе формы)', { skip: PY.status !== 0 && 'нет python3 + PyYAML' }, () => {
   const src = 'import sys, json, yaml\nd = yaml.safe_load(sys.stdin.read())\n' +
     'print(json.dumps({"keys": sorted(d.keys()), "mode": d["mode"], "n": len(d["proxy-groups"])}, ensure_ascii=False))';
   for (const t of [P.renderProfile(CTX), P.renderProfile({ ...CTX, membership: 'provider' })]) {
-    assert.equal(first(t).indexOf('#SUBSCRIBED '), 0);
     const r = spawnSync('python3', ['-c', src], { input: t, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     const d = JSON.parse(r.stdout);
     assert.equal(d.mode, 'rule');
     assert.ok(d.n > 5, 'групп подозрительно мало');
-    assert.ok(d.keys.indexOf('SUBSCRIBED') < 0 && d.keys.every((k) => k.indexOf('http') < 0), 'метка разобрана как ключ');
   }
 });

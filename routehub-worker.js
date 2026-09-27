@@ -24,6 +24,7 @@
 //   src/files.js — манифест файлов, встроенных в сборку (Text)     (—)
 //   src/repo.js  — /t/<токен>/repo/<путь> и переписчик ссылок      (files, store)
 //   src/clients/loon.js — синтаксис конфига Loon: AI-блоки, подстановки
+//   src/clients/stash-*.js — клиентский слой Stash; stash-lab.js — муляжи опытов
 //
 // МОДЕЛЬ ОДНОЙ ПОДПИСКИ: /nodes отдаёт оба набора (🛜/📱); каждая функция —
 // select-родитель из двух fallback-детей (-W/-C); netwatch флипает родителя по
@@ -46,6 +47,7 @@ import * as REPO from './src/repo.js';
 import * as LOON from './src/clients/loon.js';
 import * as STASH from './src/clients/stash.js';
 import * as STASH_PROFILE from './src/clients/stash-profile.js';
+import * as STASH_LAB from './src/clients/stash-lab.js';
 import * as CLIENTS from './src/clients/registry.js';
 
 export default {
@@ -77,6 +79,11 @@ export default {
       if (req.method === 'GET' && url.pathname === '/version') return UTIL.jsonResp({ worker: CONST.WORKER_VER });
       // Диагностическая страница, без ключа и токена: см. api/misc.js.
       if (req.method === 'GET' && url.pathname === '/mixed') return API.handleMixed(MIXED_HTML);
+      // ST22: муляжи поставщика для тестовых групп override Lab — без токена и
+      // ключа, только TEST-NET, без D1; отвечает лишь стенд Stash (clients/stash-lab.js).
+      if (req.method === 'GET' && url.pathname === STASH_LAB.T22_PATH) return STASH_LAB.handleT22Nodes(env);
+      // Пульс — GET и HEAD: ядра Clash-семейства проверяют узел запросом HEAD.
+      if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === STASH_LAB.PULSE_PATH) return STASH_LAB.handlePulse(url, env);
       if (req.method === 'GET' && url.pathname === '/config') return await API.handleConfig(url, env, tok);
       // v1.11.0 (перенос v1.12.0 из main): файлы приватного репозитория из
       // сборки. Токен — только из пути /t/<токен>/ (не ?token=); без него —
@@ -124,5 +131,6 @@ export default {
 // Новый клиент добавляется отдельным ключом (STASH), а не спредом.
 // STASH_PROFILE — каркас профиля (группы, DNS, версия S-draft). Отдельным
 // ключом по той же причине: у него свои renderConfig и aiBlocks.
+// STASH_LAB — муляжи опытов лаборатории Stash (/lab/t22-nodes, /lab/pulse).
 // CLIENTS — реестр клиентских слоёв и выбор активного по env.CLIENT (ADR-01).
-export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...REPO, LOON, STASH, STASH_PROFILE, CLIENTS };
+export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...REPO, LOON, STASH, STASH_PROFILE, STASH_LAB, CLIENTS };

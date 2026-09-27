@@ -27,6 +27,7 @@
 
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { installUse } from './fake-stash-use.js';
 
 export const T0 = 1_800_000_000_000;
 export const SECRET = 'Bearer ОЧЕНЬ-СЕКРЕТНО';
@@ -69,7 +70,9 @@ function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } 
 //   onUnknown(имя, want, w)    — побочный эффект PUT несуществующего члена;
 //   noMove(имя, w)             — 204 без смены выбора;
 //   msg         — замена текстов MSG;
-//   connections — массив для GET /connections.
+//   connections — массив для GET /connections;
+//   providers, useOrder — поставщики прокси и группы use + filter (ST22),
+//                 GET /providers/proxies[/{имя}] — см. tests/fake-stash-use.js.
 export function createStash(o = {}) {
   const g = o.groups || {};
   const msg = { ...MSG, ...(o.msg || {}) };
@@ -78,10 +81,12 @@ export function createStash(o = {}) {
     step: o.step || 30, hang: !!o.hang, eofLeft: o.eof || 0, eofWhen: o.eofWhen || null,
     fail: o.fail || null, late: o.late || null, lateIdx: -1,
   };
+  installUse(w, o);
   const known = (n) => g[n] || (o.builtins !== false && BUILTIN[n] ? { type: BUILTIN[n] } : null);
   w.nowOf = (n) => {
     const x = g[n];
     if (o.nowOf) return o.nowOf(n, x, w);
+    if (x.use) return w.useNow(x);
     if (x.now !== undefined) return x.now;
     return (x.all || []).find((m) => m.indexOf(BYPASS_WORD) < 0);
   };
@@ -131,6 +136,7 @@ export function createStash(o = {}) {
       return reply(f.status, f.body);
     }
     if (o.route) { const r = o.route(method, p, opt, reply, w); if (r !== undefined && r !== false) return; }
+    if (w.providerRoute(method, p, reply, msg, dec)) return;
     if (m) return proxy(method, call.name, !!m[2], opt, reply);
     if (p === '/' && method === 'get') return reply(200, '{"hello":"stash"}');
     if (p === '/proxies' && method === 'get') {
