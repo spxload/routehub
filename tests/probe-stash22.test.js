@@ -332,3 +332,20 @@ test('замок, сторож, EOF с повтором, отказ записи
   await run(wr);
   assert.equal(wr.writes().filter((c) => c.name === FB).length, 2, 'после отказа — попытка в следующем прогоне');
 });
+
+// ── СТОРОЖ И CRON (дефект ST14; по тестировщику — как у ST15, ST18–ST21) ──
+// Худший честный путь: последний запрос у края бюджета, CTRL_SEC, повтор
+// после обрыва — 1 с, растянутая фоном Stash до 4 с, и ещё CTRL_SEC.
+const numOf22 = (k) => Number(CODE.match(new RegExp('var ' + k + ' = (\\d+)'))[1]);
+
+test('сторож позже худшего честного пути с повтором и растяжением фона (ST14)', () => {
+  const worst = numOf22('BUDGET_MS') + 2 * numOf22('CTRL_SEC') * 1000 + 4 * 1000;
+  assert.ok(numOf22('GUARD_MS') > worst, 'сторож ' + numOf22('GUARD_MS') + ' мс не позже худшего пути ' + worst + ' мс');
+});
+
+test('timeout задания cron в Lab не меньше сторожа и бюджета пробы', () => {
+  const ov = fs.readFileSync(path.join(ROOT, 'plugins/RouteHub-Stash-Lab.stoverride'), 'utf8');
+  const to = Number(/\n {6}timeout:\s*(\d+)/.exec(ov)[1]) * 1000;
+  assert.ok(to >= numOf22('GUARD_MS'), 'cron обрывает прогон (' + to + ' мс) раньше сторожа');
+  assert.ok(to >= numOf22('BUDGET_MS'), 'cron обрывает прогон раньше бюджета');
+});
