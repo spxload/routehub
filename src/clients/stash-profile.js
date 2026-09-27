@@ -36,7 +36,8 @@
 //     поставщика в профиль. Пригодится, если найдётся способ задать порядок.
 //  2. Тест поставщика НЕ ПЕРЕОПРЕДЕЛЯЕТСЯ: ключи benchmark-* сняты, см.
 //     комментарий у TEST_URL ниже.
-//  3. «Слабый DIRECT»: RH-RU — fallback с DIRECT первым, обход вторым.
+//  3. «Слабый DIRECT»: RH-RU — fallback с прямыми узлами первыми (S-draft-12,
+//     до того DIRECT), обход последним.
 //     В Loon проверено, что fallback пробивает DIRECT и уходит дальше при
 //     whitelist. Для Stash это НЕ проверено.
 //  4. Группам не задан url теста: ЗАМЕР ЖИВЁТ НА УЗЛЕ (`benchmark-url` и
@@ -61,9 +62,10 @@
 //     руками», теперь появился «DIRECT ошибочно сочли мёртвым, и ВЕСЬ
 //     прочий иностранный трафик молча ушёл на узлы, включая обходные».
 //     Поэтому правка живёт на стенде Stash и в боевой Loon не переносится.
-//  7. S-draft-9: наблюдательная RH-Часы (clients/stash-watch.js) правилами
-//     не используется; `lazy: false` — проверяет стенд (проба ST21). Узел
-//     `type: direct` с benchmark-* — только в override Lab, не здесь.
+//  7. S-draft-12: RH-RU = [RH-Прямо-RU-1, RH-Прямо-RU-2, RH-Обход] — узлы
+//     `type: direct` со своими адресами проверки (clients/stash-watch.js),
+//     в `proxies:` профиля в обеих формах членства. RH-Часы (S-draft-9)
+//     снята; наблюдательная RH-Прямо-RU-Часы правилами не используется.
 // История версий — CHANGELOG.md в корне репозитория.
 
 import { PROVIDER } from './stash-members.js';
@@ -72,12 +74,12 @@ import { DNS_BOOT, DNS_BYPASS_NS, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, b
 import { G_BYPASS, G_MAIN, G_RU, profileGroups, rankBypass, serviceGroups } from './stash-service.js';
 import { buildRules } from './stash-rules.js';
 import { buildProviders, buildSetRules } from './stash-sets.js';
-import { watchGroups } from './stash-watch.js';
+import { directRuNodes, watchGroups } from './stash-watch.js';
 import { nodeToYaml, nodesToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
 // (поле conf_ver) и в первой строке профиля.
-const VERSION = 'S-draft-11';
+const VERSION = 'S-draft-12';
 
 // Поставщик прокси. interval — как часто Stash перечитывает файл узлов;
 // 600 с выбрано потому, что ПОРЯДОК членов групп меняется перевыдачей
@@ -114,10 +116,13 @@ function renderProfile(ctx) {
   // /nodes, — значит имена в `proxies:` и имена членов групп заведомо одни и
   // те же, и тихий отказ по расхождению имён невозможен по построению.
   const set = nodeSet(lines, state, o);
-  // S-draft-9: «часы» (clients/stash-watch.js) — в КОНЕЦ секции: правила на
-  // них не ссылаются, рабочие группы их не содержат, и в интерфейсе они не
-  // заслоняют рабочие.
+  // «Часы» (clients/stash-watch.js) — в КОНЕЦ секции: правила на них не
+  // ссылаются, и в интерфейсе они не заслоняют рабочие.
   const groups = profileGroups(lines, state, o).concat(watchGroups());
+  // S-draft-12: прямые узлы RH-RU — в `proxies:` профиля в ОБЕИХ формах
+  // членства (в форме Б — рядом с поставщиком): без описания член группы
+  // исчез бы молча, а RH-RU осталась бы с одним обходом.
+  const direct = directRuNodes();
   const useProvider = (o.membership === 'provider');
   const prov = {};
   prov[provider] = {
@@ -144,7 +149,8 @@ function renderProfile(ctx) {
       },
     }, 0),
     '',
-    useProvider ? yBlock({ 'proxy-providers': prov }, 0) : nodesToYaml(set.nodes).replace(/\n$/, ''),
+    useProvider ? yBlock({ 'proxy-providers': prov }, 0) + '\n\n' + nodesToYaml(direct).replace(/\n$/, '')
+      : nodesToYaml(set.nodes.concat(direct)).replace(/\n$/, ''),
     '',
     yBlock({ 'rule-providers': buildProviders(o.base, o.key) }, 0),
     '',

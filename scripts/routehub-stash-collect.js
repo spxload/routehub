@@ -1,6 +1,13 @@
 // =============================================================
 // routehub-stash-collect.js — RouteHub, сборщик метрик узлов для Stash
-var VERSION = 'stash-collect v0.2.3 (2026-09-25)';
+var VERSION = 'stash-collect v0.2.4 (2026-09-27)';
+//
+// v0.2.4 — под профиль S-draft-12: у RH-RU вместо DIRECT первыми стоят узлы
+//   `type: direct` RH-Прямо-RU-1 / -2 (src/clients/stash-watch.js). Журнал
+//   выбора считает штатным для RH-RU и их (RU_DIRECT), не только DIRECT;
+//   иначе каждый прогон поднимал бы ложную «ТРЕВОГА ВЫБОРА: RH-RU не на
+//   DIRECT». Обход и неизвестный член — тревога, как раньше. Больше ничего
+//   не менялось; сцепку имён держит tests/stash-collect-coupling.test.js.
 //
 // Тип: cron (каждые 20 мин). Аргумент: "<key>|<origin>|<opts>" —
 // та же форма, что у routehub-speedtest.js в Loon. `origin` включает префикс
@@ -230,6 +237,8 @@ var PARENTS = ['RH-AI', 'RH-АВТО', 'RH-Звонки'];
 var WATCH = ['RH-Главный', 'RH-RU', 'RH-Обход', 'RH-AI', 'RH-АВТО', 'RH-Звонки'];
 var G_MAIN = 'RH-Главный';
 var G_RU = 'RH-RU';
+// Прямые узлы RH-RU (S-draft-12, v0.2.4): штатный выбор RH-RU наравне с DIRECT.
+var RU_DIRECT = ['RH-Прямо-RU-1', 'RH-Прямо-RU-2'];
 var G_BYP = 'RH-Обход';
 var DIRECT = 'DIRECT';
 var POOL_W = 'RH-АВТО-W';
@@ -447,7 +456,7 @@ function readSelection(MAP) {
     // RH-Обход, стоящий на DIRECT, — это профиль без обходных узлов:
     // трафик уходит напрямую, платить не за что. Иначе — платит.
     alarm.push('РФ-трафик идёт по ПЛАТНОМУ обходу: ' + chainStr(G_RU));
-  } else if (ru[0] !== DIRECT) alarm.push(G_RU + ' не на DIRECT: ' + chainStr(G_RU));
+  } else if (ru[0] !== DIRECT && RU_DIRECT.indexOf(ru[0]) < 0) alarm.push(G_RU + ' не на DIRECT: ' + chainStr(G_RU));
   SEL_HEAD = alarm.length ? ('⚠ ТРЕВОГА ВЫБОРА: ' + alarm.join('; '))
     : ('выбор штатный: ' + G_MAIN + ' и ' + G_RU + ' на DIRECT');
   say('выбор групп: ' + parts.join(' · '));

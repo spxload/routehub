@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { T, worker, req, DE, NL, US, KZ } from './harness.js';
 import { makeEnv, nodeLine } from './mock-d1.js';
 import { orderNames, rankAuto } from '../src/clients/stash-order.js';
+import { directRuNodes } from '../src/clients/stash-watch.js';
 
 assert.equal(typeof T.STASH.buildGroups, 'function', 'неймспейс STASH пропал из __test');
 assert.equal(typeof T.CLIENTS.pickClient, 'function', 'неймспейс CLIENTS пропал из __test');
@@ -250,6 +251,8 @@ test('каждый член каждой группы профиля сущес�
     known.DIRECT = true;
     gs.forEach(function (x) { known[x.name] = true; });
     S.nodeSet(lines, STATE, {}).nodes.forEach(function (n) { known[n.name] = true; });
+    // S-draft-12: прямые узлы RH-RU описаны в `proxies:` профиля рядом с узлами подписки.
+    directRuNodes().forEach(function (n) { known[n.name] = true; });
     gs.forEach(function (x) {
       (x.proxies || []).forEach(function (n) {
         assert.ok(known[n], 'набор ' + k + ': член ' + n + ' группы ' + x.name + ' ни на что не ссылается');
