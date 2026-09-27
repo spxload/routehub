@@ -270,3 +270,39 @@ test('settle: второй $done ловится, даже запоздалый; 
   const bare = await settle(sandbox(w, '$done();', 'b.js'), 1000, 5);
   assert.deepEqual(plain(bare.done), {}, '$done() без аргумента — пустой объект, как у Stash');
 });
+
+// ST21: поля alive / history — только опциями; по умолчанию ответ прежний
+// (Stash 3.4.1 history у муляжа не отдал, ST20 — «нет поля» должно остаться
+// умолчанием, иначе тест пробы проверит выдуманное поле).
+test('aliveField / historyField: по умолчанию полей нет; с опцией — как в записи, DIRECT через groups', async () => {
+  const H = [{ time: '2026-09-27T10:00:00Z', delay: 120 }];
+  const mk = (o) => createStash({ ...o, groups: {
+    DIRECT: { type: 'Direct', alive: false, history: H },
+    [FB]: { type: 'Fallback', now: 'DIRECT', all: ['DIRECT'], alive: true, history: [] },
+    Без: { type: 'URLTest', now: 'DIRECT', all: ['DIRECT'] },
+  } });
+  const w0 = mk({});
+  for (const n of ['DIRECT', FB]) {
+    const r = await ask(w0, 'get', gp(n));
+    assert.equal(r.status, 200);
+    assert.equal('alive' in r.json, false, n + ': alive без опции');
+    assert.equal('history' in r.json, false, n + ': history без опции');
+  }
+  const w = mk({ aliveField: true, historyField: true });
+  const d = await ask(w, 'get', gp('DIRECT'));
+  assert.equal(d.json.alive, false);
+  assert.deepEqual(d.json.history, H);
+  assert.equal(d.json.type, 'Direct');
+  const f = await ask(w, 'get', gp(FB));
+  assert.equal(f.json.alive, true);
+  assert.deepEqual(f.json.history, []);
+  const b = await ask(w, 'get', gp('Без'));
+  assert.equal('alive' in b.json, false, 'поле не задано в записи — в ответе его нет');
+  assert.equal('history' in b.json, false);
+  const a = await ask(mk({ aliveField: true }), 'get', gp('DIRECT'));
+  assert.equal(a.json.alive, false);
+  assert.equal('history' in a.json, false, 'historyField независима от aliveField');
+  // Значение читается при каждом ответе: модель может менять его по ходу.
+  w.g.DIRECT.alive = true;
+  assert.equal((await ask(w, 'get', gp('DIRECT'))).json.alive, true);
+});

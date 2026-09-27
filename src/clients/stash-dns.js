@@ -80,4 +80,49 @@ const DNS_NS_POLICY = {
   '+.vkuser.net': 'system',
 };
 
-export { DNS_BOOT, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY };
+// ── S-draft-9: РЕЗОЛВ ИМЁН ОБХОДНЫХ СЕРВЕРОВ ─────────────────────────
+// Полевой факт 27.09: под whitelist в Stash все обходные узлы «тайм-аут», в
+// Loon те же узлы живы. Серверы узлов заданы ДОМЕННЫМИ именами, а профиль
+// резолвит их DoH, который под whitelist мёртв (сверка 08.09, см. выше).
+// Loon живёт потому, что у него «резервный запрос»: DoH первым, plain —
+// ТОЛЬКО при отказе DoH. У Stash резерва нет: «Stash will send concurrent
+// requests to all servers and use the fastest response»
+// (stash.wiki/en/features/dns-server).
+// ПОЧЕМУ НЕ `proxy-server-nameserver: [system, 77.88.8.8]`. Он глобален:
+// вне whitelist гонка отдала бы plain-ответ (отравленный, см. DNS_BOOT)
+// для серверов ВСЕХ узлов, включая обычные иностранные, — риск сломать
+// RH-АВТО в обычном режиме ради обхода.
+// ЧТО ДЕЛАЕМ. В nameserver-policy — ТОЛЬКО точные имена серверов обходных
+// узлов (tag bypass, как у RH-Обход), значение — список: вики разрешает
+// «a single DNS server or an array of DNS servers». Обычные узлы остаются
+// на DoH. `system` и 77.88.8.8 — ровно то, что живо под whitelist (08.09).
+// Точное имя старше шаблона («exact domain > wildcard»), поэтому `+.ru`
+// выше его не перебивает.
+// ⚠ НЕПРОВЕРЕННОЕ ДОПУЩЕНИЕ: что резолв адреса сервера прокси вообще
+// учитывает nameserver-policy. Вики этого не говорит. Довод за выбор: без
+// `proxy-server-nameserver` у ядер семейства Clash имя сервера резолвит
+// основной резолвер — тот, для которого policy и документирована; с этим
+// ключом включается «independent DNS query path», и учёт policy там описан
+// ещё меньше. Поэтому ключ не задаём. Попутный довод против допущения:
+// обходной домен в зоне .ru уже попадал бы в `+.ru: system`, а узлы всё
+// равно мертвы — значит либо домены вне .ru, либо policy к серверам прокси
+// не применяется. Проверка — на устройстве под whitelist (проба ST21 читает
+// alive обходных узлов без замера).
+// ИМЯ — только строго доменное: ключи сериализатор не кавычит, а приходят
+// они из подписки. IP (v4 и v6) пропускаются — резолвить нечего.
+const DNS_BYPASS_NS = ['system', '77.88.8.8'];
+const HOST_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
+
+// set — результат nodeSet: items[i] и nodes[i] описывают один узел.
+function bypassNsPolicy(set) {
+  const out = {};
+  const items = (set && set.items) || [], nodes = (set && set.nodes) || [];
+  items.forEach(function (it, i) {
+    if (!it || it.tag !== 'bypass' || !nodes[i]) return;
+    const host = String(nodes[i].server || '').toLowerCase();
+    if (HOST_RE.test(host)) out[host] = DNS_BYPASS_NS.slice();
+  });
+  return out;
+}
+
+export { DNS_BOOT, DNS_BYPASS_NS, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, bypassNsPolicy };

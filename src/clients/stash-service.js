@@ -54,7 +54,8 @@ function serviceGroups(masterLines, state, opts) {
   ];
 }
 
-// Секция proxy-groups целиком: служебные группы, затем три функции.
+// Рабочие группы профиля: служебные, затем три функции. Наблюдательные группы
+// S-draft-9 (clients/stash-watch.js) добавляет в конец секции renderProfile.
 function profileGroups(masterLines, state, opts) {
   return serviceGroups(masterLines, state, opts).concat(buildGroups(masterLines, state, opts));
 }

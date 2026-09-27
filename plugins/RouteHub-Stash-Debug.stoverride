@@ -1,0 +1,16 @@
+name: "RouteHub — подробный журнал Stash (на время опыта)"
+desc: "Включает log-level: debug поверх профиля стенда. Держать включённым только на время опыта и выключить сразу после."
+author: "RouteHub"
+category: "RouteHub"
+
+# Установка одной ссылкой (открыть на телефоне):
+# https://link.stash.ws/install-override/raw.githubusercontent.com/spxload/routehub/stash-client/plugins/RouteHub-Stash-Debug.stoverride
+#
+# Скаляр в override заменяет значение профиля (stash.wiki, Override:
+# «simple types with the same key ... will be directly overridden»), поэтому
+# log-level: info профиля становится debug, пока override включён.
+# Подробный журнал растёт быстро и может содержать адреса посещённых
+# сайтов: включить перед опытом (например, ST21, шаг 2), выключить сразу
+# после, выгрузку журнала в репозиторий не класть.
+
+log-level: debug

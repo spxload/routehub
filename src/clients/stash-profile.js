@@ -61,19 +61,23 @@
 //     руками», теперь появился «DIRECT ошибочно сочли мёртвым, и ВЕСЬ
 //     прочий иностранный трафик молча ушёл на узлы, включая обходные».
 //     Поэтому правка живёт на стенде Stash и в боевой Loon не переносится.
+//  7. S-draft-9: наблюдательные RH-Часы, RH-Тест-RU и узел RH-Прямо-RU
+//     (clients/stash-watch.js) правилами не используются. `lazy: false` и
+//     benchmark-* у `type: direct` — проверяет стенд (проба ST21).
 // История версий — CHANGELOG.md в корне репозитория.
 
 import { PROVIDER } from './stash-members.js';
 import { BENCH_TIMEOUT, BENCH_URL, nodeSet } from './stash-nodeset.js';
-import { DNS_BOOT, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY } from './stash-dns.js';
+import { DNS_BOOT, DNS_BYPASS_NS, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, bypassNsPolicy } from './stash-dns.js';
 import { G_BYPASS, G_MAIN, G_RU, profileGroups, rankBypass, serviceGroups } from './stash-service.js';
 import { buildRules } from './stash-rules.js';
 import { buildProviders, buildSetRules } from './stash-sets.js';
+import { watchGroups, watchNode } from './stash-watch.js';
 import { nodeToYaml, nodesToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
 // (поле conf_ver) и в первой строке самого профиля.
-const VERSION = 'S-draft-8';
+const VERSION = 'S-draft-9';
 
 // Поставщик прокси. interval — как часто Stash перечитывает файл узлов;
 // 600 с выбрано потому, что ПОРЯДОК членов групп меняется перевыдачей
@@ -104,7 +108,11 @@ function renderProfile(ctx) {
   // /nodes, — значит имена в `proxies:` и имена членов групп заведомо одни и
   // те же, и тихий отказ по расхождению имён невозможен по построению.
   const set = nodeSet(lines, state, o);
-  const groups = profileGroups(lines, state, o);
+  // S-draft-9: наблюдательные группы и узел (clients/stash-watch.js) — в
+  // КОНЕЦ своих секций: правила на них не ссылаются, рабочие группы их не
+  // содержат, и в интерфейсе они не заслоняют рабочие.
+  const groups = profileGroups(lines, state, o).concat(watchGroups());
+  const extra = [watchNode()];
   const useProvider = (o.membership === 'provider');
   const prov = {};
   prov[provider] = {
@@ -123,12 +131,18 @@ function renderProfile(ctx) {
       dns: {
         'default-nameserver': DNS_BOOT,
         nameserver: DNS_MAIN,
-        'nameserver-policy': DNS_NS_POLICY,
+        // S-draft-9: к постоянным зонам — имена обходных серверов
+        // (clients/stash-dns.js, bypassNsPolicy; ключ proxy-server-nameserver
+        // НЕ задаётся — почему, там же).
+        'nameserver-policy': Object.assign({}, DNS_NS_POLICY, bypassNsPolicy(set)),
         'fake-ip-filter': DNS_FAKE_IP_FILTER,
       },
     }, 0),
     '',
-    useProvider ? yBlock({ 'proxy-providers': prov }, 0) : nodesToYaml(set.nodes).replace(/\n$/, ''),
+    // Форма Б: узлы приезжают поставщиком, но наблюдательный узел в файле
+    // поставщика не живёт — он остаётся в `proxies:` профиля.
+    useProvider ? yBlock({ 'proxy-providers': prov }, 0) + '\n\n' + nodesToYaml(extra).replace(/\n$/, '')
+      : nodesToYaml(set.nodes.concat(extra)).replace(/\n$/, ''),
     '',
     yBlock({ 'rule-providers': buildProviders(o.base, o.key) }, 0),
     '',
@@ -157,8 +171,8 @@ const usesTemplate = false;
 const contentType = 'text/yaml; charset=utf-8';
 
 export {
-  DNS_BOOT, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, G_BYPASS, G_MAIN, G_RU,
+  DNS_BOOT, DNS_BYPASS_NS, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, G_BYPASS, G_MAIN, G_RU,
   PROVIDER_INTERVAL, PROVIDER_PATH,
-  TEST_TIMEOUT, TEST_URL, VERSION, aiBlocks, contentType, profileGroups,
+  TEST_TIMEOUT, TEST_URL, VERSION, aiBlocks, bypassNsPolicy, contentType, profileGroups,
   rankBypass, renderConfig, renderProfile, serviceGroups, subParamsFromConf, usesTemplate,
 };

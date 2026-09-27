@@ -61,6 +61,9 @@ function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } 
 //   del         — '405' (Stash) | 'unfix' (mihomo: Fallback 204 и снятие,
 //                 прочие 404) | '404';
 //   fixedField  — отдавать поле fixed в GET;
+//   aliveField, historyField — отдавать поля alive / history записи в GET
+//                 (ST21; Stash 3.4.1 history у муляжа не отдал — ST20), только
+//                 если поле в записи задано; узел DIRECT — через groups.DIRECT;
 //   builtins    — DIRECT/REJECT известны контроллеру (по умолчанию да);
 //   putReject(имя, want, w)    — true/строка-тело → 400 до прочих проверок;
 //   onUnknown(имя, want, w)    — побочный эффект PUT несуществующего члена;
@@ -88,6 +91,8 @@ export function createStash(o = {}) {
     const e = { name: n, type: x.type };
     if (x.all) { e.now = w.nowOf(n); e.all = x.all; }
     if (o.fixedField && 'fixed' in x) e.fixed = x.fixed;
+    if (o.aliveField && 'alive' in x) e.alive = x.alive;
+    if (o.historyField && 'history' in x) e.history = x.history;
     return e;
   }
   w.entry = entry;
