@@ -24,7 +24,8 @@
 //   src/files.js — манифест файлов, встроенных в сборку (Text)     (—)
 //   src/repo.js  — /t/<токен>/repo/<путь> и переписчик ссылок      (files, store)
 //   src/clients/loon.js — синтаксис конфига Loon: AI-блоки, подстановки
-//   src/clients/stash-*.js — клиентский слой Stash; stash-lab.js — муляжи опытов
+//   src/clients/stash-*.js — клиентский слой Stash; stash-lab.js — муляжи опытов,
+//   stash-lab24.js — стенд опыта ST24
 //
 // МОДЕЛЬ ОДНОЙ ПОДПИСКИ: /nodes отдаёт оба набора (🛜/📱); каждая функция —
 // select-родитель из двух fallback-детей (-W/-C); netwatch флипает родителя по
@@ -48,6 +49,7 @@ import * as LOON from './src/clients/loon.js';
 import * as STASH from './src/clients/stash.js';
 import * as STASH_PROFILE from './src/clients/stash-profile.js';
 import * as STASH_LAB from './src/clients/stash-lab.js';
+import * as STASH_LAB24 from './src/clients/stash-lab24.js';
 import * as CLIENTS from './src/clients/registry.js';
 
 export default {
@@ -87,6 +89,10 @@ export default {
       if (req.method === 'GET' && url.pathname === STASH_LAB.T23_PATH) return STASH_LAB.handleT23Nodes(env, undefined, undefined, req.cf);
       // Пульс — GET и HEAD: ядра Clash-семейства проверяют узел запросом HEAD.
       if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === STASH_LAB.PULSE_PATH) return STASH_LAB.handlePulse(url, env);
+      // ST24: поставщики постоянной выдачи и пульс «мёртвых» узлов (GET = HEAD,
+      // пауза 25 с в нечётные окна) — clients/stash-lab24.js.
+      if (req.method === 'GET' && url.pathname === STASH_LAB24.T24_NODES_PATH) return STASH_LAB24.handleT24Nodes(url, env);
+      if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === STASH_LAB24.T24_PULSE_PATH) return await STASH_LAB24.handleT24Pulse(url, env);
       if (req.method === 'GET' && url.pathname === '/config') return await API.handleConfig(url, env, tok);
       // v1.11.0 (перенос v1.12.0 из main): файлы приватного репозитория из
       // сборки. Токен — только из пути /t/<токен>/ (не ?token=); без него —
@@ -135,5 +141,6 @@ export default {
 // STASH_PROFILE — каркас профиля (группы, DNS, версия S-draft). Отдельным
 // ключом по той же причине: у него свои renderConfig и aiBlocks.
 // STASH_LAB — муляжи опытов лаборатории Stash (/lab/t22-nodes, /lab/t23-nodes, /lab/pulse).
+// STASH_LAB24 — стенд опыта ST24 (/lab/t24-nodes, /lab/t24-pulse).
 // CLIENTS — реестр клиентских слоёв и выбор активного по env.CLIENT (ADR-01).
-export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...REPO, LOON, STASH, STASH_PROFILE, STASH_LAB, CLIENTS };
+export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...REPO, LOON, STASH, STASH_PROFILE, STASH_LAB, STASH_LAB24, CLIENTS };
