@@ -52,7 +52,7 @@ function workingOnly(rank) {
 // порядке в форме (Б) (раздел 11, пункт 1 сверки).
 
 // Ручная группа — select без interval: её узлы замеряются и так, в fallback
-// (задержка ядра общая на узел, BENCH_URL в clients/stash.js).
+// (задержка ядра общая на узел, BENCH_URL в clients/stash-nodeset.js).
 function manualGroup(name, names, fill) {
   return fill({ name: name, type: 'select' }, names);
 }

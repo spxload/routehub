@@ -15,6 +15,29 @@ Worker'а — начиная с v1.9.4, для конфига — начиная
 ---
 ## Worker
 
+### Без номера (2026-09-27, ветка stash-client) — РАСКЛАДКА КЛИЕНТСКОГО СЛОЯ STASH ПО МОДУЛЯМ
+
+Логика не менялась, `WORKER_VER` и версия профиля (S-draft-8) прежние.
+`src/clients/stash.js` (21,2 КБ) и `src/clients/stash-profile.js` (21,5 КБ)
+нарушали правило «модуль < 15 КБ» (шапка `routehub-worker.js`). Код переехал
+вместе со своими комментариями; обоснования не сокращались, поправлены лишь
+ссылки «см. clients/…» на новые места.
+
+- `stash-members.js` — форма членства (`PROVIDER`, `nameFilter`,
+  `withMembers`, `childGroup`, `GROUP_INTERVAL`);
+- `stash-nodeset.js` — общий срез узлов и замер ядра (`BENCH_*`, `nodeSet`,
+  `renderNodes`);
+- `stash-dns.js` — секция `dns:` (`DNS_*`);
+- `stash-service.js` — служебные группы (`G_*`, `rankBypass`,
+  `serviceGroups`, `profileGroups`);
+- `stash.js` и `stash-profile.js` реэкспортируют прежний набор имён —
+  импортёры (`registry.js`, `routehub-worker.js`, тесты) не менялись.
+
+Проверка: выход групп, узлов, профиля (обе формы членства) и эндпоинтов
+`/config`, `/nodes` при `CLIENT=stash` байт-в-байт совпал до и после.
+Новый тест-сторож `tests/module-size.test.js`: `routehub-worker.js` и каждый
+`src/**/*.js` меньше 15 360 байт.
+
 ### v1.11.0 (2026-09-24, ветка stash-client) — ФАЙЛЫ РЕПОЗИТОРИЯ ИЗ СБОРКИ (перенос T-private-repo)
 
 Перенос Worker v1.12.0 из `main` (коммиты `70d6006..70aacb3`, PR #8) руками:
