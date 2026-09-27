@@ -61,19 +61,23 @@
 //     руками», теперь появился «DIRECT ошибочно сочли мёртвым, и ВЕСЬ
 //     прочий иностранный трафик молча ушёл на узлы, включая обходные».
 //     Поэтому правка живёт на стенде Stash и в боевой Loon не переносится.
+//  7. S-draft-9: наблюдательная RH-Часы (clients/stash-watch.js) правилами
+//     не используется; `lazy: false` — проверяет стенд (проба ST21). Узел
+//     `type: direct` с benchmark-* — только в override Lab, не здесь.
 // История версий — CHANGELOG.md в корне репозитория.
 
 import { PROVIDER } from './stash-members.js';
 import { BENCH_TIMEOUT, BENCH_URL, nodeSet } from './stash-nodeset.js';
-import { DNS_BOOT, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY } from './stash-dns.js';
+import { DNS_BOOT, DNS_BYPASS_NS, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, bypassNsPolicy } from './stash-dns.js';
 import { G_BYPASS, G_MAIN, G_RU, profileGroups, rankBypass, serviceGroups } from './stash-service.js';
 import { buildRules } from './stash-rules.js';
 import { buildProviders, buildSetRules } from './stash-sets.js';
+import { watchGroups } from './stash-watch.js';
 import { nodeToYaml, nodesToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
-// (поле conf_ver) и в первой строке самого профиля.
-const VERSION = 'S-draft-8';
+// (поле conf_ver) и во второй строке профиля (первая — #SUBSCRIBED).
+const VERSION = 'S-draft-10';
 
 // Поставщик прокси. interval — как часто Stash перечитывает файл узлов;
 // 600 с выбрано потому, что ПОРЯДОК членов групп меняется перевыдачей
@@ -95,6 +99,18 @@ const TEST_TIMEOUT = BENCH_TIMEOUT;
 // ctx: { key, base, masterLines, state, membership, provider, label }
 // base — origin с встроенным токеном, из него строится адрес поставщика.
 
+// S-draft-10: ПЕРВАЯ строка — `#SUBSCRIBED <адрес профиля>`: по ней Stash
+// считает профиль управляемым провайдером и сам перекачивает его с этого
+// адреса (stash.wiki/en/features/service-provider-subscription; по умолчанию
+// раз в 12 ч, срок Диана ставит на странице конфигурации — совет ≈ 1 ч).
+// Без метки узлы, вшитые в профиль, устаревают до ручного обновления.
+// Адрес — тот же, что даёт админка (config_url): base (origin запроса + токен
+// устройства, src/api/config.js) + /config?key=; запрос с ?token= получит
+// равносильную форму /t/<токен>/. ЦЕНА: каждое обновление перезагружает
+// конфигурацию и сбрасывает закрепления fallback / url-test (ST20); выбор
+// select («-Ручной») сохраняется.
+function subscribeUrl(o) { return String(o.base || '') + '/config?key=' + String(o.key || ''); }
+
 function renderProfile(ctx) {
   const o = ctx || {};
   const provider = o.provider || PROVIDER;
@@ -104,7 +120,10 @@ function renderProfile(ctx) {
   // /nodes, — значит имена в `proxies:` и имена членов групп заведомо одни и
   // те же, и тихий отказ по расхождению имён невозможен по построению.
   const set = nodeSet(lines, state, o);
-  const groups = profileGroups(lines, state, o);
+  // S-draft-9: «часы» (clients/stash-watch.js) — в КОНЕЦ секции: правила на
+  // них не ссылаются, рабочие группы их не содержат, и в интерфейсе они не
+  // заслоняют рабочие.
+  const groups = profileGroups(lines, state, o).concat(watchGroups());
   const useProvider = (o.membership === 'provider');
   const prov = {};
   prov[provider] = {
@@ -113,6 +132,7 @@ function renderProfile(ctx) {
     interval: PROVIDER_INTERVAL,
   };
   const out = [
+    '#SUBSCRIBED ' + subscribeUrl(o),
     '# RouteHub — профиль Stash, ' + VERSION,
     '# Собран Worker\'ом для ключа ' + String(o.key || '') + '. Правки в этом файле',
     '# не переживут следующую перевыдачу: менять надо src/clients/stash-*.js.',
@@ -123,7 +143,10 @@ function renderProfile(ctx) {
       dns: {
         'default-nameserver': DNS_BOOT,
         nameserver: DNS_MAIN,
-        'nameserver-policy': DNS_NS_POLICY,
+        // S-draft-9: к постоянным зонам — имена обходных серверов
+        // (clients/stash-dns.js, bypassNsPolicy; ключ proxy-server-nameserver
+        // НЕ задаётся — почему, там же).
+        'nameserver-policy': Object.assign({}, DNS_NS_POLICY, bypassNsPolicy(set)),
         'fake-ip-filter': DNS_FAKE_IP_FILTER,
       },
     }, 0),
@@ -157,8 +180,8 @@ const usesTemplate = false;
 const contentType = 'text/yaml; charset=utf-8';
 
 export {
-  DNS_BOOT, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, G_BYPASS, G_MAIN, G_RU,
+  DNS_BOOT, DNS_BYPASS_NS, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, G_BYPASS, G_MAIN, G_RU,
   PROVIDER_INTERVAL, PROVIDER_PATH,
-  TEST_TIMEOUT, TEST_URL, VERSION, aiBlocks, contentType, profileGroups,
-  rankBypass, renderConfig, renderProfile, serviceGroups, subParamsFromConf, usesTemplate,
+  TEST_TIMEOUT, TEST_URL, VERSION, aiBlocks, bypassNsPolicy, contentType, profileGroups,
+  rankBypass, renderConfig, renderProfile, serviceGroups, subParamsFromConf, subscribeUrl, usesTemplate,
 };
