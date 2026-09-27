@@ -6,7 +6,7 @@
 // выводы п1–п5 различают то, ради чего опыт (порядок поставщика против
 // порядка фильтра, обновление в фоне против «не различить», сброс с
 // обновлением поставщика против без него), и что окна EOF контроллера в фоне
-// (до 17–20 мин, ST20–ST21) не ломают вывод о фоновом обновлении: он
+// (до 30+ мин: ST21 — 33 мин) не ломают вывод о фоновом обновлении: он
 // строится по первому удачному чтению после пропуска.
 
 import test from 'node:test';
@@ -20,7 +20,7 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const FILE = 'probes/routehub-probe-stash22.js';
 const CODE = fs.readFileSync(path.join(ROOT, FILE), 'utf8');
 
-const P = 'RH-Т22-', PROV = 'rh-t22', WIN = 600000, MIN = 60000;
+const P = 'RH-Т22-', PROV = 'rh-t22', MIN = 60000;
 const FILT = P + 'Фильтр', FB = P + 'F', S1 = P + 'С1', S2 = P + 'С2', S3 = P + 'С3';
 const N1 = P + '1', N2 = P + '2', N3 = P + '3';
 const GROUPS = [FILT, S1, S2, S3, FB];
@@ -121,7 +121,8 @@ test('п3: после пропуска метка сменилась, её ок�
   const f = dump(s).ans.ответы.п3_фон;
   assert.deepEqual(f.после_пропусков, { в_фоне: 1, не_обновлялся: 0, не_различить: 0 });
   assert.equal(f.последний.вывод, 'в_фоне');
-  assert.ok(f.последний.окно_кончилось_мин_назад >= 3);
+  assert.equal(f.последний.по, 'метке');
+  assert.equal(f.последний.скачан_мин_назад, 12, 'конец минуты метки: скачан ≈ 12 мин назад');
   assert.equal(state(w).счёт.обновлений, 1);
 });
 
@@ -140,13 +141,58 @@ test('п3: метка та же после пропуска — «не обно�
   assert.equal(state(w).счёт.обновлений, 2, 'смена метки без пропуска — обычное обновление');
 });
 
+test('п3 по метке: граница FG_MS — скачан за 2 мин до чтения «в фоне», позже — «не различить» (метка поминутная)', async () => {
+  for (const [ago, want] of [[3, 'в_фоне'], [2, 'не_различить'], [1, 'не_различить']]) {
+    const w = world();
+    await run(w);
+    later(w, 20 * MIN - ago * MIN); refetch(w);   // конец минуты метки — за (ago − 1) мин до чтения
+    later(w, ago * MIN);
+    await run(w);
+    assert.equal(state(w).фон[0].вывод, want, 'скачан ' + ago + ' мин назад');
+  }
+});
+
+test('п3 по updatedAt, если поле есть: оно главнее метки в обе стороны', async () => {
+  const iso = (ms) => new Date(ms).toISOString();
+  // Метка свежая (текущая минута), но updatedAt — середина пропуска → «в фоне».
+  const w = world({ upd: iso(1_800_000_000_000) });
+  await run(w);
+  later(w, 25 * MIN); refetch(w, w.clock.t, { upd: iso(w.clock.t - 12 * MIN) });
+  await run(w);
+  assert.deepEqual([state(w).фон[0].вывод, state(w).фон[0].по], ['в_фоне', 'updatedAt']);
+  // Метка давняя, но updatedAt — только что (скачан при открытии) → «не различить».
+  const w2 = world({ upd: iso(1_800_000_000_000) });
+  await run(w2);
+  later(w2, 25 * MIN); refetch(w2, w2.clock.t - 12 * MIN, { upd: iso(w2.clock.t - 30000) });
+  await run(w2);
+  assert.deepEqual([state(w2).фон[0].вывод, state(w2).фон[0].по], ['не_различить', 'updatedAt']);
+  // updatedAt не позже прошлого чтения — «не обновлялся», даже если метка другая.
+  const w3 = world({ upd: iso(1_800_000_000_000 - MIN) });
+  await run(w3);
+  later(w3, 25 * MIN); refetch(w3, w3.clock.t - 12 * MIN, { upd: iso(1_800_000_000_000 - MIN) });
+  await run(w3);
+  assert.deepEqual([state(w3).фон[0].вывод, state(w3).фон[0].по], ['не_обновлялся', 'updatedAt']);
+  // Метка та же, updatedAt новее прошлого чтения — решает updatedAt (метка не проверяется).
+  const w5 = world({ upd: iso(1_800_000_000_000) });
+  await run(w5);
+  later(w5, 25 * MIN); w5.providers[PROV].updatedAt = iso(w5.clock.t - 12 * MIN);
+  await run(w5);
+  assert.deepEqual([state(w5).фон[0].вывод, state(w5).фон[0].по], ['в_фоне', 'updatedAt']);
+  // Нечитаемый updatedAt — решение по метке.
+  const w4 = world({ upd: 'вчера' });
+  await run(w4);
+  later(w4, 25 * MIN); refetch(w4, w4.clock.t - 12 * MIN, { upd: 'сегодня' });
+  await run(w4);
+  assert.deepEqual([state(w4).фон[0].вывод, state(w4).фон[0].по], ['в_фоне', 'метке']);
+});
+
 test('окна EOF в фоне: прогоны без ответа не трогают журнал; вывод — по первому удачному чтению, от прошлого удачного', async () => {
   const w = world();
   await run(w);
   const t1 = w.clock.t;
   for (let i = 0; i < 18; i++) {            // 18 мин EOF, как ST20–ST21
     later(w);
-    if (i === 12) refetch(w);              // скачан на 13-й мин пропуска (окно 1)
+    if (i === 12) refetch(w);              // скачан на 13-й мин пропуска
     w.eofLeft = 100;
     const s = await run(w);
     assert.match(s.done.content, /КОНТРОЛЛЕР НЕ ОТВЕТИЛ/);
@@ -185,7 +231,7 @@ test('п4: обновление поставщика сбросило выбор
   const r = journal(w).find((e) => e.вид === 'сброс');
   assert.equal(r.г, FILT);
   assert.equal(r.было, N2);
-  assert.equal(r.стало, P + 'Метка-3000001', 'после сброса — первый член в порядке поставщика (метка)');
+  assert.match(r.стало, /^RH-Т22-Метка-\d+$/, 'после сброса — первый член в порядке поставщика (метка)');
   assert.equal(r.в_этом_окне, true);
   assert.equal(r.обновлений_за_время, 1);
   const C = state(w).счёт;
@@ -260,8 +306,11 @@ test('замок, сторож, EOF с повтором, отказ записи
   const w = world();
   w.store.RH_ST22_lock = String(w.clock.t - 1000) + ':1';
   const s = await run(w, { tile: true });
-  assert.match(s.done.content, /ЗАНЯТО/);
+  assert.match(s.done.content, /^ЗАНЯТО: .* замок снимется не позже чем через 309 с/);
+  assert.equal(dump(s).ans.замок_с, 309, 'срок — из значения замка: 310 с − 1 с');
   assert.equal(w.calls.length, 0);
+  w.store.RH_ST22_lock = String(w.clock.t - 200500) + ':1';
+  assert.match((await run(w, { tile: true })).done.content, /через 110 с/);
   w.store.RH_ST22_lock = '';
   const wh = world();
   wh.hang = true;

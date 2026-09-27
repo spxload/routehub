@@ -3,7 +3,7 @@
 // ЗАЧЕМ. Адрес стоит в публичном override Lab без токена — значит выдача
 // обязана быть муляжами и только муляжами: TEST-NET, порт 1, без обхода, без
 // данных D1 и подписки. И она обязана различать то, ради чего сделана:
-// метка меняется по 10-минутному окну, порядок — обратный фильтру override.
+// метка меняется поминутно, порядок — обратный фильтру override.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,8 +11,8 @@ import { spawnSync } from 'node:child_process';
 import { T, worker, req } from './harness.js';
 
 const L = T.STASH_LAB;
-const W = 600000;
-const MS = 1_800_000_000_000;       // начало окна 3 000 000
+const W = 60000;
+const MS = 1_800_000_000_000;       // начало минуты 30 000 000
 const URL0 = 'https://w.invalid/lab/t22-nodes';
 
 // env, любое обращение к которому, кроме CLIENT, — провал: D1 не трогать.
@@ -26,7 +26,7 @@ function strictEnv(client) {
 const names = (ms) => L.t22Nodes(ms).map((n) => n.name);
 
 test('состав: метка окна, затем слоты 3, 2, 1 — обратно фильтру override; только socks5 TEST-NET, порт 1', () => {
-  assert.deepEqual(names(MS), ['RH-Т22-Метка-3000000', 'RH-Т22-3', 'RH-Т22-2', 'RH-Т22-1']);
+  assert.deepEqual(names(MS), ['RH-Т22-Метка-30000000', 'RH-Т22-3', 'RH-Т22-2', 'RH-Т22-1']);
   assert.deepEqual(L.T22_SLOTS, ['RH-Т22-1', 'RH-Т22-2', 'RH-Т22-3']);
   for (const n of L.t22Nodes(MS)) {
     assert.equal(n.type, 'socks5');
@@ -38,13 +38,13 @@ test('состав: метка окна, затем слоты 3, 2, 1 — об�
   assert.equal(new Set(L.t22Nodes(MS).map((n) => n.server)).size, 4, 'адреса муляжей различны');
 });
 
-test('метка меняется ровно на границе 10-минутного окна; слоты — нет', () => {
+test('метка меняется ровно на границе минуты; слоты — нет', () => {
   assert.equal(L.T22_WINDOW_MS, W);
-  assert.equal(names(MS + W - 1)[0], 'RH-Т22-Метка-3000000');
-  assert.equal(names(MS + W)[0], 'RH-Т22-Метка-3000001');
-  assert.equal(names(MS - 1)[0], 'RH-Т22-Метка-2999999');
+  assert.equal(names(MS + W - 1)[0], 'RH-Т22-Метка-30000000');
+  assert.equal(names(MS + W)[0], 'RH-Т22-Метка-30000001');
+  assert.equal(names(MS - 1)[0], 'RH-Т22-Метка-29999999');
   assert.deepEqual(names(MS).slice(1), names(MS + 7 * W).slice(1));
-  assert.equal(L.t22Window(MS + 2.5 * W), 3000002);
+  assert.equal(L.t22Window(MS + 2.5 * W), 30000002);
 });
 
 test('живой маршрут: стенд Stash без токена и ключа — 200, YAML, no-store; D1 и прочий env не трогает', async () => {
