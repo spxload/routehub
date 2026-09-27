@@ -242,7 +242,7 @@ test('профиль без S-draft-9 (нет RH-Часы): сказано, DIRE
   const w = world({ noClock: true });
   const s = await run(w, { tile: true });
   assert.match(s.done.content, /нет RH-Часы — профиль стенда не обновлён до S-draft-9/);
-  assert.ok(s.done.content.indexOf('override Watch') < 0, 'Watch стоит — о нём молчать');
+  assert.ok(s.done.content.indexOf('override Lab') < 0, 'секция узлов Lab стоит — о ней молчать');
   const c = clip(s);
   assert.equal(c.ans.сейчас[CLOCK], 'нет в профиле');
   assert.equal(c.ans.сейчас[RU].now, 'DIRECT');
