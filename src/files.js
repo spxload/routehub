@@ -48,6 +48,7 @@ import F_PROBES_ROUTEHUB_PROBE_STASH19_JS from '../probes/routehub-probe-stash19
 import F_PROBES_ROUTEHUB_PROBE_STASH19_CMD_JS from '../probes/routehub-probe-stash19-cmd.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH20_JS from '../probes/routehub-probe-stash20.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH21_JS from '../probes/routehub-probe-stash21.js';
+import F_PROBES_ROUTEHUB_LAB_JS from '../probes/routehub-lab.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH6_JS from '../probes/routehub-probe-stash6.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH7_JS from '../probes/routehub-probe-stash7.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH8_JS from '../probes/routehub-probe-stash8.js';
@@ -70,8 +71,7 @@ import F_PLUGINS_ROUTEHUB_STASH_ST17_STOVERRIDE from '../plugins/RouteHub-Stash-
 import F_PLUGINS_ROUTEHUB_STASH_ST18_STOVERRIDE from '../plugins/RouteHub-Stash-ST18.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_ST19_STOVERRIDE from '../plugins/RouteHub-Stash-ST19.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_ST20_STOVERRIDE from '../plugins/RouteHub-Stash-ST20.stoverride';
-import F_PLUGINS_ROUTEHUB_STASH_ST21_STOVERRIDE from '../plugins/RouteHub-Stash-ST21.stoverride';
-import F_PLUGINS_ROUTEHUB_STASH_WATCH_STOVERRIDE from '../plugins/RouteHub-Stash-Watch.stoverride';
+import F_PLUGINS_ROUTEHUB_STASH_LAB_STOVERRIDE from '../plugins/RouteHub-Stash-Lab.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_ST6_CDN_STOVERRIDE from '../plugins/RouteHub-Stash-ST6-cdn.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_ST6_STOVERRIDE from '../plugins/RouteHub-Stash-ST6.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_STOVERRIDE from '../plugins/RouteHub-Stash.stoverride';
@@ -101,6 +101,7 @@ const FILES = Object.freeze({
   'probes/routehub-probe-stash19-cmd.js': F_PROBES_ROUTEHUB_PROBE_STASH19_CMD_JS,
   'probes/routehub-probe-stash20.js': F_PROBES_ROUTEHUB_PROBE_STASH20_JS,
   'probes/routehub-probe-stash21.js': F_PROBES_ROUTEHUB_PROBE_STASH21_JS,
+  'probes/routehub-lab.js': F_PROBES_ROUTEHUB_LAB_JS,
   'probes/routehub-probe-stash6.js': F_PROBES_ROUTEHUB_PROBE_STASH6_JS,
   'probes/routehub-probe-stash7.js': F_PROBES_ROUTEHUB_PROBE_STASH7_JS,
   'probes/routehub-probe-stash8.js': F_PROBES_ROUTEHUB_PROBE_STASH8_JS,
@@ -123,8 +124,7 @@ const FILES = Object.freeze({
   'plugins/RouteHub-Stash-ST18.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST18_STOVERRIDE,
   'plugins/RouteHub-Stash-ST19.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST19_STOVERRIDE,
   'plugins/RouteHub-Stash-ST20.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST20_STOVERRIDE,
-  'plugins/RouteHub-Stash-ST21.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST21_STOVERRIDE,
-  'plugins/RouteHub-Stash-Watch.stoverride': F_PLUGINS_ROUTEHUB_STASH_WATCH_STOVERRIDE,
+  'plugins/RouteHub-Stash-Lab.stoverride': F_PLUGINS_ROUTEHUB_STASH_LAB_STOVERRIDE,
   'plugins/RouteHub-Stash-ST6-cdn.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST6_CDN_STOVERRIDE,
   'plugins/RouteHub-Stash-ST6.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST6_STOVERRIDE,
   'plugins/RouteHub-Stash.stoverride': F_PLUGINS_ROUTEHUB_STASH_STOVERRIDE,

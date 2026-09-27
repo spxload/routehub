@@ -15,7 +15,6 @@ import { createStash, sandbox, settle, SECRET } from './fake-stash.js';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FILE = 'probes/routehub-probe-stash21.js';
 const CODE = fs.readFileSync(path.join(ROOT, FILE), 'utf8');
-const OV = fs.readFileSync(path.join(ROOT, 'plugins/RouteHub-Stash-ST21.stoverride'), 'utf8');
 
 const RU = 'RH-RU', MAIN = 'RH-Главный', BYP = 'RH-Обход';
 const CLOCK = 'RH-Часы', TEST = 'RH-Тест-RU', DRU = 'RH-Прямо-RU';
@@ -250,17 +249,17 @@ test('профиль без S-draft-9 (нет RH-Часы): сказано, DIRE
   assert.ok(w.store.RH_ST21);
 });
 
-test('без override Watch: RH-Прямо-RU / RH-Тест-RU — «нет данных», не ошибка; журнал ведётся', async () => {
+test('без секции узлов в override Lab: RH-Прямо-RU / RH-Тест-RU — «нет данных», не ошибка; журнал ведётся', async () => {
   const w = world({ noWatchOv: true });
   await run(w);
   later(w);
   w.g.DIRECT.alive = false;
   const s = await run(w, { tile: true });
-  assert.match(s.done.content, /нет RH-Тест-RU, RH-Прямо-RU — override Watch не стоит: RH-Прямо-RU нет данных/);
+  assert.match(s.done.content, /нет RH-Тест-RU, RH-Прямо-RU — в override Lab их нет: RH-Прямо-RU нет данных/);
   assert.ok(s.done.content.indexOf('профиль стенда не обновлён') < 0, 'отсутствие override — не «профиль не обновлён»');
   const c = clip(s);
-  assert.equal(c.ans.сейчас[DRU], 'нет данных (override Watch не стоит)');
-  assert.equal(c.ans.сейчас[TEST], 'нет данных (override Watch не стоит)');
+  assert.equal(c.ans.сейчас[DRU], 'нет данных (нет в override Lab)');
+  assert.equal(c.ans.сейчас[TEST], 'нет данных (нет в override Lab)');
   assert.equal(c.ans.сейчас[CLOCK].alive, 'нет данных');
   assert.deepEqual(c.err, []);
   assert.equal(c.ans.отказы, undefined, '404 override — не отказ чтения');
@@ -357,13 +356,9 @@ test('миллисекунды вместо секунд ловятся: timeout
   assert.ok(w.calls.every((c) => typeof c.timeout === 'number' && c.timeout > 0 && c.timeout <= 30));
 });
 
-test('override ST21: только cron, плитка и скрипт; ни групп, ни правил, ни MITM', () => {
-  assert.match(OV, /cron: '\* \* \* \* \*'/);
-  assert.match(OV, /probes\/routehub-probe-stash21\.js/);
-  assert.match(OV, /timeout: 300/, 'timeout cron — дольше растянутого сторожа, как у ST20');
-  for (const k of ['proxy-groups:', 'proxies:', 'rules:', 'mitm', 'hostname']) {
-    assert.ok(OV.indexOf(k) < 0, 'в override ST21 есть ' + k);
-  }
+// Override пробы — постоянный RouteHub-Stash-Lab: его cron, плитку, секции и
+// timeout против сторожа текущей пробы сторожит tests/stash-lab.test.js.
+test('код ST21: у $httpClient только get, без /delay', () => {
   const code = CODE.replace(/\/\*[\s\S]*?\*\//, '').replace(/\/\/.*$/gm, '');
   assert.ok(code.indexOf('/delay') < 0, 'в коде пробы (без комментариев) — /delay');
   const used = [...code.matchAll(/\$httpClient\s*(?:\.\s*(\w+)|\[)/g)].map((m) => m[1] || '[');
@@ -382,8 +377,5 @@ test('сторож позже худшего честного пути с пов
   assert.ok(numOf('GUARD_MS') > worst, 'сторож ' + numOf('GUARD_MS') + ' мс не позже худшего пути ' + worst + ' мс');
 });
 
-test('timeout задания cron не меньше сторожа пробы', () => {
-  const to = Number(/timeout:\s*(\d+)/.exec(OV)[1]) * 1000;
-  assert.ok(to >= numOf('GUARD_MS'), 'cron обрывает прогон (' + to + ' мс) раньше сторожа (' + numOf('GUARD_MS') + ' мс)');
-  assert.ok(to >= numOf('BUDGET_MS'), 'cron обрывает прогон раньше бюджета');
-});
+// timeout задания cron против GUARD_MS / BUDGET_MS — в tests/stash-lab.test.js
+// (для той пробы, что сейчас в probes/routehub-lab.js).

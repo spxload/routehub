@@ -1,5 +1,6 @@
-// Профиль Stash S-draft-9: резолв имён обходных серверов и наблюдательные
-// группы (src/clients/stash-dns.js, src/clients/stash-watch.js).
+// Профиль Stash S-draft-9 (сейчас S-draft-10, #SUBSCRIBED — в
+// tests/stash-subscribed.test.js): резолв имён обходных серверов и
+// наблюдательные группы (src/clients/stash-dns.js, src/clients/stash-watch.js).
 //
 // Что сторожится и почему:
 //   * глобального proxy-server-nameserver НЕТ — вне whitelist plain-гонка
@@ -7,17 +8,16 @@
 //     обходных серверов, IP и мусор не попадают (ключи не кавычатся);
 //   * RH-Часы — только DIRECT, ни одного обходного узла (правило 1), на неё не
 //     ссылается ни одно правило и ни одна группа;
-//   * RH-Прямо-RU / RH-Тест-RU — НЕ в профиле, а в override Watch (ревью
-//     27.09): отказ Stash от benchmark-* у direct роняет только override;
+//   * RH-Прямо-RU / RH-Тест-RU — НЕ в профиле, а в override Lab (ревью
+//     27.09): отказ Stash от benchmark-* у direct роняет только override
+//     (его сторожит tests/stash-lab.test.js);
 //   * RH-RU, RH-Главный и интервалы групп с обходом — прежние.
 // Имена серверов в тесте вымышленные (example.net / example.org).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
-import { T, ROOT } from './harness.js';
+import { T } from './harness.js';
 
 const P = T.STASH_PROFILE, S = T.STASH;
 const W = await import('../src/clients/stash-watch.js');
@@ -37,7 +37,6 @@ const STATE = {};
 const CTX = { key: 'k1', base: 'https://w.invalid/t/T', masterLines: LINES, state: STATE };
 const TEXT = P.renderProfile(CTX);
 const WATCH_NAMES = [W.G_CLOCK, W.G_TEST_RU, W.N_DIRECT_RU];
-const OV = fs.readFileSync(path.join(ROOT, 'plugins/RouteHub-Stash-Watch.stoverride'), 'utf8');
 
 function allGroups() { return P.profileGroups(LINES, STATE, {}).concat(W.watchGroups()); }
 function section(text, key) {
@@ -48,9 +47,9 @@ function section(text, key) {
   return out;
 }
 
-test('версия профиля — S-draft-9', () => {
-  assert.equal(P.VERSION, 'S-draft-9');
-  assert.equal(TEXT.split('\n')[0], '# RouteHub — профиль Stash, S-draft-9');
+test('версия профиля — S-draft-10; строка версии — сразу после #SUBSCRIBED', () => {
+  assert.equal(P.VERSION, 'S-draft-10');
+  assert.equal(TEXT.split('\n')[1], '# RouteHub — профиль Stash, S-draft-10');
 });
 
 // ── DNS ──────────────────────────────────────────────────────────────────
@@ -111,28 +110,11 @@ test('RH-Часы: url-test [DIRECT], interval 60, lazy false; других на
   for (const x of W.watchGroups()) for (const m of x.proxies) assert.ok(m.indexOf('Обход') < 0, x.name + ': обходной член ' + m);
 });
 
-test('RH-Прямо-RU и RH-Тест-RU в профиле НЕТ (живут в override Watch) — ни в одной форме', () => {
+test('RH-Прямо-RU и RH-Тест-RU в профиле НЕТ (живут в override Lab) — ни в одной форме', () => {
   for (const t of [TEXT, P.renderProfile({ ...CTX, membership: 'provider' })]) {
     for (const n of [W.G_TEST_RU, W.N_DIRECT_RU]) assert.ok(t.indexOf(n) < 0, 'в профиле ' + n);
     assert.ok(!/type: 'direct'/.test(t), 'узел type: direct в профиле');
     assert.ok(t.indexOf("benchmark-url: 'http://ya.ru/'") < 0);
-  }
-});
-
-// Override разбирается построчно (формат фиксирован) и, если есть, PyYAML (ниже).
-test('override Watch: узел RH-Прямо-RU type direct с ya.ru, группа RH-Тест-RU; ни обхода, ни правил, ни MITM', () => {
-  const body = OV.split('\n').filter((l) => l && !/^\s*#/.test(l));
-  const at = (k) => body.indexOf(k + ':');
-  assert.ok(at('proxies') >= 0 && at('proxy-groups') > at('proxies'), 'нет секций proxies / proxy-groups');
-  assert.deepEqual(body.slice(at('proxies') + 1, at('proxy-groups')), [
-    '  - name: RH-Прямо-RU', '    type: direct', '    benchmark-url: http://ya.ru/', '    benchmark-timeout: ' + S.BENCH_TIMEOUT]);
-  assert.deepEqual(body.slice(at('proxy-groups') + 1), [
-    '  - name: RH-Тест-RU', '    type: url-test', '    interval: 60', '    lazy: false', '    proxies:', '      - RH-Прямо-RU']);
-  assert.equal(W.G_TEST_RU, 'RH-Тест-RU');
-  assert.equal(W.N_DIRECT_RU, 'RH-Прямо-RU');
-  assert.ok(OV.indexOf('Обход') < 0, 'слово «Обход» в override Watch');
-  for (const k of ['rules:', 'script', 'cron', 'mitm', 'hostname', 'dns:']) {
-    assert.ok(body.every((l) => l.indexOf(k) < 0), 'в override Watch есть ' + k);
   }
 });
 
@@ -205,20 +187,4 @@ test('профиль S-draft-9 разбирается настоящим YAML-п
     assert.equal(d.pol['+.ru'], 'system');
     assert.deepEqual(d.tail, W.watchGroups());
   }
-});
-
-test('override Watch разбирается настоящим YAML-парсером: только direct / url-test, члены разрешаются', { skip: PY.status !== 0 && 'нет python3 + PyYAML' }, () => {
-  const r = spawnSync('python3', ['-c', 'import sys, json, yaml\nprint(json.dumps(yaml.safe_load(sys.stdin.read()), ensure_ascii=False))'],
-    { input: OV, encoding: 'utf8' });
-  assert.equal(r.status, 0, r.stderr);
-  const d = JSON.parse(r.stdout);
-  assert.deepEqual(Object.keys(d).sort(), ['author', 'category', 'desc', 'name', 'proxies', 'proxy-groups']);
-  assert.deepEqual(d.proxies, [{ name: 'RH-Прямо-RU', type: 'direct', 'benchmark-url': 'http://ya.ru/', 'benchmark-timeout': S.BENCH_TIMEOUT }]);
-  assert.deepEqual(d['proxy-groups'], [{ name: 'RH-Тест-RU', type: 'url-test', interval: 60, lazy: false, proxies: ['RH-Прямо-RU'] }]);
-  for (const p of d.proxies) assert.equal(p.type, 'direct');
-  for (const g of d['proxy-groups']) {
-    assert.equal(g.type, 'url-test');
-    for (const m of g.proxies) assert.ok(d.proxies.some((p) => p.name === m), 'член ' + m + ' не описан в override');
-  }
-  assert.ok(JSON.stringify(d).indexOf('Обход') < 0);
 });
