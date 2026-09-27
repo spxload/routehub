@@ -15,13 +15,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
+import { createStash, sandbox, settle as settleOnce, SECRET } from './fake-stash.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FILE = 'probes/routehub-probe-stash18.js';
 const CODE = fs.readFileSync(path.join(ROOT, FILE), 'utf8');
 
-const SECRET = 'Bearer ОЧЕНЬ-СЕКРЕТНО';
 const SEL = 'RH-Тест-Выбор';
 const FB = 'RH-Тест-Резерв';
 const PIN = 'RH-Тест-Прямо';
@@ -35,6 +34,9 @@ function groups() {
   };
 }
 
+// Мир — общий подставной контроллер tests/fake-stash.js; здесь только опции
+// модели, в которой писались тесты ST18 (Clash/mihomo: fallback по умолчанию
+// 400, DELETE снимает закрепление, поле fixed в ответе).
 // opts.fallback: 'fix' — fallback закрепляется (поле fixed, как у mihomo),
 // 'reject' — 400 как у Clash («Must be a Selector»), 'ignore' — 204 без
 // перемены, 'pinOnly' — 204, `now` прежний, но `fixed` проставлен.
@@ -54,90 +56,31 @@ function run(opts = {}) {
   const g = opts.noGroups ? { 'RH-AI': groups()['RH-AI'] } : groups();
   if (opts.noFbMember) g[SEL].all = ['DIRECT', 'REJECT'];
   if (opts.noFb) delete g[FB];
-  const clock = { t: 1_800_000_000_000 };
-  const state = { done: null, doneCalls: 0, note: null, calls: [], g };
-  const wrote = {}, failed = {}, puts = {};
-  state.clock = clock; state.T0 = clock.t;
-  const RealDate = Date;
-  function FakeDate(...a) { return a.length ? new RealDate(...a) : new RealDate(clock.t); }
-  FakeDate.now = () => clock.t;
-
-  function answer(method) {
-    return (o, cb) => {
-      const url = String(o.url || '');
-      const name = decodeURIComponent(url.replace(/^.*\/proxies\//, ''));
-      const call = { method, name, url, auth: o.headers && o.headers.Authorization, body: o.body || null, timeout: o.timeout, end: null };
-      state.calls.push(call);
-      if (opts.hang) return;
-      let delay = 1;
-      if (opts.late && !state.lateUsed && opts.late(call)) { state.lateUsed = true; state.lateIdx = state.calls.length - 1; delay = 250; }
-      const reply = (st, body) => setTimeout(() => { clock.t += opts.step || 30; call.end = clock.t; cb(null, { status: st, headers: {} }, body); }, delay);
-      if (/[^\x00-\x7F]/.test(url)) return reply(400, '{"message":"bad path"}');
-      const grp = g[name];
-      if (opts.status && state.calls.length === 1) return reply(opts.status, '{"message":"Unauthorized"}');
-      if (!grp) return reply(404, '{"message":"Resource not found"}');
-      if (method === 'get') {
-        if (opts.failReadAfterPut && wrote[name] && !failed[name]) { failed[name] = 1; return reply(500, 'oops'); }
-        return reply(200, JSON.stringify(grp));
-      }
-      wrote[name] = 1;
-      puts[name] = (puts[name] || 0) + (method === 'put' ? 1 : 0);
-      if (method === 'delete') {
-        if (opts.noDelete || grp.type !== 'Fallback') return reply(404, '404 page not found');
-        grp.fixed = ''; grp.now = grp.all[0];
-        return reply(204, '');
-      }
-      const want = JSON.parse(o.body).name;
-      if (grp.all.indexOf(want) < 0) {
-        if (opts.ghostShifts) grp.now = 'REJECT';
-        return reply(400, '{"message":"Proxy does not exist"}');
-      }
-      if (opts.freezeSel && name === SEL && puts[name] > opts.freezeSel) return reply(204, '');
-      if (opts.freezeFb && name === FB && puts[name] > 1) return reply(204, '');
-      if (grp.type === 'Fallback') {
-        const mode = opts.fallback || 'reject';
-        if (mode === 'reject') return reply(400, '{"message":"Must be a Selector"}');
-        if (mode === 'fix') { grp.now = want; grp.fixed = want; }
-        if (mode === 'pinOnly') grp.fixed = want;
-        return reply(204, '');
-      }
-      if (!opts.put204NoMove) grp.now = want;
-      return reply(204, '');
-    };
-  }
-
-  const sandbox = {
-    console: { log: () => {} },
-    JSON, Math, Date: FakeDate, Object, Array, String, Number, Boolean, RegExp, Error,
-    isNaN, parseInt, parseFloat, isFinite, encodeURIComponent, decodeURIComponent,
-    setTimeout: (fn, ms) => setTimeout(fn, Math.max(1, Math.round((ms || 0) / 1000))),
-    clearTimeout,
-    $environment: {
-      'controller-url': 'http://127.0.0.1:9090/',
-      'controller-authorization': SECRET,
-      'stash-version': '3.4.1',
+  const failed = {};
+  const w = createStash({
+    groups: g, step: opts.step, hang: opts.hang, late: opts.late, builtins: false, fixedField: true,
+    fallback: opts.fallback === 'fix' ? 'pin' : (opts.fallback || 'reject'),
+    del: opts.noDelete ? '404' : 'unfix',
+    msg: { notExist: '{"message":"Proxy does not exist"}', selectorOnly: '{"message":"Must be a Selector"}' },
+    fail: (m, p, ww) => {
+      if (opts.status && ww.calls.length === 1) return { status: opts.status, body: '{"message":"Unauthorized"}' };
+      const name = p.replace(/^\/proxies\//, '');
+      if (opts.failReadAfterPut && m === 'get' && ww.wrote[name] && !failed[name]) { failed[name] = 1; return true; }
+      return false;
     },
-    $notification: { post: (t, s, b, o) => { state.note = { t, s, b, clip: (o && o.clipboard) || null }; } },
-    $httpClient: {
-      get: answer('get'),
-      put: answer('put'),
-      post: () => { throw new Error('проба не должна слать POST'); },
-      patch: () => { throw new Error('проба не должна менять настройки'); },
-      delete: answer('delete'),
-    },
-    $done: (v) => { state.doneCalls++; state.done = v || {}; },
-  };
-  sandbox.globalThis = sandbox;
-  vm.runInContext(CODE, vm.createContext(sandbox), { filename: FILE });
+    onUnknown: (name) => { if (opts.ghostShifts) g[name].now = 'REJECT'; },
+    noMove: (name, ww) => (opts.freezeSel && name === SEL && ww.puts[name] > opts.freezeSel) ||
+      (opts.freezeFb && name === FB && ww.puts[name] > 1) ||
+      (opts.put204NoMove && g[name].type !== 'Fallback'),
+  });
+  const state = sandbox(w, CODE, FILE, { env: { 'controller-url': 'http://127.0.0.1:9090/' } });
+  Object.assign(state, { calls: w.calls, g, clock: w.clock, T0: w.T0 });
+  Object.defineProperty(state, 'lateIdx', { get: () => w.lateIdx });
   return state;
 }
 
 async function settle(state, ms = 5000) {
-  const until = Date.now() + ms;
-  while (!state.done && Date.now() < until) await new Promise((r) => setTimeout(r, 5));
-  assert.ok(state.done, 'проба не дошла до $done');
-  await new Promise((r) => setTimeout(r, 150)); // второй $done, если он есть, успеет прийти
-  assert.equal(state.doneCalls, 1, 'ровно один $done на любой ветви');
+  await settleOnce(state, ms, 150);
   assert.ok(state.note && state.note.clip, 'отчёт не попал в буфер обмена');
   return JSON.parse(state.note.clip);
 }

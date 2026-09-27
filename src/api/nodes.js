@@ -31,7 +31,7 @@ async function handleNodes(url, env, tok) {
   // менять нельзя. У Stash поставщик прокси принимает ТОЛЬКО Clash-YAML с
   // ключом `proxies:` — ни base64, ни сырой список ссылок он не читает.
   // Имена узлов в этой выдаче обязаны совпадать с именами членов групп из
-  // /config: и то, и другое строит clients/stash.js nodeSet().
+  // /config: и то, и другое строит clients/stash-nodeset.js nodeSet().
   const client = pickClient(env);
   if (client.nodes) {
     headers['Content-Type'] = client.nodes.contentType || 'text/yaml; charset=utf-8';
