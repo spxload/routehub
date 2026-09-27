@@ -1,8 +1,8 @@
 // routehub — модуль clients/stash-lab.js
-// КЛИЕНТСКИЙ СЛОЙ STASH: МУЛЯЖИ ДЛЯ ОПЫТОВ ЛАБОРАТОРИИ (сейчас ST22).
-// Маршруты (routehub-worker.js): GET /lab/t22-nodes — файл поставщика прокси
-// для тестовых групп override RouteHub-Stash-Lab; GET /lab/pulse — адрес
-// проверки узла-«пульса». История — CHANGELOG.md.
+// КЛИЕНТСКИЙ СЛОЙ STASH: МУЛЯЖИ ДЛЯ ОПЫТОВ ЛАБОРАТОРИИ (ST22, сейчас ST23).
+// Маршруты (routehub-worker.js): GET /lab/t22-nodes, GET /lab/t23-nodes —
+// файлы поставщиков прокси для тестовых групп override RouteHub-Stash-Lab;
+// GET /lab/pulse — адрес проверки узла-«пульса». История — CHANGELOG.md.
 //
 // ЗАЧЕМ. Экран Stash «Ресурсы» (27.09): профиль обновляется только на
 // переднем плане, в фоне при включённом VPN — только наборы правил и
@@ -27,6 +27,7 @@
 // ветки, маршрута не знает — 404, как на любой неизвестный путь.
 
 import { clientId } from './registry.js';
+import { BENCH_TIMEOUT } from './stash-nodeset.js';
 import { nodesToYaml } from './stash-yaml.js';
 
 const T22_PATH = '/lab/t22-nodes';
@@ -89,4 +90,74 @@ function handleT22Nodes(env, ms, log) {
   } });
 }
 
+// ── ST23: FALLBACK НА ПОСТАВЩИКЕ ДЕРЖИТ ПОРЯДОК ПОСТАВЩИКА (путь А) ──────
+// ЗАЧЕМ. Путь А: Worker отдаёт узлы через proxy-provider уже в порядке своего
+// рейтинга, Stash скачивает поставщика в фоне (ST22: раз в ~4 мин), fallback
+// сам берёт лучший живой — без скриптов и записи в контроллер. ST22 доказал
+// порядок поставщика только для select с use + filter; ST23 проверяет
+// fallback с `use:` (группы RH-Т23-F / RH-Т23-FF override Lab).
+// ЧТО ОТДАЁТ. Порядок меняется по окну 10 мин (детерминированно от времени):
+// окно чётное — A, B, C; нечётное — Муляж, C, B, A. A/B/C — `type: direct`
+// с проверкой по /lab/pulse?t=t23a|b|c: трафик — только ответ 204 стенда,
+// журнал Worker'а показывает, какие узлы ядро проверяет. МУЛЯЖ первым в
+// нечётном окне — чтобы «now = ПЕРВЫЙ ЖИВОЙ» отличался от «now = первый»:
+// без него все узлы живы и оба ответа совпадают. Муляж — socks5 на TEST-NET
+// 192.0.2.23 (RFC 5737), порт 1: соединения нет, трафика нет, обхода нет.
+// Его адрес проверки /lab/pulse?t=t23d — КОНТРОЛЬ: через муляж запрос
+// дойти не может, строка t23d в журнале значила бы, что ядро проверяет узел
+// мимо самого узла, и строки t23a/b/c читать как «проверен узел» нельзя.
+// Заодно видно, сколько ядро держит новый (ещё не проверенный) узел
+// поставщика живым — для пути А это цена нового мёртвого узла в выдаче.
+const T23_PATH = '/lab/t23-nodes';
+const T23_PREFIX = 'RH-Т23-';
+const T23_WINDOW_MS = 600000;          // окно порядка — 10 мин (проба: WIN_MS)
+const T23_ALIVE = ['RH-Т23-A', 'RH-Т23-B', 'RH-Т23-C'];
+const T23_DEAD = 'RH-Т23-Муляж';
+const T23_STAND = 'https://routehub-stash.proton4iker.workers.dev';
+
+function t23Window(ms) { return Math.floor(Number(ms) / T23_WINDOW_MS); }
+function t23Order(ms) {
+  return t23Window(ms) % 2 === 0 ? T23_ALIVE.slice() : [T23_DEAD].concat(T23_ALIVE.slice().reverse());
+}
+function t23Bench(name) { return T23_STAND + PULSE_PATH + '?t=t23' + name.slice(T23_PREFIX.length).toLowerCase(); }
+function t23Nodes(ms) {
+  return t23Order(ms).map(function (n) {
+    const bench = { 'benchmark-url': t23Bench(n === T23_DEAD ? T23_PREFIX + 'D' : n), 'benchmark-timeout': BENCH_TIMEOUT };
+    if (n === T23_DEAD) return Object.assign({ name: n, type: 'socks5', server: T22_HOST + '23', port: 1 }, bench);
+    return Object.assign({ name: n, type: 'direct' }, bench);
+  });
+}
+function renderT23(ms) {
+  return '# RouteHub — узлы ST23 (direct + муляж TEST-NET: трафика нет), окно ' + t23Window(ms) + '\n' +
+    nodesToYaml(t23Nodes(ms));
+}
+
+// СЕТЬ ИСТОЧНИКА (вопрос 3 ST23): откуда Stash скачивает поставщика —
+// напрямую (оператор связи) или через узел (хостинг). От этого зависит идея
+// «один поставщик, порядок под сеть». В журнал — ТОЛЬКО номер автономной
+// системы и название её владельца (request.cf.asn / asOrganization): это
+// сеть оператора или хостинга, общая для множества абонентов, а не адрес
+// устройства. IP, заголовки, User-Agent не пишутся; значения только в
+// журнале Cloudflare (доступ — владелец аккаунта), в репозитории их нет.
+// Название — только буквы, цифры и « .,&()'-», до 64 знаков: чужой текст и
+// переводы строк в журнал не попадают.
+function cfAsn(cf) {
+  const n = cf && cf.asn;
+  return Number.isInteger(n) && n > 0 && n < 4294967296 ? n : null;
+}
+function cfOrg(cf) {
+  const s = cf && typeof cf.asOrganization === 'string'
+    ? cf.asOrganization.replace(/[^\p{L}\p{N} .,&()'-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 64) : '';
+  return s || null;
+}
+
+function handleT23Nodes(env, ms, log, cf) {
+  if (clientId(env) !== 'stash') return new Response('routehub-worker: not found', { status: 404 });
+  const now = ms === undefined ? Date.now() : ms;
+  labLog(log, { lab: 't23-nodes', ts: new Date(now).toISOString(), окно: t23Window(now),
+    порядок: t23Order(now).map(function (n) { return n.slice(T23_PREFIX.length); }).join(','), asn: cfAsn(cf), org: cfOrg(cf) });
+  return new Response(renderT23(now), { headers: { 'Content-Type': 'text/yaml; charset=utf-8', 'Cache-Control': 'no-store' } });
+}
+
 export { PULSE_PATH, T22_MARK, T22_PATH, T22_PREFIX, T22_SLOTS, T22_WINDOW_MS, handlePulse, handleT22Nodes, pulseTag, renderT22, t22Nodes, t22Window };
+export { T23_ALIVE, T23_DEAD, T23_PATH, T23_PREFIX, T23_STAND, T23_WINDOW_MS, cfAsn, cfOrg, handleT23Nodes, renderT23, t23Nodes, t23Order, t23Window };

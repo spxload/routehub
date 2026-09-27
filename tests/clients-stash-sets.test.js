@@ -257,13 +257,45 @@ test('дополнения стоят среди локальных правил
   });
 });
 
-test('наборы стоят ниже всех локальных правил и выше MATCH — как [Remote Rule] после [Rule]', () => {
+// S-draft-12: СОЗНАТЕЛЬНОЕ РАСХОЖДЕНИЕ ПОРЯДКА с боевым конфигом. В
+// routehub.conf GEOIP,RU,RH-RU стоит в [Rule], то есть ДО [Remote Rule]; в
+// профиле Stash он перенесён ПОСЛЕ всех наборов, перед MATCH (почему — в
+// clients/stash-rules.js, buildRules: домены Ozon из whitelist ловились GEOIP
+// раньше жёсткого DIRECT rh-wl-*). Состав локальных правил и их взаимный
+// порядок по-прежнему равны [Rule] (тест выше) — меняется только место
+// строк STASH_TAIL относительно наборов. routehub.conf (Loon) не тронут:
+// перенос туда — отдельное решение Дианы.
+const STASH_TAIL = ['GEOIP,RU,RH-RU'];
+
+test('наборы стоят ниже локальных правил; между последним набором и MATCH — только STASH_TAIL', () => {
   const first = RULES.findIndex(function (r) { return r.indexOf('RULE-SET,') === 0; });
   const last = RULES.length - 1 - RULES.slice().reverse().findIndex(function (r) { return r.indexOf('RULE-SET,') === 0; });
-  assert.equal(first, CONF_LOCAL.length + LOCAL_EXTRA.length - 1,
+  assert.equal(first, CONF_LOCAL.length + LOCAL_EXTRA.length - 1 - STASH_TAIL.length,
     'наборы начались не там, где кончились локальные правила');
-  assert.equal(last, RULES.length - 2, 'между последним набором и MATCH что-то вклинилось');
+  assert.deepEqual(RULES.slice(last + 1), STASH_TAIL.concat(['MATCH,RH-Главный']),
+    'между последним набором и MATCH не ровно STASH_TAIL');
   assert.deepEqual(SETRULES, EXPECT_ON.map(function (e) { return 'RULE-SET,' + e.set + ',' + e.policy; }));
+  // Расхождение настоящее: в [Rule] боевого конфига хвост стоит перед FINAL.
+  const confTail = CONF_LOCAL.slice(-1 - STASH_TAIL.length);
+  assert.deepEqual(confTail, STASH_TAIL.concat(['MATCH,RH-Главный']), 'в routehub.conf хвост [Rule] иной — пересмотреть STASH_TAIL');
+});
+
+test('GEOIP,RU ровно один, после rh-wl-* и rh-ads*, сразу перед MATCH (S-draft-12)', () => {
+  const geo = RULES.filter(function (r) { return r.indexOf('GEOIP,') === 0; });
+  assert.deepEqual(geo, ['GEOIP,RU,RH-RU']);
+  const g = RULES.indexOf('GEOIP,RU,RH-RU');
+  for (const set of ['rh-ads', 'rh-ads-domains', 'rh-wl-domains', 'rh-wl-mobile', 'rh-wl-ips']) {
+    const i = RULES.findIndex(function (r) { return r.indexOf('RULE-SET,' + set + ',') === 0; });
+    assert.ok(i >= 0 && i < g, set + ' стоит ниже GEOIP — whitelist/реклама перехватываются GEOIP');
+  }
+  assert.equal(g, RULES.length - 2, 'GEOIP не прямо перед MATCH');
+  assert.equal(RULES[RULES.length - 1], 'MATCH,RH-Главный');
+  // Ни одного RULE-SET после GEOIP — иначе набор снова проигрывал бы GEOIP.
+  assert.ok(RULES.slice(g + 1).every(function (r) { return r.indexOf('RULE-SET,') < 0; }));
+  // В YAML профиля — тот же порядок.
+  const y = TEXT.split('\n');
+  const yg = y.indexOf("  - 'GEOIP,RU,RH-RU'");
+  assert.ok(yg > y.indexOf("  - 'RULE-SET,rh-wl-ips,DIRECT'") && y[yg + 1] === "  - 'MATCH,RH-Главный'");
 });
 
 test('RULE-SET ссылается только на существующее имя поставщика', () => {

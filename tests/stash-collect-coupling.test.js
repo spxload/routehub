@@ -25,6 +25,7 @@ import path from 'node:path';
 import { T, DE, NL, US, KZ } from './harness.js';
 import { nodeLine } from './mock-d1.js';
 import { profileGroups } from '../src/clients/stash-profile.js';
+import { directRuNodes } from '../src/clients/stash-watch.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC = fs.readFileSync(path.join(ROOT, 'scripts/routehub-stash-collect.js'), 'utf8');
@@ -70,6 +71,8 @@ const STATE = {
   [NAMES.us]: { w: M(70, 90), c: M(60, 95) },
   [NAMES.kz]: { w: M(95, 20), c: M(95, 20) },
 };
+
+const DIRECT_RU = directRuNodes().map((n) => n.name);
 
 const GROUPS = {};
 T.STASH.buildGroups(LINES, STATE, {}).forEach((g) => { GROUPS[g.name] = g; });
@@ -192,9 +195,20 @@ test('журнал выбора (v0.2.1) смотрит на группы, ко�
   profileGroups(LINES, STATE, {}).forEach((g) => { all[g.name] = g; });
   for (const g of C.WATCH) assert.ok(all[g], 'журнал выбора ждёт группу ' + g + ', а в профиле её нет');
   for (const g of [C.G_MAIN, C.G_RU, C.G_BYP]) assert.ok(C.WATCH.includes(g), g + ' не журналируется');
-  // Тревога строится на том, что DIRECT — законный член обеих групп: иначе
+  // Тревога строится на том, что DIRECT — законный член RH-Главный: иначе
   // сравнение now с 'DIRECT' ничего не значит.
   assert.ok(all[C.G_MAIN].proxies.includes('DIRECT'), C.G_MAIN + ' без DIRECT');
-  assert.ok(all[C.G_RU].proxies.includes('DIRECT'), C.G_RU + ' без DIRECT');
-  assert.ok(all[C.G_RU].proxies.includes(C.G_BYP), C.G_RU + ' не ведёт на ' + C.G_BYP);
+  // S-draft-12: у RH-RU вместо DIRECT — прямые узлы RH-Прямо-RU-1/-2
+  // (`type: direct`, clients/stash-watch.js). Состав сторожится здесь, чтобы
+  // расхождение со сборщиком (тест-todo ниже) не потерялось.
+  assert.deepEqual(all[C.G_RU].proxies, DIRECT_RU.concat([C.G_BYP]), C.G_RU + ': состав не [прямые узлы, ' + C.G_BYP + ']');
+});
+
+// S-draft-12 / сборщик v0.2.4: штатный выбор RH-RU — DIRECT или прямой узел
+// профиля. Список прямых узлов сборщика (RU_DIRECT) обязан совпадать с узлами
+// `type: direct` рендерера: переименуй узел с одной стороны — журнал выбора
+// поднимет ложную тревогу при каждом прогоне.
+test('прямые узлы RH-RU сборщика (RU_DIRECT) — ровно узлы type direct профиля (S-draft-12)', () => {
+  assert.deepEqual(arrConst('RU_DIRECT'), DIRECT_RU);
+  assert.ok(directRuNodes().every((n) => n.type === 'direct'));
 });

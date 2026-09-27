@@ -49,6 +49,7 @@ import F_PROBES_ROUTEHUB_PROBE_STASH19_CMD_JS from '../probes/routehub-probe-sta
 import F_PROBES_ROUTEHUB_PROBE_STASH20_JS from '../probes/routehub-probe-stash20.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH21_JS from '../probes/routehub-probe-stash21.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH22_JS from '../probes/routehub-probe-stash22.js';
+import F_PROBES_ROUTEHUB_PROBE_STASH23_JS from '../probes/routehub-probe-stash23.js';
 import F_PROBES_ROUTEHUB_LAB_JS from '../probes/routehub-lab.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH6_JS from '../probes/routehub-probe-stash6.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH7_JS from '../probes/routehub-probe-stash7.js';
@@ -103,6 +104,7 @@ const FILES = Object.freeze({
   'probes/routehub-probe-stash20.js': F_PROBES_ROUTEHUB_PROBE_STASH20_JS,
   'probes/routehub-probe-stash21.js': F_PROBES_ROUTEHUB_PROBE_STASH21_JS,
   'probes/routehub-probe-stash22.js': F_PROBES_ROUTEHUB_PROBE_STASH22_JS,
+  'probes/routehub-probe-stash23.js': F_PROBES_ROUTEHUB_PROBE_STASH23_JS,
   'probes/routehub-lab.js': F_PROBES_ROUTEHUB_LAB_JS,
   'probes/routehub-probe-stash6.js': F_PROBES_ROUTEHUB_PROBE_STASH6_JS,
   'probes/routehub-probe-stash7.js': F_PROBES_ROUTEHUB_PROBE_STASH7_JS,

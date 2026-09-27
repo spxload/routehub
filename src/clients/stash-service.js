@@ -9,6 +9,7 @@ import { buildGroups } from './stash.js';
 import { GROUP_INTERVAL, PROVIDER, childGroup } from './stash-members.js';
 import { nodeSet } from './stash-nodeset.js';
 import { orderNames } from './stash-order.js';
+import { N_DIRECT_RU_1, N_DIRECT_RU_2 } from './stash-watch.js';
 
 // Служебные группы. В Loon они живут в [Proxy Group] конфига; здесь их негде
 // держать, кроме кода. Имена — те же, на них ссылаются правила.
@@ -48,14 +49,18 @@ function serviceGroups(masterLines, state, opts) {
     // netwatch нет, а писать в маршрутизацию из скрипта запрещает правило 2
     // проекта — значит штатная автоматика единственная доступная.
     { name: G_MAIN, type: 'fallback', proxies: ['DIRECT', 'RH-АВТО'], interval: GROUP_INTERVAL },
-    // РФ-сервисы и GEOIP-RU: норма DIRECT, whitelist -> обход.
-    { name: G_RU, type: 'fallback', proxies: ['DIRECT', G_BYPASS], interval: GROUP_INTERVAL },
+    // РФ-сервисы и GEOIP-RU: норма — напрямую, whitelist -> обход.
+    // S-draft-12: вместо DIRECT — два узла `type: direct` со СВОИМИ адресами
+    // проверки (российские, вне whitelist; выбор — clients/stash-watch.js).
+    // DIRECT мерится apple.com и общий с RH-Главный (ST21: ушли вместе на
+    // 33 мин). Интервал прежний: короче — чаще мерился бы обход (правило 1).
+    { name: G_RU, type: 'fallback', proxies: [N_DIRECT_RU_1, N_DIRECT_RU_2, G_BYPASS], interval: GROUP_INTERVAL },
     bypass,
   ];
 }
 
-// Рабочие группы профиля: служебные, затем три функции. Наблюдательные группы
-// S-draft-9 (clients/stash-watch.js) добавляет в конец секции renderProfile.
+// Рабочие группы профиля: служебные, затем три функции. Наблюдательную группу
+// (clients/stash-watch.js) добавляет в конец секции renderProfile.
 function profileGroups(masterLines, state, opts) {
   return serviceGroups(masterLines, state, opts).concat(buildGroups(masterLines, state, opts));
 }

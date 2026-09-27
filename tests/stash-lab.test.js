@@ -32,27 +32,27 @@ import { createStash, sandbox, settle } from './fake-stash.js';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
-// Стенд: поставщик муляжей и адрес проверки узла-«пульса» — без токена и ключа.
+// Стенд: адреса опытов (/lab/pulse, /lab/t23-nodes) — без токена и ключа.
+// В холостом режиме их в override нет вовсе.
 const STAND = 'https://routehub-stash.proton4iker.workers.dev';
 
 // ── ЕДИНСТВЕННЫЙ УКАЗАТЕЛЬ ТЕКУЩЕГО ОПЫТА ────────────────────────────────
-const LAB_SOURCE = 'probes/routehub-probe-stash22.js';
-// Узлы и группы опыта в override — ровно эти строки (формат фиксирован).
+// ST23 (27.09, согласие Дианы «Все да»): fallback на поставщике держит
+// порядок поставщика (путь А). Только чтение; холостой режим — 'idle' и
+// пустые списки ниже.
+const LAB_SOURCE = 'probes/routehub-probe-stash23.js';
+// Узлы, группы и поставщики опыта в override — ровно эти строки (формат
+// фиксирован). Холостой режим — пусто, секций нет вовсе.
 const LAB_NODES = [
-  '  - name: RH-Прямо-RU', '    type: direct', '    benchmark-url: http://ya.ru/', '    benchmark-timeout: ' + T.STASH.BENCH_TIMEOUT,
-  '  - name: RH-Т22-Пульс', '    type: direct', '    benchmark-url: ' + STAND + T.STASH_LAB.PULSE_PATH + '?t=u60',
+  '  - name: RH-Т23-Пульс30', '    type: direct', '    benchmark-url: ' + STAND + T.STASH_LAB.PULSE_PATH + '?t=u30',
   '    benchmark-timeout: ' + T.STASH.BENCH_TIMEOUT];
-const T22_FILTER = "'^(?:RH-Т22-1|RH-Т22-2|RH-Т22-3|RH-Т22-Метка-\\d+)$'";
-const slot = (n) => ['  - name: RH-Т22-С' + n, '    type: select', '    use:', '      - rh-t22', "    filter: '^RH-Т22-" + n + "$'"];
 const LAB_GROUPS = [
-  '  - name: RH-Тест-RU', '    type: url-test', '    interval: 60', '    lazy: false', '    proxies:', '      - RH-Прямо-RU',
-  '  - name: RH-Т22-Фильтр', '    type: select', '    use:', '      - rh-t22', '    filter: ' + T22_FILTER,
-  ...slot(1), ...slot(2), ...slot(3),
-  '  - name: RH-Т22-F', '    type: fallback', '    interval: 3600', '    proxies:',
-  '      - RH-Т22-С1', '      - RH-Т22-С2', '      - RH-Т22-С3',
-  '  - name: RH-Т22-Пульс60', '    type: url-test', '    interval: 60', '    lazy: false', '    proxies:', '      - RH-Т22-Пульс'];
-// Поставщик опыта: только муляжи стенда (/lab/t22-nodes), без токена и ключа.
-const LAB_PROVIDERS = ['  rh-t22:', '    url: ' + STAND + T.STASH_LAB.T22_PATH, '    path: ./providers/rh-t22.yaml', '    interval: 300'];
+  '  - name: RH-Т23-F', '    type: fallback', '    interval: 60', '    use:', '      - rh-t23',
+  '  - name: RH-Т23-FF', '    type: fallback', '    interval: 60', '    use:', '      - rh-t23', "    filter: '^RH-Т23-'",
+  '  - name: RH-Т23-U30', '    type: url-test', '    interval: 30', '    lazy: false', '    proxies:', '      - RH-Т23-Пульс30'];
+const LAB_PROVIDERS = ['  rh-t23:', '    url: ' + STAND + T.STASH_LAB.T23_PATH, '    path: ./providers/rh-t23.yaml', '    interval: 300'];
+// Адреса стенда, которые вправе стоять в override: поставщик опыта и пульсы его узлов.
+const STAND_URLS = LAB_PROVIDERS.concat(LAB_NODES).filter((l) => /^\s*(url|benchmark-url): /.test(l)).map((l) => l.replace(/^\s*[\w-]+: /, ''));
 
 const LAB = 'probes/routehub-lab.js';
 const OV_PATH = 'plugins/RouteHub-Stash-Lab.stoverride';
@@ -141,27 +141,32 @@ function ovGroupNames() {
   return BODY.slice(BODY.indexOf('proxy-groups:') + 1).filter((l) => /^ {2}- name: /.test(l)).map((l) => l.slice(10));
 }
 
-test('опыт в песочнице: пишет только в группы RH-Т22-* из override, боевые не читает и не пишет', async () => {
+// Песочница: опыт читает только группы и поставщиков своего override и ничего
+// не пишет в боевые группы. ST22 писал (PUT) в свои тестовые группы; ST23 —
+// только чтение, записей нет вовсе.
+const READ_ONLY = true;
+test('опыт в песочнице: читает только группы и поставщика override, не пишет (ST23 — только чтение)', async () => {
   if (IDLE) return;
-  const P = 'RH-Т22-';
+  const P = 'RH-Т23-';
   const g = {
     'RH-RU': { type: 'Fallback', now: 'DIRECT', all: ['DIRECT', 'RH-Обход'] },
     'RH-Главный': { type: 'Fallback', now: 'DIRECT', all: ['DIRECT', 'RH-АВТО'] },
     'RH-Обход': { type: 'Fallback', all: ['🇩🇪 Узел [Обход]'] },
-    'RH-Тест-RU': { type: 'URLTest', now: 'RH-Прямо-RU', all: ['RH-Прямо-RU'] },
-    [P + 'Фильтр']: { type: 'Selector', use: ['rh-t22'], filter: '^(?:RH-Т22-1|RH-Т22-2|RH-Т22-3|RH-Т22-Метка-\\d+)$' },
-    [P + 'F']: { type: 'Fallback', all: [P + 'С1', P + 'С2', P + 'С3'] },
+    [P + 'F']: { type: 'Fallback', use: ['rh-t23'] },
+    [P + 'FF']: { type: 'Fallback', use: ['rh-t23'], filter: '^RH-Т23-' },
+    [P + 'U30']: { type: 'URLTest', now: P + 'Пульс30', all: [P + 'Пульс30'] },
   };
-  for (const n of [1, 2, 3]) g[P + 'С' + n] = { type: 'Selector', use: ['rh-t22'], filter: '^RH-Т22-' + n + '$' };
-  const w = createStash({ groups: g, providers: { 'rh-t22': { proxies: T.STASH_LAB.t22Nodes(Date.now()) } } });
+  const w = createStash({ groups: g, providers: { 'rh-t23': { proxies: T.STASH_LAB.t23Nodes(Date.now()) } } });
   for (let i = 0; i < 2; i++) { await settle(sandbox(w, LAB_TEXT, LAB)); w.clock.t += 60000; }
   const names = ovGroupNames();
-  assert.ok(w.writes().length > 0, 'опыт ничего не закрепил — проверка пуста');
-  for (const c of w.writes()) {
-    assert.equal(c.method, 'put');
-    assert.ok(c.name.indexOf(P) === 0 && names.indexOf(c.name) >= 0, 'запись вне тестовых групп override: ' + c.name);
+  const provs = sectionOrEmpty('proxy-providers').filter((l) => /^ {2}\S.*:$/.test(l)).map((l) => l.trim().slice(0, -1));
+  assert.ok(w.calls.length > 0, 'опыт ничего не прочитал — проверка пуста');
+  if (READ_ONLY) assert.deepEqual(w.writes(), [], 'опыт только для чтения, а пишет');
+  for (const c of w.calls) {
+    const prov = /^\/providers\/proxies\/([^/?]+)$/.exec(c.p);
+    if (prov) { assert.ok(provs.indexOf(decodeURIComponent(prov[1])) >= 0, 'чужой поставщик: ' + c.p); continue; }
+    assert.ok(c.name !== null && names.indexOf(c.name) >= 0, 'опыт трогал не свою группу: ' + c.p);
   }
-  for (const c of w.calls) assert.ok(c.name === null || c.name.indexOf(P) === 0, 'опыт трогал не свою группу: ' + c.name);
 });
 
 // ── OVERRIDE: СКРИПТ, CRON, ПЛИТКА ───────────────────────────────────────
@@ -200,9 +205,12 @@ test('верхний уровень — только скрипт, cron, пли�
   }
 });
 
+const has = (key) => TOP.indexOf(key) >= 0;
+const sectionOrEmpty = (key) => (has(key) ? section(key) : []);
+
 test('узлы и группы опыта: direct / url-test / select / fallback, без «Обход», члены описаны здесь же', () => {
-  const nodes = TOP.indexOf('proxies') >= 0 ? section('proxies') : [];
-  const groups = TOP.indexOf('proxy-groups') >= 0 ? section('proxy-groups') : [];
+  const nodes = sectionOrEmpty('proxies');
+  const groups = sectionOrEmpty('proxy-groups');
   assert.deepEqual(nodes, LAB_NODES);
   assert.deepEqual(groups, LAB_GROUPS);
   for (const l of nodes.concat(groups)) assert.ok(l.indexOf('Обход') < 0, 'обход в Lab: ' + l);
@@ -210,30 +218,65 @@ test('узлы и группы опыта: direct / url-test / select / fallback
   for (const l of groups) if (/^ {4}type:/.test(l)) assert.match(l, /^ {4}type: (url-test|select|fallback)$/);
   const names = nodes.filter((l) => /^ {2}- name: /.test(l)).map((l) => l.slice(10));
   const gnames = groups.filter((l) => /^ {2}- name: /.test(l)).map((l) => l.slice(10));
-  // Члены `proxies:` групп — узлы или группы этого override; `use:` — только rh-t22.
+  const provs = sectionOrEmpty('proxy-providers').filter((l) => /^ {2}\S.*:$/.test(l)).map((l) => l.trim().slice(0, -1));
+  // Члены `proxies:` групп — узлы или группы этого override; `use:` — только его поставщики.
   let inUse = false;
   for (const l of groups) {
     if (/^ {4}\S/.test(l)) inUse = l === '    use:';
     if (!/^ {6}- /.test(l)) continue;
     const m = l.slice(8);
-    if (inUse) assert.equal(m, 'rh-t22', 'чужой поставщик: ' + l);
+    if (inUse) assert.ok(provs.indexOf(m) >= 0, 'чужой поставщик: ' + l);
     else assert.ok(names.indexOf(m) >= 0 || gnames.indexOf(m) >= 0 || m === 'DIRECT', 'член не описан: ' + l);
   }
-  for (const l of groups) if (/^ {4}interval: /.test(l)) assert.ok(Number(l.slice(14)) >= 60, 'проверка чаще раза в минуту: ' + l);
+  // Проверка чаще раза в минуту — только у группы, чей единственный член —
+  // узел-пульс (direct с проверкой по /lab/pulse стенда): трафик — ответ 204
+  // стенда (ST23: частота при interval 30). Прочим группам — не чаще 60 с.
+  const pulses = [];
+  for (let i = 0; i < nodes.length; i++) {
+    if (/^ {2}- name: /.test(nodes[i]) && nodes.slice(i + 1, i + 4).some((l) => l.indexOf('    benchmark-url: ' + STAND + '/lab/pulse?') === 0)
+      && nodes[i + 1] === '    type: direct') pulses.push(nodes[i].slice(10));
+  }
+  let cur = null;
+  const blocks = {};
+  for (const l of groups) {
+    if (/^ {2}- name: /.test(l)) { cur = l.slice(10); blocks[cur] = []; } else blocks[cur].push(l);
+  }
+  for (const n of Object.keys(blocks)) {
+    const b = blocks[n], iv = b.find((l) => /^ {4}interval: /.test(l));
+    if (!iv) continue;
+    const members = b.filter((l) => /^ {6}- /.test(l)).map((l) => l.slice(8));
+    const pulseOnly = b.indexOf('    use:') < 0 && members.length === 1 && pulses.indexOf(members[0]) >= 0;
+    assert.ok(Number(iv.slice(14)) >= (pulseOnly ? 30 : 60), 'проверка слишком часто: ' + n + ' ' + iv.trim());
+  }
 });
 
-test('поставщик опыта — только муляжи стенда /lab/t22-nodes, без токена и ключа; пульс — только /lab/pulse', () => {
-  assert.deepEqual(section('proxy-providers'), LAB_PROVIDERS);
+// Холостой режим: override — только скрипт, cron и плитка. Узлы, группы и
+// поставщик опыта держались бы на устройстве и без опыта: проверки узлов
+// шли бы в фоне, а поставщик скачивался бы (ST22: раз в ~4 мин).
+test('холостой режим: в override нет proxies / proxy-groups / proxy-providers и адресов стенда', () => {
+  if (!IDLE) return;
+  for (const k of ['proxies', 'proxy-groups', 'proxy-providers']) assert.ok(!has(k), 'в холостом Lab секция ' + k);
+  assert.ok(BODY.every((l) => !/benchmark-|^\s*use:|filter:/.test(l)), 'в холостом Lab ключи узлов или групп');
+  assert.ok(OV.indexOf('workers.dev') < 0, 'в холостом Lab адрес Worker\'а');
+  assert.ok(!/RH-(Т22|Тест-RU|Прямо-RU)/.test(BODY.join('\n')), 'в холостом Lab имена опытов ST21/ST22');
+});
+
+test('поставщик опыта — только стенд /lab/t23-nodes, без токена и ключа; пульс — только /lab/pulse', () => {
+  assert.deepEqual(sectionOrEmpty('proxy-providers'), LAB_PROVIDERS);
+  for (const u of STAND_URLS) assert.ok(u === STAND + '/lab/t23-nodes' || u.indexOf(STAND + '/lab/pulse?t=') === 0, 'ожидание вне стенда: ' + u);
   const bench = OV.split('\n').filter((l) => /^\s*benchmark-url: /.test(l)).map((l) => l.trim().slice(15));
-  assert.deepEqual(bench, ['http://ya.ru/', STAND + '/lab/pulse?t=u60'], 'адреса проверки узлов Lab');
+  for (const b of bench) assert.ok(b.indexOf(STAND + '/lab/pulse?t=') === 0 && STAND_URLS.indexOf(b) >= 0, 'адрес проверки узла Lab: ' + b);
   const urls = OV.split('\n').filter((l) => /^\s*url: /.test(l)).map((l) => l.trim().slice(5));
+  assert.ok(urls.indexOf(RAW + LAB) >= 0, 'нет адреса скрипта');
   for (const u of urls) {
-    assert.ok(u === RAW + LAB || u === STAND + '/lab/t22-nodes', 'чужой адрес в override: ' + u);
+    assert.ok(u === RAW + LAB || (u.indexOf(STAND) === 0 && STAND_URLS.indexOf(u) >= 0), 'чужой адрес в override: ' + u);
     assert.ok(!/\/t\/|[?&](key|token)=/.test(u), 'токен или ключ в адресе: ' + u);
   }
   const hosts = [...OV.matchAll(/[\w.-]+\.workers\.dev[^\s'"]*/g)].map((m) => m[0]);
-  assert.deepEqual([...new Set(hosts)].sort(), [STAND.slice(8) + '/lab/pulse?t=u60', STAND.slice(8) + '/lab/t22-nodes'], 'другие адреса Worker\'ов в override');
-  for (const h of hosts) assert.ok(!/\/t\/|[?&](key|token)=/.test(h), 'токен или ключ: ' + h);
+  for (const h of hosts) {
+    assert.ok(STAND_URLS.map((u) => u.slice(8)).indexOf(h) >= 0, 'другой адрес Worker\'а в override: ' + h);
+    assert.ok(!/\/t\/|[?&](key|token)=/.test(h), 'токен или ключ: ' + h);
+  }
 });
 
 test('прежние override ST21 и Watch удалены и нигде не упоминаются в плагинах и манифесте', () => {
@@ -254,28 +297,23 @@ test('override Lab разбирается настоящим YAML-парсеро
     { input: OV, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const d = JSON.parse(r.stdout);
-  assert.deepEqual(Object.keys(d).sort(), ['author', 'category', 'cron', 'desc', 'name', 'proxies', 'proxy-groups', 'proxy-providers', 'script-providers', 'tiles']);
-  assert.deepEqual(d['proxy-providers'], { 'rh-t22': { url: STAND + '/lab/t22-nodes', path: './providers/rh-t22.yaml', interval: 300 } });
   assert.deepEqual(d['script-providers'], { 'rh-lab': { url: RAW + LAB, interval: 300 } });
   assert.deepEqual(d.cron.script.map((s) => [s.name, s.cron]), [['rh-lab', '* * * * *']]);
   assert.deepEqual(d.tiles.map((t) => t.name), ['rh-lab']);
-  assert.deepEqual(d.proxies, [{ name: 'RH-Прямо-RU', type: 'direct', 'benchmark-url': 'http://ya.ru/', 'benchmark-timeout': T.STASH.BENCH_TIMEOUT },
-    { name: 'RH-Т22-Пульс', type: 'direct', 'benchmark-url': STAND + '/lab/pulse?t=u60', 'benchmark-timeout': T.STASH.BENCH_TIMEOUT }]);
-  const F = '^(?:RH-Т22-1|RH-Т22-2|RH-Т22-3|RH-Т22-Метка-\\d+)$';
-  const S = (n) => ({ name: 'RH-Т22-С' + n, type: 'select', use: ['rh-t22'], filter: '^RH-Т22-' + n + '$' });
-  assert.deepEqual(d['proxy-groups'], [
-    { name: 'RH-Тест-RU', type: 'url-test', interval: 60, lazy: false, proxies: ['RH-Прямо-RU'] },
-    { name: 'RH-Т22-Фильтр', type: 'select', use: ['rh-t22'], filter: F }, S(1), S(2), S(3),
-    { name: 'RH-Т22-F', type: 'fallback', interval: 3600, proxies: ['RH-Т22-С1', 'RH-Т22-С2', 'RH-Т22-С3'] },
-    { name: 'RH-Т22-Пульс60', type: 'url-test', interval: 60, lazy: false, proxies: ['RH-Т22-Пульс'] }]);
-  // Фильтр — регулярка, которую понимает и JS (RE2 ядра — подмножество): все
-  // имена муляжей стенда проходят, и ничего сверх них.
-  const re = new RegExp(d['proxy-groups'][1].filter);
-  for (const n of T.STASH_LAB.t22Nodes(Date.now()).map((x) => x.name)) assert.ok(re.test(n), n);
-  assert.ok(!re.test('RH-Т22-4') && !re.test('x RH-Т22-1'));
-  for (const g of d['proxy-groups']) {
-    for (const m of g.proxies || []) assert.ok(m === 'DIRECT' || d.proxies.some((p) => p.name === m) || d['proxy-groups'].some((q) => q.name === m), 'член ' + m + ' не описан');
+  if (IDLE) {
+    assert.deepEqual(Object.keys(d).sort(), ['author', 'category', 'cron', 'desc', 'name', 'script-providers', 'tiles']);
+    for (const k of ['proxies', 'proxy-groups', 'proxy-providers']) assert.equal(d[k], undefined);
+    return;
   }
-  const json = JSON.stringify({ p: d.proxies, g: d['proxy-groups'] });
-  assert.ok(json.indexOf('Обход') < 0);
+  // ST23: поставщик, узел-пульс и группы; filter — корректный регэксп и
+  // пропускает все узлы стенда в обоих окнах (муляж тоже).
+  assert.deepEqual(d['proxy-providers'], { 'rh-t23': { url: STAND + '/lab/t23-nodes', path: './providers/rh-t23.yaml', interval: 300 } });
+  assert.deepEqual(d.proxies.map((n) => [n.name, n.type, n['benchmark-timeout']]), [['RH-Т23-Пульс30', 'direct', 5]]);
+  const byName = Object.fromEntries(d['proxy-groups'].map((x) => [x.name, x]));
+  assert.deepEqual(Object.keys(byName), ['RH-Т23-F', 'RH-Т23-FF', 'RH-Т23-U30']);
+  assert.deepEqual([byName['RH-Т23-F'].type, byName['RH-Т23-F'].use, byName['RH-Т23-F'].filter], ['fallback', ['rh-t23'], undefined]);
+  assert.deepEqual(byName['RH-Т23-FF'].use, ['rh-t23']);
+  const re = new RegExp(byName['RH-Т23-FF'].filter);
+  for (const ms of [0, T.STASH_LAB.T23_WINDOW_MS]) for (const n of T.STASH_LAB.t23Nodes(ms)) assert.ok(re.test(n.name), 'filter отсекает ' + n.name);
+  assert.deepEqual([byName['RH-Т23-U30'].interval, byName['RH-Т23-U30'].lazy, byName['RH-Т23-U30'].proxies], [30, false, ['RH-Т23-Пульс30']]);
 });

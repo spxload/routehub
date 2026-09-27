@@ -13,8 +13,9 @@
 // СЕКЦИЯ [Remote Rule] ПЕРЕНЕСЕНА отдельным модулем clients/stash-sets.js:
 // одиннадцать удалённых наборов плюс личный список становятся поставщиками
 // правил (`rule-providers:`) и строками `RULE-SET,<набор>,<политика>`. Эти
-// строки вставляются НИЖЕ локальных правил и ВЫШЕ MATCH — ровно так, как в
-// боевом конфиге, где [Rule] идёт целиком до [Remote Rule].
+// строки вставляются НИЖЕ локальных правил и ВЫШЕ MATCH — так, как в
+// боевом конфиге, где [Rule] идёт целиком до [Remote Rule]. Исключение
+// S-draft-12: GEOIP,RU — после наборов (почему — в buildRules).
 //
 // ЧТО НЕ ПЕРЕНЕСЕНО и почему — docs/ЭТАП_K_STASH_ПРАВИЛА.md, раздел 3.2:
 // [Host], [URL Rewrite], [Script], [Plugin], [MITM]. Ни одна из них не
@@ -106,7 +107,7 @@ function rule(parts) { return parts.join(','); }
 // Итоговый список строк `rules:`. MATCH обязан быть последним и ровно один:
 // это единственное правило без условия, всё после него недостижимо.
 //   remote — строки RULE-SET из clients/stash-sets.js. Отдельный аргумент, а
-//   не импорт: так порядок «локальные -> наборы -> MATCH» виден в одном
+//   не импорт: так порядок «локальные -> наборы -> GEOIP -> MATCH» виден в одном
 //   месте, а список наборов остаётся проверяемым сам по себе.
 function buildRules(remote) {
   const out = [];
@@ -129,11 +130,21 @@ function buildRules(remote) {
   // DeepSeek: норма DIRECT, whitelist -> обход.
   out.push(rule(['DOMAIN-SUFFIX', 'deepseek.com', P_RU]));
   PROXY_SUFFIX.forEach(function (d) { out.push(rule(['DOMAIN-SUFFIX', d, P_AUTO])); });
-  // Российские IP: то, что не поймали домены.
-  out.push(rule(['GEOIP', 'RU', P_RU]));
   // Удалённые наборы: в боевом конфиге [Remote Rule] стоит после [Rule]
   // целиком, поэтому здесь они идут ниже всех локальных правил.
   (remote || []).forEach(function (r) { out.push(String(r)); });
+  // Российские IP: то, что не поймали домены И НАБОРЫ. S-draft-12: GEOIP
+  // перенесён из локальных правил в хвост, после всех RULE-SET, перед MATCH
+  // (обычный порядок Clash: домены и наборы, затем GEOIP, затем MATCH).
+  // ПОЧЕМУ. Стоял до наборов (в выдаче S-draft-11 индекс 30, rh-ads* — 31–32,
+  // rh-wl-* DIRECT — 34–36): домены Ozon из whitelist с российскими IP ловил
+  // GEOIP -> RH-RU, и под whitelist они уходили на обход вместе с RH-RU, не
+  // дойдя до жёсткого DIRECT; российские трекеры не резались (rh-ads).
+  // ПОЧЕМУ НЕ «КАК В LOON». Там [Remote Rule] тоже после [Rule], но RH-RU у
+  // Loon ложно не падает; здесь цена порядка — Ozon на обходе. Боевой
+  // routehub.conf этой правкой НЕ меняется (отдельное решение Дианы);
+  // расхождение объявлено в tests/clients-stash-sets.test.js (STASH_TAIL).
+  out.push(rule(['GEOIP', 'RU', P_RU]));
   out.push(rule(['MATCH', P_MAIN]));
   return out;
 }

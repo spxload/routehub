@@ -426,6 +426,30 @@ test('RH-RU на RH-Обход, но обход сам на DIRECT: тревог
   assert.ok(head.indexOf('ПЛАТНОМУ') < 0, 'обход на DIRECT назван платным: ' + head);
 });
 
+// v0.2.4 (S-draft-12): прямые узлы RH-RU — штатный выбор; обход и неизвестный — тревога.
+test('RH-RU на прямом узле RH-Прямо-RU-1/-2: тревоги нет, now записан', async () => {
+  for (const ru of ['RH-Прямо-RU-1', 'RH-Прямо-RU-2']) {
+    const store = makeStore();
+    const r = await settle(run(store, { pin: 'works', ru }));
+    const head = reportLines(r)[0];
+    assert.ok(head.indexOf('выбор штатный') === 0 && head.indexOf('ТРЕВОГА') < 0, ru + ': ' + head);
+    assert.equal(lastLog(store).g['RH-RU'], ru);
+    assert.equal(lastLog(store).sel, head);
+  }
+  // Прямой узел не отменяет тревогу по RH-Главный.
+  const r2 = await settle(run(makeStore(), { pin: 'works', ru: 'RH-Прямо-RU-2', main: 'RH-АВТО' }));
+  const h2 = reportLines(r2)[0];
+  assert.ok(h2.indexOf('⚠ ТРЕВОГА') === 0 && h2.indexOf('RH-Главный не на DIRECT') >= 0 && h2.indexOf('RH-RU не на') < 0, h2);
+});
+
+test('RH-RU на неизвестном члене (не DIRECT и не прямой узел профиля): тревога, как раньше', async () => {
+  for (const ru of ['RH-Прямо-RU-3', 'RH-Прямо-RU', 'X RH-Прямо-RU-1']) {
+    const r = await settle(run(makeStore(), { pin: 'works', ru }));
+    const head = reportLines(r)[0];
+    assert.ok(head.indexOf('⚠ ТРЕВОГА') === 0 && head.indexOf('RH-RU не на DIRECT: RH-RU → ' + ru) >= 0, ru + ': ' + head);
+  }
+});
+
 test('группы RH-Главный нет в /proxies: это тревога, а не молчание', async () => {
   const store = makeStore();
   const r = await settle(run(store, { pin: 'works', noMain: true }));
