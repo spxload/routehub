@@ -370,3 +370,20 @@ test('override ST21: только cron, плитка и скрипт; ни гр�
   assert.ok(used.length > 0);
   assert.deepEqual([...new Set(used)], ['get'], 'у $httpClient вызывается не только get: ' + used.join(','));
 });
+
+// ── СТОРОЖ И CRON (дефект ST14) ──────────────────────────────────────
+// Худший честный путь: последний запрос стартует у края бюджета, ждёт
+// CTRL_SEC, повтор после обрыва — 1 с, растянутая фоном Stash до 4 с, и ещё
+// CTRL_SEC. Сторож считается без растяжения — так граница строже.
+const numOf = (k) => Number(CODE.match(new RegExp('var ' + k + ' = (\\d+)'))[1]);
+
+test('сторож позже худшего честного пути с повтором и растяжением фона (ST14)', () => {
+  const worst = numOf('BUDGET_MS') + 2 * numOf('CTRL_SEC') * 1000 + 4 * 1000;
+  assert.ok(numOf('GUARD_MS') > worst, 'сторож ' + numOf('GUARD_MS') + ' мс не позже худшего пути ' + worst + ' мс');
+});
+
+test('timeout задания cron не меньше сторожа пробы', () => {
+  const to = Number(/timeout:\s*(\d+)/.exec(OV)[1]) * 1000;
+  assert.ok(to >= numOf('GUARD_MS'), 'cron обрывает прогон (' + to + ' мс) раньше сторожа (' + numOf('GUARD_MS') + ' мс)');
+  assert.ok(to >= numOf('BUDGET_MS'), 'cron обрывает прогон раньше бюджета');
+});
