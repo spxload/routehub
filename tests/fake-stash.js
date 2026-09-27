@@ -6,8 +6,6 @@
 // CHANGELOG ST18–ST20); расхождения моделей прежних тестов — опциями.
 //
 // ПО УМОЛЧАНИЮ (как на устройстве):
-// - адрес с не-ASCII символами (кириллица без encodeURIComponent) — 400;
-// - неизвестная группа — 404 {"message":"Resource not found"};
 // - PUT несуществующего члена — 400 «Selector update error: proxy not exist»,
 //   выбор не сбит (ST18);
 // - PUT в Fallback и URLTest закрепляет: `now` → цель (ST18, ST19); поля
@@ -16,8 +14,14 @@
 // - DELETE /proxies/{группа} — 405, закрепление не снимает (ST18);
 // - timeout запроса пишется в журнал КАК ЕСТЬ: у Stash он в секундах, и тест
 //   пробы обязан ловить миллисекунды (ловушка проекта);
-// - PUT узла со словом «Обход» в имени — 400 и запись в w.bypass: модели не
-//   выбирают обходные узлы (правило 1), тест пробы проверяет w.bypass пустым.
+// - PUT узла со словом «Обход» и /delay, чья цепочка выбора кончается таким
+//   узлом, отвечают КАК УСТРОЙСТВО (ветка пробы та же, что на телефоне), но
+//   пишутся в w.bypass; settle() требует w.bypass пустым (правило 1:
+//   обходные узлы не выбирать и не мерить) — если не передан allowBypass.
+//
+// ДОПУЩЕНИЯ-СТРАХОВКИ (пробой НЕ установлены): не-ASCII путь — 400 (ST18
+// проверял только закодированную кириллицу); неизвестная группа в /proxies —
+// 404 «Resource not found» (опора в ST19 лишь косвенная, через providers).
 //
 // Часы подставные: каждый ответ сдвигает w.clock.t на w.step мс (30).
 
@@ -31,7 +35,6 @@ export const MSG = {
   noGroup: '{"message":"Resource not found"}',
   notExist: '{"message":"Selector update error: proxy not exist"}',
   selectorOnly: '{"message":"must be one of Selector / URLTest / Fallback"}',
-  bypass: '{"message":"fake-stash: обходной узел в тесте"}',
 };
 const BUILTIN = { DIRECT: 'Direct', REJECT: 'Reject' };
 
@@ -88,6 +91,11 @@ export function createStash(o = {}) {
     return e;
   }
   w.entry = entry;
+  // Конец цепочки выбора: через группу трафик /delay идёт в её выбранный узел.
+  w.leafOf = (n) => {
+    for (let i = 0; i < 16 && g[n] && g[n].all; i++) n = w.nowOf(n);
+    return String(n);
+  };
 
   w.handle = (method, opt, cb) => {
     const url = String(opt.url || '');
@@ -132,7 +140,11 @@ export function createStash(o = {}) {
   function proxy(method, name, delay, opt, reply) {
     const x = known(name);
     if (!x) return reply(404, msg.noGroup);
-    if (delay) return reply(200, '{"delay":42}');
+    if (delay) {
+      const leaf = w.leafOf(name);
+      if (leaf.indexOf(BYPASS_WORD) >= 0) w.bypass.push({ delay: name, leaf });
+      return reply(200, '{"delay":42}');
+    }
     if (method === 'get') return reply(200, JSON.stringify(entry(name)));
     if (method !== 'put' && method !== 'delete') return reply(405, 'Method Not Allowed');
     w.wrote[name] = 1;
@@ -146,10 +158,7 @@ export function createStash(o = {}) {
     }
     let want;
     try { want = JSON.parse(opt.body).name; } catch (e) { return reply(400, '{"message":"bad body"}'); }
-    if (typeof want === 'string' && want.indexOf(BYPASS_WORD) >= 0) {
-      w.bypass.push({ group: name, want });
-      return reply(400, msg.bypass);
-    }
+    if (typeof want === 'string' && want.indexOf(BYPASS_WORD) >= 0) w.bypass.push({ group: name, want });
     const rej = o.putReject && o.putReject(name, want, w);
     if (rej) return reply(400, typeof rej === 'string' ? rej : msg.selectorOnly);
     if (!x.all || x.all.indexOf(want) < 0) {
@@ -223,17 +232,19 @@ export function sandbox(w, code, file, opts = {}) {
     $done: (v) => { state.doneCalls++; state.done = v || {}; },
   }, opts.extra || {});
   sb.globalThis = sb;
-  state.sb = sb;
+  state.sb = sb; state.w = w;
   vm.runInContext(code, vm.createContext(sb), { filename: file });
   return state;
 }
 
 // Ждёт $done, затем ещё grace мс: второй $done, если он есть, успеет прийти.
-export async function settle(state, ms = 5000, grace = 150) {
+// Затем — правило 1: ни выбора, ни замера обходного узла (w.bypass пуст).
+export async function settle(state, ms = 5000, grace = 150, { allowBypass = false } = {}) {
   const until = Date.now() + ms;
   while (!state.done && Date.now() < until) await new Promise((r) => setTimeout(r, 2));
   assert.ok(state.done, 'проба не дошла до $done');
   await new Promise((r) => setTimeout(r, grace));
   assert.equal(state.doneCalls, 1, 'ровно один $done на любой ветви');
+  if (!allowBypass && state.w) assert.deepEqual(state.w.bypass, [], 'проба выбрала или мерила обходной узел (правило 1)');
   return state;
 }

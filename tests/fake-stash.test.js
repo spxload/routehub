@@ -179,14 +179,24 @@ test('hang — ответа нет; late — один запрос отвеча�
   assert.equal(wl.lateIdx, 1);
 });
 
-test('обходной узел: PUT со словом «Обход» — 400 и запись в w.bypass; автовыбор его пропускает', async () => {
+test('обходной узел: PUT и /delay отвечают как устройство, но пишутся в w.bypass; settle их не пропускает', async () => {
   const node = 'DE ' + BYPASS_WORD + ' VPN';
   const w = createStash({ groups: { Р: { type: 'Selector', now: 'DIRECT', all: ['DIRECT', node] },
-    А: { type: 'Fallback', all: [node, 'DIRECT'] } } });
-  assert.equal((await put(w, 'Р', node)).status, 400);
-  assert.equal(w.g.Р.now, 'DIRECT');
-  assert.deepEqual(w.bypass, [{ group: 'Р', want: node }]);
+    А: { type: 'Fallback', all: [node, 'DIRECT'] }, В: { type: 'Selector', now: 'Р', all: ['Р'] } } });
   assert.equal(w.nowOf('А'), 'DIRECT');
+  assert.equal((await ask(w, 'get', gp('В') + '/delay')).status, 200);
+  assert.deepEqual(w.bypass, []);
+  assert.equal((await put(w, 'Р', node)).status, 204);
+  assert.equal(w.g.Р.now, node);
+  assert.equal((await ask(w, 'get', gp('В') + '/delay')).status, 200);
+  assert.deepEqual(w.bypass, [{ group: 'Р', want: node }, { delay: 'В', leaf: node }]);
+  const code = 'var c = $environment["controller-url"];' +
+    '$httpClient.get({ url: c + "/proxies/" + encodeURIComponent("Р") + "/delay", timeout: 5 }, function () { $done({}); });';
+  const st = sandbox(w, code, 'bypass.js');
+  await assert.rejects(settle(st), /правило 1/);
+  const w2 = createStash({ groups: { Р: { type: 'Selector', now: node, all: [node] } } });
+  await settle(sandbox(w2, code, 'bypass.js'), 5000, 150, { allowBypass: true });
+  assert.deepEqual(w2.bypass, [{ delay: 'Р', leaf: node }]);
 });
 
 test('маршруты: свой route раньше общего; /proxies — список; DIRECT встроен, builtins: false — нет', async () => {
