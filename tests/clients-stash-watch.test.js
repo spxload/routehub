@@ -5,15 +5,19 @@
 //   * глобального proxy-server-nameserver НЕТ — вне whitelist plain-гонка
 //     отравила бы имена ВСЕХ узлов; в nameserver-policy — только имена
 //     обходных серверов, IP и мусор не попадают (ключи не кавычатся);
-//   * RH-Часы и RH-Тест-RU — только DIRECT / RH-Прямо-RU, ни одного обходного
-//     узла (правило 1), на них не ссылается ни одно правило и ни одна группа;
+//   * RH-Часы — только DIRECT, ни одного обходного узла (правило 1), на неё не
+//     ссылается ни одно правило и ни одна группа;
+//   * RH-Прямо-RU / RH-Тест-RU — НЕ в профиле, а в override Watch (ревью
+//     27.09): отказ Stash от benchmark-* у direct роняет только override;
 //   * RH-RU, RH-Главный и интервалы групп с обходом — прежние.
 // Имена серверов в тесте вымышленные (example.net / example.org).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { T } from './harness.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { T, ROOT } from './harness.js';
 
 const P = T.STASH_PROFILE, S = T.STASH;
 const W = await import('../src/clients/stash-watch.js');
@@ -33,6 +37,7 @@ const STATE = {};
 const CTX = { key: 'k1', base: 'https://w.invalid/t/T', masterLines: LINES, state: STATE };
 const TEXT = P.renderProfile(CTX);
 const WATCH_NAMES = [W.G_CLOCK, W.G_TEST_RU, W.N_DIRECT_RU];
+const OV = fs.readFileSync(path.join(ROOT, 'plugins/RouteHub-Stash-Watch.stoverride'), 'utf8');
 
 function allGroups() { return P.profileGroups(LINES, STATE, {}).concat(W.watchGroups()); }
 function section(text, key) {
@@ -101,29 +106,34 @@ test('подписка без обхода — nameserver-policy как в S-dra
 });
 
 // ── НАБЛЮДАТЕЛЬНЫЕ ГРУППЫ ───────────────────────────────────────────────
-test('RH-Часы и RH-Тест-RU: url-test, interval 60, lazy false, только DIRECT / RH-Прямо-RU', () => {
-  const g = {};
-  W.watchGroups().forEach((x) => { g[x.name] = x; });
-  assert.deepEqual(g[W.G_CLOCK], { name: 'RH-Часы', type: 'url-test', proxies: ['DIRECT'], interval: 60, lazy: false });
-  assert.deepEqual(g[W.G_TEST_RU], { name: 'RH-Тест-RU', type: 'url-test', proxies: ['RH-Прямо-RU'], interval: 60, lazy: false });
-  const nodes = S.nodeSet(LINES, STATE, {}).nodes.map((n) => n.name);
-  for (const x of W.watchGroups()) {
-    for (const m of x.proxies) {
-      assert.ok(m.indexOf('Обход') < 0, x.name + ': обходной член ' + m);
-      assert.ok(nodes.indexOf(m) < 0, x.name + ': узел подписки ' + m);
-      assert.ok(m === 'DIRECT' || m === W.N_DIRECT_RU, x.name + ': чужой член ' + m);
-    }
+test('RH-Часы: url-test [DIRECT], interval 60, lazy false; других наблюдательных групп в профиле нет', () => {
+  assert.deepEqual(W.watchGroups(), [{ name: 'RH-Часы', type: 'url-test', proxies: ['DIRECT'], interval: 60, lazy: false }]);
+  for (const x of W.watchGroups()) for (const m of x.proxies) assert.ok(m.indexOf('Обход') < 0, x.name + ': обходной член ' + m);
+});
+
+test('RH-Прямо-RU и RH-Тест-RU в профиле НЕТ (живут в override Watch) — ни в одной форме', () => {
+  for (const t of [TEXT, P.renderProfile({ ...CTX, membership: 'provider' })]) {
+    for (const n of [W.G_TEST_RU, W.N_DIRECT_RU]) assert.ok(t.indexOf(n) < 0, 'в профиле ' + n);
+    assert.ok(!/type: 'direct'/.test(t), 'узел type: direct в профиле');
+    assert.ok(t.indexOf("benchmark-url: 'http://ya.ru/'") < 0);
   }
 });
 
-test('RH-Прямо-RU: type direct, российский http-адрес замера, тайм-аут как BENCH_TIMEOUT', () => {
-  const n = W.watchNode();
-  assert.equal(n.name, 'RH-Прямо-RU');
-  assert.equal(n.type, 'direct');
-  assert.match(n['benchmark-url'], /^http:\/\/([a-z0-9-]+\.)*ya\.ru\//);
-  assert.equal(n['benchmark-timeout'], S.BENCH_TIMEOUT);
-  assert.equal(Object.keys(n).length, 4, 'у наблюдательного узла лишние ключи');
-  assert.ok(!('server' in n), 'у direct нет сервера');
+// Override разбирается построчно (формат фиксирован) и, если есть, PyYAML (ниже).
+test('override Watch: узел RH-Прямо-RU type direct с ya.ru, группа RH-Тест-RU; ни обхода, ни правил, ни MITM', () => {
+  const body = OV.split('\n').filter((l) => l && !/^\s*#/.test(l));
+  const at = (k) => body.indexOf(k + ':');
+  assert.ok(at('proxies') >= 0 && at('proxy-groups') > at('proxies'), 'нет секций proxies / proxy-groups');
+  assert.deepEqual(body.slice(at('proxies') + 1, at('proxy-groups')), [
+    '  - name: RH-Прямо-RU', '    type: direct', '    benchmark-url: http://ya.ru/', '    benchmark-timeout: ' + S.BENCH_TIMEOUT]);
+  assert.deepEqual(body.slice(at('proxy-groups') + 1), [
+    '  - name: RH-Тест-RU', '    type: url-test', '    interval: 60', '    lazy: false', '    proxies:', '      - RH-Прямо-RU']);
+  assert.equal(W.G_TEST_RU, 'RH-Тест-RU');
+  assert.equal(W.N_DIRECT_RU, 'RH-Прямо-RU');
+  assert.ok(OV.indexOf('Обход') < 0, 'слово «Обход» в override Watch');
+  for (const k of ['rules:', 'script', 'cron', 'mitm', 'hostname', 'dns:']) {
+    assert.ok(body.every((l) => l.indexOf(k) < 0), 'в override Watch есть ' + k);
+  }
 });
 
 test('на наблюдательные группы и узел не ссылается ни одно правило и ни одна рабочая группа', () => {
@@ -136,21 +146,15 @@ test('на наблюдательные группы и узел не ссыла
   assert.ok(section(TEXT, 'rule-providers').every((l) => WATCH_NAMES.every((n) => l.indexOf(n) < 0)));
 });
 
-test('в YAML: группы — в конце proxy-groups, узел — в конце proxies; в файле поставщика узла нет', () => {
+test('в YAML: RH-Часы — последней в proxy-groups, с lazy: false; узлы — только подписки', () => {
   const pg = section(TEXT, 'proxy-groups').filter((l) => /^ {2}- name: /.test(l));
-  assert.deepEqual(pg.slice(-2), ["  - name: 'RH-Часы'", "  - name: 'RH-Тест-RU'"]);
-  const px = section(TEXT, 'proxies');
-  const names = px.filter((l) => /^ {2}- name: /.test(l));
-  assert.equal(names[names.length - 1], "  - name: 'RH-Прямо-RU'");
-  const tail = px.slice(px.indexOf("  - name: 'RH-Прямо-RU'"));
-  assert.deepEqual(tail, ["  - name: 'RH-Прямо-RU'", "    type: 'direct'", "    benchmark-url: 'http://ya.ru/'", '    benchmark-timeout: 5']);
+  assert.equal(pg[pg.length - 1], "  - name: 'RH-Часы'");
   assert.ok(section(TEXT, 'proxy-groups').indexOf('    lazy: false') > 0);
-  assert.ok(S.renderNodes(LINES, STATE, {}).indexOf('RH-Прямо-RU') < 0, 'наблюдательный узел в выдаче /nodes');
-  // Форма Б: поставщик и отдельная секция proxies с одним наблюдательным узлом.
+  const names = section(TEXT, 'proxies').filter((l) => /^ {2}- name: /.test(l));
+  assert.equal(names.length, S.nodeSet(LINES, STATE, {}).nodes.length, 'в proxies лишний узел');
   const prov = P.renderProfile({ ...CTX, membership: 'provider' });
   assert.ok(prov.indexOf('proxy-providers:') >= 0);
-  const pp = section(prov, 'proxies').filter((l) => /^ {2}- name: /.test(l));
-  assert.deepEqual(pp, ["  - name: 'RH-Прямо-RU'"]);
+  assert.equal(prov.split('\n').indexOf('proxies:'), -1, 'в форме Б лишняя секция proxies');
 });
 
 test('каждый член каждой группы (с наблюдательными) разрешается внутри профиля', () => {
@@ -163,7 +167,6 @@ test('каждый член каждой группы (с наблюдатель
   const bad = [];
   gs.forEach((g) => (g.proxies || []).forEach((m) => { if (!known[m]) bad.push(g.name + ' -> ' + m); }));
   assert.deepEqual(bad, []);
-  assert.ok(known[W.N_DIRECT_RU], 'наблюдательный узел не описан в proxies');
 });
 
 // ── ПРЕЖНЕЕ НЕ ТРОНУТО ──────────────────────────────────────────────────
@@ -192,7 +195,7 @@ const PY = spawnSync('python3', ['-c', 'import yaml'], { encoding: 'utf8' });
 test('профиль S-draft-9 разбирается настоящим YAML-парсером (обе формы членства)', { skip: PY.status !== 0 && 'нет python3 + PyYAML' }, () => {
   const src = 'import sys, json, yaml\nd = yaml.safe_load(sys.stdin.read())\n' +
     'print(json.dumps({"pol": d["dns"]["nameserver-policy"], "psn": "proxy-server-nameserver" in d["dns"],' +
-    ' "tail": d["proxy-groups"][-2:], "node": d["proxies"][-1]}, ensure_ascii=False))';
+    ' "tail": d["proxy-groups"][-1:]}, ensure_ascii=False))';
   for (const t of [TEXT, P.renderProfile({ ...CTX, membership: 'provider' })]) {
     const r = spawnSync('python3', ['-c', src], { input: t, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
@@ -201,6 +204,21 @@ test('профиль S-draft-9 разбирается настоящим YAML-п
     assert.deepEqual(d.pol['byp-a.example.net'], ['system', '77.88.8.8']);
     assert.equal(d.pol['+.ru'], 'system');
     assert.deepEqual(d.tail, W.watchGroups());
-    assert.deepEqual(d.node, W.watchNode());
   }
+});
+
+test('override Watch разбирается настоящим YAML-парсером: только direct / url-test, члены разрешаются', { skip: PY.status !== 0 && 'нет python3 + PyYAML' }, () => {
+  const r = spawnSync('python3', ['-c', 'import sys, json, yaml\nprint(json.dumps(yaml.safe_load(sys.stdin.read()), ensure_ascii=False))'],
+    { input: OV, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const d = JSON.parse(r.stdout);
+  assert.deepEqual(Object.keys(d).sort(), ['author', 'category', 'desc', 'name', 'proxies', 'proxy-groups']);
+  assert.deepEqual(d.proxies, [{ name: 'RH-Прямо-RU', type: 'direct', 'benchmark-url': 'http://ya.ru/', 'benchmark-timeout': S.BENCH_TIMEOUT }]);
+  assert.deepEqual(d['proxy-groups'], [{ name: 'RH-Тест-RU', type: 'url-test', interval: 60, lazy: false, proxies: ['RH-Прямо-RU'] }]);
+  for (const p of d.proxies) assert.equal(p.type, 'direct');
+  for (const g of d['proxy-groups']) {
+    assert.equal(g.type, 'url-test');
+    for (const m of g.proxies) assert.ok(d.proxies.some((p) => p.name === m), 'член ' + m + ' не описан в override');
+  }
+  assert.ok(JSON.stringify(d).indexOf('Обход') < 0);
 });

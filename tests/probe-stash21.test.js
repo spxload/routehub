@@ -36,7 +36,8 @@ function world(o = {}) {
     [B2]: { type: 'Vless', alive: false, history: [] },
     'RH-АВТО': { type: 'Fallback', now: 'X', all: ['X'] },
   };
-  if (o.noWatch) for (const k of [CLOCK, TEST, DRU]) delete g[k];
+  if (o.noClock) delete g[CLOCK];
+  if (o.noWatchOv) { delete g[TEST]; delete g[DRU]; }
   if (o.noRu) { delete g[RU]; delete g[MAIN]; }
   return createStash({ groups: g, aliveField: o.fields !== false, historyField: o.fields !== false, ...(o.opts || {}) });
 }
@@ -238,14 +239,33 @@ test('RH-Обход с заглушкой DIRECT — DIRECT не считает�
   assert.equal(clip(s).ans.обход, undefined);
 });
 
-test('профиль без S-draft-9: сказано, DIRECT и RH-RU всё равно пишутся', async () => {
-  const w = world({ noWatch: true });
+test('профиль без S-draft-9 (нет RH-Часы): сказано, DIRECT и RH-RU всё равно пишутся', async () => {
+  const w = world({ noClock: true });
   const s = await run(w, { tile: true });
-  assert.match(s.done.content, /нет RH-Часы, RH-Тест-RU, RH-Прямо-RU — профиль стенда не обновлён до S-draft-9/);
+  assert.match(s.done.content, /нет RH-Часы — профиль стенда не обновлён до S-draft-9/);
+  assert.ok(s.done.content.indexOf('override Watch') < 0, 'Watch стоит — о нём молчать');
   const c = clip(s);
   assert.equal(c.ans.сейчас[CLOCK], 'нет в профиле');
   assert.equal(c.ans.сейчас[RU].now, 'DIRECT');
   assert.ok(w.store.RH_ST21);
+});
+
+test('без override Watch: RH-Прямо-RU / RH-Тест-RU — «нет данных», не ошибка; журнал ведётся', async () => {
+  const w = world({ noWatchOv: true });
+  await run(w);
+  later(w);
+  w.g.DIRECT.alive = false;
+  const s = await run(w, { tile: true });
+  assert.match(s.done.content, /нет RH-Тест-RU, RH-Прямо-RU — override Watch не стоит: RH-Прямо-RU нет данных/);
+  assert.ok(s.done.content.indexOf('профиль стенда не обновлён') < 0, 'отсутствие override — не «профиль не обновлён»');
+  const c = clip(s);
+  assert.equal(c.ans.сейчас[DRU], 'нет данных (override Watch не стоит)');
+  assert.equal(c.ans.сейчас[TEST], 'нет данных (override Watch не стоит)');
+  assert.equal(c.ans.сейчас[CLOCK].alive, 'нет данных');
+  assert.deepEqual(c.err, []);
+  assert.equal(c.ans.отказы, undefined, '404 override — не отказ чтения');
+  assert.equal(journal(w).filter((x) => x.вид === 'alive' && x.г === 'DIRECT').length, 1);
+  assert.equal(journal(w).filter((x) => x.г === DRU).length, 0);
 });
 
 test('не профиль стенда (нет RH-RU и RH-Главный): журнал не тронут', async () => {

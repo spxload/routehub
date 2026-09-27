@@ -10,8 +10,9 @@
  * записью history (плановый замер) или без неё (событие — вероятно, dial).
  *
  * ЧТО ЧИТАЕТ. Раз в минуту (cron) GET /proxies/{имя} для DIRECT, RH-RU,
- * RH-Главный и наблюдательных RH-Часы, RH-Тест-RU, RH-Прямо-RU (профиль
- * S-draft-9): поля alive, now, последняя запись history (время, delay).
+ * RH-Главный, «часов» RH-Часы (профиль S-draft-9) и пары RH-Тест-RU /
+ * RH-Прямо-RU (override RouteHub-Stash-Watch; без него — «нет данных», не
+ * ошибка): поля alive, now, последняя запись history (время, delay).
  * Плюс RH-Обход и его члены — тоже только GET /proxies/{имя}: живы ли
  * обходные узлы по оценке самого ядра (проверка резолва имён обходных
  * серверов под whitelist, S-draft-9). В журнал ($persistentStore, RH_ST21) —
@@ -55,7 +56,8 @@ var CLOCK = 'RH-Часы', TEST = 'RH-Тест-RU', DRU = 'RH-Прямо-RU';
 var TARGETS = [DIRECT, RU, MAIN, CLOCK, TEST, DRU];
 var NOW_OF = [RU, MAIN];             // следим за now
 var ALIVE_OF = [DIRECT, DRU];        // следим за alive
-var WATCH = [CLOCK, TEST, DRU];      // появились в S-draft-9
+var PROFILE_NEW = [CLOCK];           // профиль S-draft-9
+var WATCH_OV = [TEST, DRU];          // override RouteHub-Stash-Watch
 
 var rep = { rev: REV, ts: new Date().toISOString(), ans: {}, err: [] };
 var A = rep.ans;
@@ -235,7 +237,7 @@ function cur(snap) {
   TARGETS.forEach(function (g) {
     var c = snap[g];
     if (!c) { o[g] = 'не прочитано'; return; }
-    if (!c.есть) { o[g] = 'нет в профиле'; return; }
+    if (!c.есть) { o[g] = WATCH_OV.indexOf(g) >= 0 ? 'нет данных (override Watch не стоит)' : 'нет в профиле'; return; }
     var x = { alive: c.alive === null ? 'нет данных' : c.alive };
     if (c.now) x.now = c.now;
     x.history = c.hn === null ? 'нет данных' : c.h ? { t: c.h.t, d: c.h.d, n: c.hn } : 'пусто';
@@ -277,6 +279,7 @@ function finish() {
     }
     lines = [A.ВЕРДИКТ || 'ST21: прогон прерван'];
     if (A.профиль) lines.push(A.профиль);
+    if (A.watch) lines.push(A.watch);
     if (A.обход) lines.push('обход: живы ' + A.обход.живы + ', мертвы ' + A.обход.мертвы + ', нет данных ' + A.обход.нет_данных);
     lines.push('Stash ' + (A.stash || '?') + ', ' + (Date.now() - T0) + ' мс' + (rep.err.length ? ' · ' + rep.err.join('; ') : ''));
   } catch (e0) {
@@ -345,8 +348,12 @@ function main() {
       missNote();
       return finish();
     }
-    var miss = WATCH.filter(function (g) { return snap[g] && !snap[g].есть; });
+    var miss = PROFILE_NEW.filter(function (g) { return snap[g] && !snap[g].есть; });
     if (miss.length) A.профиль = 'нет ' + miss.join(', ') + ' — профиль стенда не обновлён до S-draft-9';
+    // Пара RH-Тест-RU / RH-Прямо-RU — из отдельного override: без него это не
+    // сбой, а «нет данных» (override не поставлен или Stash его отверг).
+    var noOv = WATCH_OV.filter(function (g) { return snap[g] && !snap[g].есть; });
+    if (noOv.length) A.watch = 'нет ' + noOv.join(', ') + ' — override Watch не стоит: RH-Прямо-RU нет данных';
     var byp = {};
     readAll([BYP], byp, function () {
       // DIRECT в RH-Обход — заглушка профиля при подписке без обхода, не узел.

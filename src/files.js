@@ -71,6 +71,7 @@ import F_PLUGINS_ROUTEHUB_STASH_ST18_STOVERRIDE from '../plugins/RouteHub-Stash-
 import F_PLUGINS_ROUTEHUB_STASH_ST19_STOVERRIDE from '../plugins/RouteHub-Stash-ST19.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_ST20_STOVERRIDE from '../plugins/RouteHub-Stash-ST20.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_ST21_STOVERRIDE from '../plugins/RouteHub-Stash-ST21.stoverride';
+import F_PLUGINS_ROUTEHUB_STASH_WATCH_STOVERRIDE from '../plugins/RouteHub-Stash-Watch.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_ST6_CDN_STOVERRIDE from '../plugins/RouteHub-Stash-ST6-cdn.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_ST6_STOVERRIDE from '../plugins/RouteHub-Stash-ST6.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_STOVERRIDE from '../plugins/RouteHub-Stash.stoverride';
@@ -123,6 +124,7 @@ const FILES = Object.freeze({
   'plugins/RouteHub-Stash-ST19.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST19_STOVERRIDE,
   'plugins/RouteHub-Stash-ST20.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST20_STOVERRIDE,
   'plugins/RouteHub-Stash-ST21.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST21_STOVERRIDE,
+  'plugins/RouteHub-Stash-Watch.stoverride': F_PLUGINS_ROUTEHUB_STASH_WATCH_STOVERRIDE,
   'plugins/RouteHub-Stash-ST6-cdn.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST6_CDN_STOVERRIDE,
   'plugins/RouteHub-Stash-ST6.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST6_STOVERRIDE,
   'plugins/RouteHub-Stash.stoverride': F_PLUGINS_ROUTEHUB_STASH_STOVERRIDE,

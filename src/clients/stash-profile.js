@@ -61,9 +61,9 @@
 //     руками», теперь появился «DIRECT ошибочно сочли мёртвым, и ВЕСЬ
 //     прочий иностранный трафик молча ушёл на узлы, включая обходные».
 //     Поэтому правка живёт на стенде Stash и в боевой Loon не переносится.
-//  7. S-draft-9: наблюдательные RH-Часы, RH-Тест-RU и узел RH-Прямо-RU
-//     (clients/stash-watch.js) правилами не используются. `lazy: false` и
-//     benchmark-* у `type: direct` — проверяет стенд (проба ST21).
+//  7. S-draft-9: наблюдательная RH-Часы (clients/stash-watch.js) правилами
+//     не используется; `lazy: false` — проверяет стенд (проба ST21). Узел
+//     `type: direct` с benchmark-* — только в override Watch, не здесь.
 // История версий — CHANGELOG.md в корне репозитория.
 
 import { PROVIDER } from './stash-members.js';
@@ -72,7 +72,7 @@ import { DNS_BOOT, DNS_BYPASS_NS, DNS_FAKE_IP_FILTER, DNS_MAIN, DNS_NS_POLICY, b
 import { G_BYPASS, G_MAIN, G_RU, profileGroups, rankBypass, serviceGroups } from './stash-service.js';
 import { buildRules } from './stash-rules.js';
 import { buildProviders, buildSetRules } from './stash-sets.js';
-import { watchGroups, watchNode } from './stash-watch.js';
+import { watchGroups } from './stash-watch.js';
 import { nodeToYaml, nodesToYaml, yBlock } from './stash-yaml.js';
 
 // Версия профиля. Аналог C-draft-NN у Loon: её видно в админ-панели
@@ -108,11 +108,10 @@ function renderProfile(ctx) {
   // /nodes, — значит имена в `proxies:` и имена членов групп заведомо одни и
   // те же, и тихий отказ по расхождению имён невозможен по построению.
   const set = nodeSet(lines, state, o);
-  // S-draft-9: наблюдательные группы и узел (clients/stash-watch.js) — в
-  // КОНЕЦ своих секций: правила на них не ссылаются, рабочие группы их не
-  // содержат, и в интерфейсе они не заслоняют рабочие.
+  // S-draft-9: «часы» (clients/stash-watch.js) — в КОНЕЦ секции: правила на
+  // них не ссылаются, рабочие группы их не содержат, и в интерфейсе они не
+  // заслоняют рабочие.
   const groups = profileGroups(lines, state, o).concat(watchGroups());
-  const extra = [watchNode()];
   const useProvider = (o.membership === 'provider');
   const prov = {};
   prov[provider] = {
@@ -139,10 +138,7 @@ function renderProfile(ctx) {
       },
     }, 0),
     '',
-    // Форма Б: узлы приезжают поставщиком, но наблюдательный узел в файле
-    // поставщика не живёт — он остаётся в `proxies:` профиля.
-    useProvider ? yBlock({ 'proxy-providers': prov }, 0) + '\n\n' + nodesToYaml(extra).replace(/\n$/, '')
-      : nodesToYaml(set.nodes.concat(extra)).replace(/\n$/, ''),
+    useProvider ? yBlock({ 'proxy-providers': prov }, 0) : nodesToYaml(set.nodes).replace(/\n$/, ''),
     '',
     yBlock({ 'rule-providers': buildProviders(o.base, o.key) }, 0),
     '',
