@@ -25,7 +25,7 @@
 //   src/repo.js  — /t/<токен>/repo/<путь> и переписчик ссылок      (files, store)
 //   src/clients/loon.js — синтаксис конфига Loon: AI-блоки, подстановки
 //   src/clients/stash-*.js — клиентский слой Stash; stash-lab.js — муляжи опытов,
-//   stash-lab24.js — стенд опыта ST24
+//   stash-lab24.js — стенд опыта ST24; egern-lab.js — журнал раздачи файлов пробы EGS
 //
 // МОДЕЛЬ ОДНОЙ ПОДПИСКИ: /nodes отдаёт оба набора (🛜/📱); каждая функция —
 // select-родитель из двух fallback-детей (-W/-C); netwatch флипает родителя по
@@ -50,6 +50,7 @@ import * as STASH from './src/clients/stash.js';
 import * as STASH_PROFILE from './src/clients/stash-profile.js';
 import * as STASH_LAB from './src/clients/stash-lab.js';
 import * as STASH_LAB24 from './src/clients/stash-lab24.js';
+import * as EGERN_LAB from './src/clients/egern-lab.js';
 import * as CLIENTS from './src/clients/registry.js';
 
 export default {
@@ -93,11 +94,16 @@ export default {
       // пауза 25 с в нечётные окна) — clients/stash-lab24.js.
       if (req.method === 'GET' && url.pathname === STASH_LAB24.T24_NODES_PATH) return STASH_LAB24.handleT24Nodes(url, env);
       if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname === STASH_LAB24.T24_PULSE_PATH) return await STASH_LAB24.handleT24Pulse(url, env);
+      // ST25: живой отчёт пробы (≤ 2 КБ, белый список, stop — LAB_STOP или не RU).
+      if (req.method === 'POST' && url.pathname === STASH_LAB24.T24_REPORT_PATH) return await STASH_LAB24.handleT24Report(req, env, req.cf);
       if (req.method === 'GET' && url.pathname === '/config') return await API.handleConfig(url, env, tok);
       // v1.11.0 (перенос v1.12.0 из main): файлы приватного репозитория из
       // сборки. Токен — только из пути /t/<токен>/ (не ?token=); без него —
-      // 403 в самом обработчике.
-      if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/repo/')) return await REPO.handleRepo(req, url, env, pm ? tok : '');
+      // 403 в самом обработчике. Удачная раздача файлов пробы EGS — строка
+      // журнала стенда (clients/egern-lab.js; без токена и IP).
+      if ((req.method === 'GET' || req.method === 'HEAD') && url.pathname.startsWith('/repo/')) {
+        return await REPO.handleRepo(req, url, env, pm ? tok : '', function (p) { EGERN_LAB.noteRepoServe(p, env, req.cf, req.method); });
+      }
       if (req.method === 'GET' && url.pathname === '/nodes') return await API.handleNodes(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/refresh') return await API.handleRefresh(url, env, tok);
       if (req.method === 'GET' && url.pathname === '/dashboard') return await DASH.handleDashboard(url, env, tok);
@@ -141,6 +147,7 @@ export default {
 // STASH_PROFILE — каркас профиля (группы, DNS, версия S-draft). Отдельным
 // ключом по той же причине: у него свои renderConfig и aiBlocks.
 // STASH_LAB — муляжи опытов лаборатории Stash (/lab/t22-nodes, /lab/t23-nodes, /lab/pulse).
-// STASH_LAB24 — стенд опыта ST24 (/lab/t24-nodes, /lab/t24-pulse).
+// STASH_LAB24 — стенд опыта ST24 (/lab/t24-nodes, /lab/t24-pulse, /lab/t24-report).
+// EGERN_LAB — журнал раздачи файлов сводной пробы Egern EGS (/t/<токен>/repo/…).
 // CLIENTS — реестр клиентских слоёв и выбор активного по env.CLIENT (ADR-01).
-export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...REPO, LOON, STASH, STASH_PROFILE, STASH_LAB, STASH_LAB24, CLIENTS };
+export const __test = { ...CONST, ...UTIL, ...STORE, ...SUB, ...AI, ...API, ...DASH, ...ADMIN, ...REPO, LOON, STASH, STASH_PROFILE, STASH_LAB, STASH_LAB24, EGERN_LAB, CLIENTS };

@@ -22,10 +22,10 @@ function list(dir, re) {
 const ON_DISK = ['routehub.conf']
   .concat(list('scripts', /\.js$/))
   .concat(list('probes', /\.js$/))
-  .concat(list('plugins', /\.(plugin|stoverride)$/))
+  .concat(list('plugins', /\.(plugin|stoverride|yaml)$/))
   .sort();
 
-test('манифест: каждый файл scripts/*.js, probes/*.js, plugins/*.plugin|*.stoverride и routehub.conf встроен', () => {
+test('манифест: каждый файл scripts/*.js, probes/*.js, plugins/*.plugin|*.stoverride|*.yaml и routehub.conf встроен', () => {
   // В ветке stash-client 40 таких файлов (24.09): пробы и override стенда.
   assert.ok(ON_DISK.length >= 35, 'подозрительно мало файлов на диске: ' + ON_DISK.length);
   const missing = ON_DISK.filter((p) => !Object.prototype.hasOwnProperty.call(FILES, p));
@@ -81,7 +81,8 @@ test('wrangler.toml: правила Text боевого и стенда один
   }
   // Исходники Worker'а под правило Text не подпадают — иначе сборка сломается.
   for (const p of ['routehub-worker.js', 'src/api.js', 'src/api/config.js', 'src/repo.js', 'src/files.js',
-    'src/clients/loon.js', 'src/clients/stash.js', 'src/admin/state.js', 'tools/build-inline-override.mjs']) {
+    'src/clients/loon.js', 'src/clients/stash.js', 'src/admin/state.js', 'tools/build-inline-override.mjs',
+    'probes/routehub-stash-probe.yaml']) {
     assert.ok(!res.some((re) => re.test(p)), p + ' подпал под правило Text');
     assert.ok(!TEXT_GLOBS_RE.test(p), p + ' подпал под хук тестов');
   }

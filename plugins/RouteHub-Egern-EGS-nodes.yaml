@@ -1,0 +1,21 @@
+# RouteHub — подписка-образец пробы EGS в формате Egern (proxies: - <тип>: {...}).
+# Формат — https://egernapp.com/docs/configuration/policy_groups/ («Subscription
+# File Format»), SOCKS5 — https://egernapp.com/docs/configuration/proxies/.
+# Только муляжи: TEST-NET-1 192.0.2.0/24 (RFC 5737, никуда не ведёт), порт 1,
+# без паролей — трафика нет. Имена латиницей. Порядок НАМЕРЕННО не по алфавиту
+# (N3, N1, N2): в группе EGS-NAT видно, держит ли Egern порядок подписки.
+# Раздаёт стенд (/t/<токен>/repo/plugins/…), скачивание — строка журнала
+# {"lab":"egs-file","f":"nodes"}. Содержимое постоянно (без окна времени).
+proxies:
+  - socks5:
+      name: EGS-N3
+      server: 192.0.2.73
+      port: 1
+  - socks5:
+      name: EGS-N1
+      server: 192.0.2.71
+      port: 1
+  - socks5:
+      name: EGS-N2
+      server: 192.0.2.72
+      port: 1

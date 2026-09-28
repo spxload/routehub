@@ -28,9 +28,12 @@ crons = ["0 */2 * * *"]
 # 24.09 в main). Действует только на статически импортированные файлы:
 # src/*.js под **/scripts/*.js не подпадает. fallthrough = true — правило не
 # отключает встроенные правила Wrangler (Text для *.txt, *.sql и т. д.).
+# **/plugins/*.yaml (проба EGS, 28.09): профиль Egern и его подписка-образец —
+# YAML; своего загрузчика у Wrangler для .yaml нет. Шаблон только plugins/:
+# probes/*.yaml (разовые профили других клиентов) не импортируются.
 [[rules]]
 type = "Text"
-globs = ["**/*.html", "**/scripts/*.js", "**/probes/*.js", "**/*.plugin", "**/*.stoverride", "**/*.conf"]
+globs = ["**/*.html", "**/scripts/*.js", "**/probes/*.js", "**/*.plugin", "**/*.stoverride", "**/*.conf", "**/plugins/*.yaml"]
 fallthrough = true
 
 [[d1_databases]]
@@ -59,7 +62,7 @@ name = "routehub-stash"
 
 [[env.stash.rules]]
 type = "Text"
-globs = ["**/*.html", "**/scripts/*.js", "**/probes/*.js", "**/*.plugin", "**/*.stoverride", "**/*.conf"]
+globs = ["**/*.html", "**/scripts/*.js", "**/probes/*.js", "**/*.plugin", "**/*.stoverride", "**/*.conf", "**/plugins/*.yaml"]
 fallthrough = true
 
 [[env.stash.d1_databases]]
