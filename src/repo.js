@@ -87,13 +87,17 @@ function textResp(body, status) {
 
 // tok — токен ИЗ ПУТИ /t/<токен>/ (не из ?token=): ссылки прокси строятся
 // только в таком виде. Пустой tok — отказ без обращения к D1.
-async function handleRepo(req, url, env, tok) {
+// onServe(путь) — необязательная отметка удачной раздачи (журнал пробы EGS,
+// clients/egern-lab.js); зовётся только после проверки токена и манифеста,
+// получает путь из манифеста — без токена. Её сбой ответ не роняет.
+async function handleRepo(req, url, env, tok, onServe) {
   if (!(await tokenKnown(env, tok))) {
     return textResp('RouteHub: файлы отдаются только по ссылке с токеном устройства.\n' +
       'Обнови конфиг (/t/<token>/config?key=kN) — ссылки на скрипты и плагины в нём уже с токеном.', 403);
   }
   const m = rawPath(req).match(REPO_RAW_RE);
   if (!m || m[1] !== tok || !inManifest(m[2])) return textResp('routehub-worker: not found', 404);
+  if (typeof onServe === 'function') { try { onServe(m[2]); } catch (e) { /* отметка не роняет ответ */ } }
   // Ответ только из сборки: ни fetch, ни редиректа.
   return textResp(rewriteRepoLinks(FILES[m[2]], url.origin, tok), 200);
 }

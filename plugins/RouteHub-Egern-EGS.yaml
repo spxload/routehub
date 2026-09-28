@@ -1,0 +1,217 @@
+# RouteHub — профиль сводной пробы Egern EGS (решения Дианы 27.09 «Оба», 28.09 «Да»).
+# Отдельный профиль ТОЛЬКО на время пробы: ни одного узла подписки Lastdep и ни
+# одного платного узла (правило 1). Члены групп — DIRECT, REJECT, муляжи TEST-NET
+# 192.0.2.0/24 (RFC 5737, порт 1: трафика нет) и узлы стенда (/lab/t23-nodes).
+# Весь прочий трафик телефона на время пробы — DIRECT (правило default в конце).
+# Скрипт пробы только читает: у Egern нет API смены выбора, и скрипт его не ищет
+# (правило 2). В UI профиль НЕ править: правка отвязывает auto_update (помеха K).
+# Раздаёт стенд Stash: /t/<токен>/repo/plugins/RouteHub-Egern-EGS.yaml; ссылки
+# raw.githubusercontent.com/spxload/routehub/stash-client/… стенд переписывает
+# на свой адрес с токеном запросившего (src/repo.js), в файле токена нет.
+# Документация: https://egernapp.com/docs/configuration/example/ (поля верхнего
+# уровня), …/policy_groups/ (группы), …/proxies/ (SOCKS5), …/rules/ (правила),
+# …/scriptings/ (скрипты). Интервалы и тайм-ауты групп и скриптов — СЕКУНДЫ;
+# тайм-аут ctx.http в скрипте — миллисекунды. История — CHANGELOG.md, «EGS».
+# Метки адресов проверки — /lab/pulse?t=<метка> (журнал стенда), у каждой группы своя.
+
+# Профиль по таймеру (…/example/: auto_update.url / interval, секунды). 900 с, а
+# не 300: перезагрузка профиля сама может запускать проверки групп — между
+# скачиваниями нужно окно, где видно собственный ритм проверок.
+auto_update:
+  url: https://raw.githubusercontent.com/spxload/routehub/stash-client/plugins/RouteHub-Egern-EGS.yaml
+  interval: 900
+ipv6: false
+# Глобальные адреса проверки (…/example/). DIRECT — своя метка: группа EGS-DG без
+# latency_test_url покажет, берёт ли она глобальный адрес. Метка прокси через
+# муляжи дойти не может — строка egs-pglob значила бы проверку мимо узла.
+direct_latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-dglob
+proxy_latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-pglob
+
+proxies:
+  - socks5:
+      name: EGS-DEAD-1
+      server: 192.0.2.61
+      port: 1
+  - socks5:
+      name: EGS-DEAD-2
+      server: 192.0.2.62
+      port: 1
+
+# Группы (…/policy_groups/). latency_test_url группы главнее глобальных; у
+# fallback — фоновая проверка, у auto_test — замер. interval / timeout — секунды
+# (timeout не больше 60). Фоновые группы (правило есть, скрипт через них не ходит):
+# F60, A30, SM, DG, SUB, NAT, DIE-R; без правила — F60N. Через группы ORD, REJ, DA,
+# DB, SUBS, DIE-S, COND ходит скрипт (запрос снимает с группы «unreachable»).
+policy_groups:
+  # 1. Фоновые проверки fallback с интервалом 60 с.
+  - fallback:
+      name: EGS-F60
+      policies: [DIRECT]
+      interval: 60
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-f60
+  # 2. То же без правила: пропускает ли фон «unreachable» группы (Egern 2.20.0).
+  - fallback:
+      name: EGS-F60N
+      policies: [DIRECT]
+      interval: 60
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-f60n
+  # 3. Реальная частота auto_test при interval 30.
+  - auto_test:
+      name: EGS-A30
+      policies: [DIRECT]
+      interval: 30
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-a30
+  # 4. smart: берёт ли групповой адрес (для smart в документации не назван) и как часто.
+  - smart:
+      name: EGS-SM
+      policies: [DIRECT, EGS-DEAD-1]
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-sm
+  # 5. Глобальный direct_latency_test_url: у группы своего адреса нет.
+  - fallback:
+      name: EGS-DG
+      policies: [DIRECT]
+      interval: 60
+      timeout: 5
+  # 6. Подписка стенда (Clash-формат, type: direct + муляж; порядок по окну 10 мин).
+  #    urls + update_interval (секунды) — на любом из пяти типов групп.
+  - fallback:
+      name: EGS-SUB
+      urls:
+        - https://routehub-stash.proton4iker.workers.dev/lab/t23-nodes
+      update_interval: 300
+      interval: 60
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-sub
+  # 7. Подписка-образец в формате Egern (муляжи N3, N1, N2): разбор и порядок.
+  - fallback:
+      name: EGS-NAT
+      urls:
+        - https://raw.githubusercontent.com/spxload/routehub/stash-client/plugins/RouteHub-Egern-EGS-nodes.yaml
+      update_interval: 300
+      interval: 60
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-nat
+  # 8. Смерть узла в фоне (аналог ST24): адрес t24na «мёртв» в нечётные 10 мин.
+  - fallback:
+      name: EGS-DIE-R
+      policies: [DIRECT, REJECT]
+      interval: 60
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/t24-pulse?t=t24na
+  # --- через эти группы ходит скрипт ---
+  # 9. Первый живой по порядку: первый член — муляж.
+  - fallback:
+      name: EGS-ORD
+      policies: [EGS-DEAD-1, DIRECT]
+      interval: 60
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-ord
+  # 10. Контроль: считается ли REJECT живым членом fallback.
+  - fallback:
+      name: EGS-REJ
+      policies: [REJECT, DIRECT]
+      interval: 60
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-rej
+  # 11–12. Свой адрес проверки DIRECT у каждой группы (боль ST21): в A — живой, в B — TEST-NET.
+  - fallback:
+      name: EGS-DA
+      policies: [DIRECT, EGS-DEAD-2]
+      interval: 60
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-da
+  - fallback:
+      name: EGS-DB
+      policies: [DIRECT, REJECT]
+      interval: 60
+      timeout: 5
+      latency_test_url: http://192.0.2.1/
+  # 13. Двойник EGS-SUB для скрипта: первый живой в подписке стенда.
+  - fallback:
+      name: EGS-SUBS
+      urls:
+        - https://routehub-stash.proton4iker.workers.dev/lab/t23-nodes
+      update_interval: 300
+      interval: 60
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-subs
+  # 14. Двойник EGS-DIE-R для скрипта (адрес t24ta, окна те же).
+  - fallback:
+      name: EGS-DIE-S
+      policies: [DIRECT, REJECT]
+      interval: 60
+      timeout: 5
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/t24-pulse?t=t24ta
+  # 15. conditional по сети: Wi-Fi (любой SSID) — DIRECT, иначе REJECT.
+  - conditional:
+      name: EGS-COND
+      rules:
+        - ssid:
+            match: "*"
+            policy: DIRECT
+      default_policy: REJECT
+
+# Правила (…/rules/): домены .invalid (RFC 2606) — трафика нет, но группа «в
+# правилах». У EGS-F60N и EGS-COND правил нет намеренно.
+rules:
+  - domain:
+      match: egs-f60.invalid
+      policy: EGS-F60
+  - domain:
+      match: egs-a30.invalid
+      policy: EGS-A30
+  - domain:
+      match: egs-sm.invalid
+      policy: EGS-SM
+  - domain:
+      match: egs-dg.invalid
+      policy: EGS-DG
+  - domain:
+      match: egs-sub.invalid
+      policy: EGS-SUB
+  - domain:
+      match: egs-nat.invalid
+      policy: EGS-NAT
+  - domain:
+      match: egs-die-r.invalid
+      policy: EGS-DIE-R
+  - domain:
+      match: egs-ord.invalid
+      policy: EGS-ORD
+  - domain:
+      match: egs-rej.invalid
+      policy: EGS-REJ
+  - domain:
+      match: egs-da.invalid
+      policy: EGS-DA
+  - domain:
+      match: egs-db.invalid
+      policy: EGS-DB
+  - domain:
+      match: egs-subs.invalid
+      policy: EGS-SUBS
+  - domain:
+      match: egs-die-s.invalid
+      policy: EGS-DIE-S
+  - default:
+      policy: DIRECT
+
+# Скрипты (…/scriptings/, …/javascript-api/). timeout и update_interval — секунды.
+# cron раз в 10 минут со сдвигом на 5-ю минуту: окна стенда (t23, t24) меняются
+# ровно в :00, :10, … — чтение в середине окна, а не на его границе. Не каждую
+# минуту: иначе не отличить «фоновые проверки идут сами» от «их будит cron».
+scriptings:
+  - schedule:
+      name: EGS-cron
+      cron: "5,15,25,35,45,55 * * * *"
+      script_url: https://raw.githubusercontent.com/spxload/routehub/stash-client/probes/routehub-probe-egern-egs.js
+      update_interval: 1800
+      timeout: 60
+  - network:
+      name: EGS-net
+      script_url: https://raw.githubusercontent.com/spxload/routehub/stash-client/probes/routehub-probe-egern-egs.js
+      update_interval: 1800
+      timeout: 30

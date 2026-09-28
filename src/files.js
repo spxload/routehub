@@ -17,6 +17,10 @@
 // только из main (probes/routehub-probe-dnstime.js, RouteHub-DNS-L12.plugin)
 // здесь не встроены — в ветке их нет, и ни один файл ветки на них не ссылается.
 //
+// Проба Egern EGS (28.09): профиль plugins/RouteHub-Egern-EGS.yaml, подписка-
+// образец plugins/RouteHub-Egern-EGS-nodes.yaml (правило Text **/plugins/*.yaml)
+// и скрипт probes/routehub-probe-egern-egs.js — нативный модуль Egern.
+//
 // Не встроены: probes/*.yaml, *.sgmodule, *.conf (стенды Stash ST5 и Surge
 // SG-draft-1). Ни routehub.conf, ни plugins/* на них не ссылаются, это разовые
 // профили других клиентов; прокси их не отдаёт.
@@ -52,6 +56,7 @@ import F_PROBES_ROUTEHUB_PROBE_STASH22_JS from '../probes/routehub-probe-stash22
 import F_PROBES_ROUTEHUB_PROBE_STASH23_JS from '../probes/routehub-probe-stash23.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH24_JS from '../probes/routehub-probe-stash24.js';
 import F_PROBES_ROUTEHUB_LAB_JS from '../probes/routehub-lab.js';
+import F_PROBES_ROUTEHUB_PROBE_EGERN_EGS_JS from '../probes/routehub-probe-egern-egs.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH6_JS from '../probes/routehub-probe-stash6.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH7_JS from '../probes/routehub-probe-stash7.js';
 import F_PROBES_ROUTEHUB_PROBE_STASH8_JS from '../probes/routehub-probe-stash8.js';
@@ -78,6 +83,8 @@ import F_PLUGINS_ROUTEHUB_STASH_LAB_STOVERRIDE from '../plugins/RouteHub-Stash-L
 import F_PLUGINS_ROUTEHUB_STASH_ST6_CDN_STOVERRIDE from '../plugins/RouteHub-Stash-ST6-cdn.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_ST6_STOVERRIDE from '../plugins/RouteHub-Stash-ST6.stoverride';
 import F_PLUGINS_ROUTEHUB_STASH_STOVERRIDE from '../plugins/RouteHub-Stash.stoverride';
+import F_PLUGINS_ROUTEHUB_EGERN_EGS_YAML from '../plugins/RouteHub-Egern-EGS.yaml';
+import F_PLUGINS_ROUTEHUB_EGERN_EGS_NODES_YAML from '../plugins/RouteHub-Egern-EGS-nodes.yaml';
 
 const FILES = Object.freeze({
   'routehub.conf': F_ROUTEHUB_CONF,
@@ -108,6 +115,7 @@ const FILES = Object.freeze({
   'probes/routehub-probe-stash23.js': F_PROBES_ROUTEHUB_PROBE_STASH23_JS,
   'probes/routehub-probe-stash24.js': F_PROBES_ROUTEHUB_PROBE_STASH24_JS,
   'probes/routehub-lab.js': F_PROBES_ROUTEHUB_LAB_JS,
+  'probes/routehub-probe-egern-egs.js': F_PROBES_ROUTEHUB_PROBE_EGERN_EGS_JS,
   'probes/routehub-probe-stash6.js': F_PROBES_ROUTEHUB_PROBE_STASH6_JS,
   'probes/routehub-probe-stash7.js': F_PROBES_ROUTEHUB_PROBE_STASH7_JS,
   'probes/routehub-probe-stash8.js': F_PROBES_ROUTEHUB_PROBE_STASH8_JS,
@@ -134,6 +142,8 @@ const FILES = Object.freeze({
   'plugins/RouteHub-Stash-ST6-cdn.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST6_CDN_STOVERRIDE,
   'plugins/RouteHub-Stash-ST6.stoverride': F_PLUGINS_ROUTEHUB_STASH_ST6_STOVERRIDE,
   'plugins/RouteHub-Stash.stoverride': F_PLUGINS_ROUTEHUB_STASH_STOVERRIDE,
+  'plugins/RouteHub-Egern-EGS.yaml': F_PLUGINS_ROUTEHUB_EGERN_EGS_YAML,
+  'plugins/RouteHub-Egern-EGS-nodes.yaml': F_PLUGINS_ROUTEHUB_EGERN_EGS_NODES_YAML,
 });
 
 export { FILES };

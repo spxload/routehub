@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import { spawnSync } from 'node:child_process';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -25,13 +26,28 @@ test('скриптов устройства найдено больше нуля
   assert.ok(FILES.includes('scripts/routehub-dash.js'));
 });
 
+// Нативные скрипты Egern (проба EGS) — ES-модули: `export default async
+// function (ctx)`. Их разбирает Node как модуль (--input-type=module --check,
+// без выполнения); прочие — как обычный скрипт, как их исполняют Loon и Stash.
+const ESM_RE = /^export default async function\b/m;
+
 for (const f of FILES) {
   test('разбирается как JavaScript: ' + f, () => {
     const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    if (ESM_RE.test(src)) {
+      const r = spawnSync(process.execPath, ['--input-type=module', '--check'], { input: src, encoding: 'utf8' });
+      assert.equal(r.status, 0, f + ': ' + r.stderr);
+      return;
+    }
     // Только разбор, без выполнения: Loon исполняет файл как обычный скрипт.
     assert.doesNotThrow(() => new vm.Script(src, { filename: f }));
   });
 }
+
+test('разбор модуля Egern ловит синтаксическую ошибку (контроль проверки выше)', () => {
+  const r = spawnSync(process.execPath, ['--input-type=module', '--check'], { input: 'export default async function (ctx) { return 1 + }\n', encoding: 'utf8' });
+  assert.notEqual(r.status, 0);
+});
 
 // Разбор не ловит подстановку: «${…}» внутри шаблона — валидный JS, но
 // тихо меняет страницу. HTML дашборда — чистый текст (инвариант в шапке

@@ -1,7 +1,7 @@
 // tests/text-loader.mjs — хук загрузки модулей Node для тестов. НЕ тест.
 // Worker импортирует файлы как модули Text (правила [[rules]] в wrangler.toml):
 // web/*.html, routehub.conf, scripts/*.js, probes/*.js, plugins/*.plugin,
-// plugins/*.stoverride. Wrangler подставляет вместо них строку с содержимым
+// plugins/*.stoverride, plugins/*.yaml. Wrangler подставляет вместо них строку с содержимым
 // файла; Node так не умеет. Хук повторяет это правило: файл репозитория,
 // подпадающий под те же шаблоны, отдаётся модулем `export default "<текст>"`.
 // Тесты тем самым видят РЕАЛЬНЫЕ тексты файлов, а не заглушки.
@@ -14,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const TEXT_GLOBS_RE = /(?:^|\/)(?:[^/]+\.html|scripts\/[^/]+\.js|probes\/[^/]+\.js|[^/]+\.plugin|[^/]+\.stoverride|[^/]+\.conf)$/;
+export const TEXT_GLOBS_RE = /(?:^|\/)(?:[^/]+\.html|scripts\/[^/]+\.js|probes\/[^/]+\.js|[^/]+\.plugin|[^/]+\.stoverride|[^/]+\.conf|plugins\/[^/]+\.yaml)$/;
 
 function textRel(url) {
   if (!url.startsWith('file:')) return null;
