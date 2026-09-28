@@ -71,6 +71,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `guard-prod.test.js` | хук правила 5: боевые пути → `ask`, прочие молча; `../`, симлинки, сбой → `ask` |
 | `context-watch.test.js` | монитор контекста: ступени 50/65/80, память ступени, хвост транскрипта, сбой → тишина; SessionStart, PreCompact |
 | `guard-read.test.js` | сторож Read: кусок > 20 тыс. токенов → `deny` с оценкой; граница порога, кириллица по байтам, картинки/PDF мимо, сбой → тишина; `--estimate` |
+| `lab-tail.test.js` | живой журнал опыта: только JSON с `lab`, без адресов; «ожила» ≥ 5 мин, «тишина» ≥ 4 мин и её конец, итог окна (жизнь/смерть), отчёт пробы |
 | `studio-roles.test.js` | frontmatter ролей и скиллов: поля по документации, `model: opus`, наблюдатели без `Write`/`Edit` |
 
 ## scripts/ — код на устройстве (Loon)
@@ -184,6 +185,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `.claude/settings.json` | хуки: `PreToolUse` (guard-prod, guard-read); `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PreCompact` (context-watch) |
 | `.claude/hooks/guard-prod.js` | правка боевого контура → запрос подтверждения (правило 5) |
 | `.claude/hooks/guard-read.js` | Read дороже 20 тыс. токенов → отказ с оценкой; `--estimate <файл>` — оценка без чтения |
+| `.claude/tools/lab-tail.js` | живой хвост Worker'а стенда → строки о переменах для Monitor (хвост заводится через Cloudflare MCP, живёт ~6 ч) |
 | `.claude/hooks/context-watch.js` | монитор контекста → ступени и `/handoff`; аудит при старте; первый ручной `/compact` → блок |
 | `studio/README.md` | порядок работы, роли, экономия лимитов |
 | `studio/tasks/BACKLOG.md` | незакрытые пункты бэклога 1–52 |
