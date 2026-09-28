@@ -88,7 +88,7 @@ test('члены групп — DIRECT, REJECT, муляжи и группы EGS
       assert.ok(['DIRECT', 'REJECT'].includes(g.default_policy));
       continue;
     }
-    assert.ok(['fallback', 'auto_test', 'smart'].includes(g.type), g.name + ': ' + g.type);
+    assert.ok(['fallback', 'auto_test', 'smart'].includes(g.type) || (g.type === 'select' && g.name === 'EGS-GRP'), g.name + ': ' + g.type);
     for (const m of g.policies || []) assert.ok(known.has(m), g.name + ' → ' + m);
     for (const u of g.urls || []) assert.ok(u === STAND + '/lab/t23-nodes' || u === RAW + NODES, g.name + ' → ' + u);
     assert.ok((g.policies && g.policies.length) || (g.urls && g.urls.length), g.name + ' пуста');
@@ -130,7 +130,7 @@ test('интервалы и тайм-ауты групп — секунды; у 
   assert.deepEqual(g['EGS-DIE-S'].policies, ['DIRECT', 'REJECT']);
 });
 
-test('правила: домены .invalid на группы EGS, у EGS-F60N и EGS-COND правил нет, последнее — default DIRECT', { skip: noPy }, () => {
+test('правила: домены .invalid на группы EGS, у EGS-F60N, EGS-COND и EGS-GRP правил нет, последнее — default DIRECT', { skip: noPy }, () => {
   const P = yaml(read(PROFILE));
   const R = rules(P);
   const names = new Set(groups(P).map((g) => g.name));
@@ -142,8 +142,9 @@ test('правила: домены .invalid на группы EGS, у EGS-F60N �
     assert.ok(names.has(r.policy), r.policy);
   }
   const ruled = new Set(R.map((r) => r.policy));
-  assert.ok(!ruled.has('EGS-F60N') && !ruled.has('EGS-COND'));
-  for (const n of names) if (n !== 'EGS-F60N' && n !== 'EGS-COND') assert.ok(ruled.has(n), 'у группы нет правила: ' + n);
+  const free = ['EGS-F60N', 'EGS-COND', 'EGS-GRP'];
+  for (const n of free) assert.ok(names.has(n) && !ruled.has(n), n);
+  for (const n of names) if (!free.includes(n)) assert.ok(ruled.has(n), 'у группы нет правила: ' + n);
 });
 
 // Шаг минут cron: разбор «*/n», «a-b/n» и списков.

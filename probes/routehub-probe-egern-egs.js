@@ -25,7 +25,10 @@
  * границе окна стенда (минута окна < 4) — тоже (счёт «на границе»). Выводы о
  * группах — только если в том же прогоне `ctx.http` соблюдает policy: запрос
  * через мёртвый муляж EGS-DEAD-3 и через несуществующее имя EGS-NOPE НЕ прошёл
- * (иначе 2xx группы — не выбор её члена; счёт «policy не соблюдён»).
+ * (иначе 2xx группы — не выбор её члена; счёт «policy не соблюдён»), и группы
+ * находятся по имени: запрос через EGS-GRP (select [DIRECT], вне фоновых групп)
+ * прошёл (иначе отказ любой группы мог значить «группа не найдена»; счёт
+ * «группы не находятся»).
  *
  * ФОРМА. Нативный скрипт Egern: `export default async function (ctx)`, без
  * `$done`. Тип запуска: есть ctx.cron — schedule, нет — network.
@@ -89,8 +92,8 @@ function save(ctx, key, v) { try { ctx.storage.setJSON(key, v); } catch (e) { /*
 
 function fresh() {
   return { rev: REV, первый: null, запуски: [], без_контроля: 0, на_границе: 0, c: {
-    pol: { да: 0, нет: 0, муляж: 0, имя: 0 },
-    ord: { да: 0, нет: 0 }, rej: { выбран: 0, пропущен: 0, нр: 0 }, dab: { да: 0, нет: 0, нр: 0 },
+    pol: { да: 0, нет: 0, муляж: 0, имя: 0 }, grp: { да: 0, нет: 0 },
+    ord: { да: 0, нет: 0, нр: 0 }, rej: { выбран: 0, пропущен: 0, нр: 0 }, dab: { да: 0, нет: 0, нр: 0 },
     subs: { чёт_ok: 0, чёт_err: 0, нечёт_ok: 0, нечёт_err: 0 },
     die: { ушёл: [], остался: [], вернулся: [], не_вернулся: [], нр: 0 },
     to: { да: [], нет: [], нр: [], без_паузы: 0, чёт_ok: 0 },
@@ -127,7 +130,19 @@ function tally(c, R, odd, min, net) {
     return;
   }
   c.pol.да++;
-  if (R.ord.ok) c.ord.да++; else c.ord.нет++;
+  // Имя узла подписки — вывод об узлах, не о группах: его контроль — муляж ≠ NOPE.
+  const k1 = cls(R.n1), k0 = cls(R.nope), ks = cls(R.dead);
+  if (ks === k0) c.names.нр++;
+  else if (k1 === ks) c.names.адр++;
+  else if (k1 === k0) c.names.нет++;
+  else c.names.нр++;
+  // Контроль «группы находятся по имени»: без него отказ группы мог значить
+  // «группа не найдена», и любое групповое «нет» было бы без контроля.
+  if (!R.grp.ok) { c.grp.нет++; return; }
+  c.grp.да++;
+  // Отказ, неотличимый от несуществующего имени, — не «выбран мёртвый член».
+  const like0 = function (r) { return !r.ok && cls(r) === k0; };
+  if (R.ord.ok) c.ord.да++; else if (like0(R.ord)) c.ord.нр++; else c.ord.нет++;
   // REJECT выбран — только если группы профиля точно есть (EGS-ORD прошёл) и
   // отказ EGS-REJ отличим от отказа несуществующего имени: иначе отказ мог
   // значить «группа не найдена».
@@ -135,7 +150,8 @@ function tally(c, R, odd, min, net) {
   if (R.rej.ok) c.rej.пропущен++; else if (rejAlive) c.rej.выбран++; else c.rej.нр++;
   // «Ушёл на REJECT» — отказ того же класса, что у живого REJECT в EGS-REJ.
   const onRej = function (r) { return rejAlive && !r.ok && cls(r) === cls(R.rej); };
-  if (!R.da.ok) c.dab.нет++;
+  if (!R.da.ok && !like0(R.da)) c.dab.нет++;
+  else if (!R.da.ok) c.dab.нр++;
   else if (onRej(R.db)) c.dab.да++;
   else c.dab.нр++;
   if (odd) { if (R.subs.ok) c.subs.нечёт_ok++; else c.subs.нечёт_err++; }
@@ -147,11 +163,6 @@ function tally(c, R, odd, min, net) {
   if (!rejAlive || (!R.die.ok && !onRej(R.die)) || (odd && (R.to.ok || R.to.ms < 2000))) c.die.нр++;
   else if (odd) { if (R.die.ok) push(c.die.остался, min); else push(c.die.ушёл, min); }
   else if (c.die.ушёл.length) { if (R.die.ok) push(c.die.вернулся, min); else push(c.die.не_вернулся, min); }
-  const k1 = cls(R.n1), k0 = cls(R.nope), ks = cls(R.dead);
-  if (ks === k0) c.names.нр++;
-  else if (k1 === ks) c.names.адр++;
-  else if (k1 === k0) c.names.нет++;
-  else c.names.нр++;
   if (net === 'wifi') { if (R.cond.ok) c.cond.wifi_ok++; else c.cond.wifi_err++; }
   if (net === 'cell') { if (R.cond.ok) c.cond.cell_ok++; else c.cond.cell_err++; }
 }
@@ -171,16 +182,20 @@ function verdicts(S) {
   v.policy_ctx_http = mixed(p.да, p.нет, 'да: мёртвый муляж и несуществующее имя не пропустили запрос (' + p.да + ')',
     'нет: policy не соблюдён — муляж пропустил ' + p.муляж + ', несуществующее имя ' + p.имя + '; прогоны не в итогах групп (' + p.нет + ')',
     'не всегда: да ' + p.да + ', нет ' + p.нет);
+  v.группы_по_имени = mixed(c.grp.да, c.grp.нет, 'да: EGS-GRP прошла (' + c.grp.да + ')',
+    'нет: EGS-GRP не прошла при соблюдённом policy — группы по имени не находятся, групповые выводы не в итогах (' + c.grp.нет + ')',
+    'не всегда: да ' + c.grp.да + ', нет ' + c.grp.нет);
   v.fallback_первый_живой = mixed(c.ord.да, c.ord.нет, 'да: муляж первым пропущен, выбран DIRECT (' + c.ord.да + ')',
     'нет: через EGS-ORD запрос не прошёл при живом контроле — выбран мёртвый первый (' + c.ord.нет + ')',
     'не всегда: да ' + c.ord.да + ', нет ' + c.ord.нет);
+  if (v.fallback_первый_живой === 'нет данных' && c.ord.нр) v.fallback_первый_живой = 'не различить: отказ EGS-ORD как у несуществующего имени (' + c.ord.нр + ')';
   v.REJECT_в_fallback = mixed(c.rej.выбран, c.rej.пропущен, 'считается живым: выбран первым (' + c.rej.выбран + ')',
     'пропускается как мёртвый (' + c.rej.пропущен + ')', 'по-разному: выбран ' + c.rej.выбран + ', пропущен ' + c.rej.пропущен);
   if (v.REJECT_в_fallback === 'нет данных' && c.rej.нр) v.REJECT_в_fallback = 'не различить: отказ как у несуществующего имени или EGS-ORD не прошёл (' + c.rej.нр + ')';
   if (c.dab.да || c.dab.нет) {
     v.свой_адрес_DIRECT = mixed(c.dab.да, c.dab.нет, 'да: A на DIRECT, B ушёл на REJECT — живость DIRECT своя у группы (' + c.dab.да + ')',
       'нет: в EGS-DA DIRECT не выбран при живом контроле (' + c.dab.нет + ')', 'не всегда: да ' + c.dab.да + ', нет ' + c.dab.нет);
-  } else v.свой_адрес_DIRECT = c.dab.нр ? 'не различить: B не ушёл на REJECT или REJECT не подтверждён (' + c.dab.нр + ')' : 'нет данных';
+  } else v.свой_адрес_DIRECT = c.dab.нр ? 'не различить: отказ A как у несуществующего имени, B не ушёл на REJECT или REJECT не подтверждён (' + c.dab.нр + ')' : 'нет данных';
   const s = c.subs;
   const parsed = s.чёт_ok + s.нечёт_ok;
   v.clash_direct_разобран = parsed ? 'да: запрос через EGS-SUBS прошёл (' + parsed + ')'
@@ -257,7 +272,7 @@ async function runCron(ctx, now, net) {
   const odd = w % 2 === 1;
   const min = Math.floor((now % WIN_MS) / 6000) / 10;
   const ctl = await hit(ctx, PULSE + 'egs-cron-' + net, 'DIRECT', HTTP_MS);
-  const names = ['ord', 'rej', 'da', 'db', 'subs', 'die', 'cond', 'n1', 'nope', 'dead', 'to'];
+  const names = ['ord', 'rej', 'da', 'db', 'subs', 'die', 'cond', 'grp', 'n1', 'nope', 'dead', 'to'];
   const res = await Promise.all([
     hit(ctx, PULSE + 'egs-via-ord', 'EGS-ORD', HTTP_MS),
     hit(ctx, PULSE + 'egs-via-rej', 'EGS-REJ', HTTP_MS),
@@ -266,6 +281,7 @@ async function runCron(ctx, now, net) {
     hit(ctx, PULSE + 'egs-via-subs', 'EGS-SUBS', HTTP_MS),
     hit(ctx, PULSE + 'egs-via-die', 'EGS-DIE-S', HTTP_MS),
     hit(ctx, PULSE + 'egs-via-cond', 'EGS-COND', HTTP_MS),
+    hit(ctx, PULSE + 'egs-via-grp', 'EGS-GRP', HTTP_MS),
     hit(ctx, PULSE + 'egs-name', 'EGS-N1', HTTP_MS),
     hit(ctx, PULSE + 'egs-name', 'EGS-NOPE', HTTP_MS),
     hit(ctx, PULSE + 'egs-name', 'EGS-DEAD-3', HTTP_MS),
@@ -283,7 +299,7 @@ async function runCron(ctx, now, net) {
   else if (edge) S.на_границе++;
   else tally(S.c, R, odd, min, net);
   const pol = policyOk(R);
-  const inSum = ctl.ok && !edge && pol;
+  const inSum = ctl.ok && !edge && pol && R.grp.ok;
   // Классы исходов этого прогона — для чтения глазами (текст ошибки различает то,
   // чего не различает класс), в итоги не идут.
   const seen = {};
@@ -297,10 +313,11 @@ async function runCron(ctx, now, net) {
   names.forEach(function (k) { run[k] = brief(R[k]); });
   const dump = { rev: REV, ts: iso(now), вид: 'cron', сеть: net, радио: radioOf(ctx), окно: w, нечёт: odd, мин: min,
     прогон: run, в_итоги: inSum, без_контроля: S.без_контроля, на_границе: S.на_границе,
-    policy_не_соблюдён: S.c.pol.нет, итоги: v, имена: seen };
+    policy_не_соблюдён: S.c.pol.нет, группы_не_находятся: S.c.grp.нет, итоги: v, имена: seen };
   report(ctx, dump, [
     (!ctl.ok ? 'контроль НЕ прошёл — прогон не в итогах' : edge ? 'граница окна — прогон не в итогах'
-      : !pol ? 'policy НЕ соблюдён — группы не в итогах' : 'контроль ok') + ', сеть ' + net + ', ' + v.cron,
+      : !pol ? 'policy НЕ соблюдён — группы не в итогах'
+        : !R.grp.ok ? 'группы по имени не находятся — группы не в итогах' : 'контроль ok') + ', сеть ' + net + ', ' + v.cron,
     'первый живой: ' + v.fallback_первый_живой.split(':')[0] + '; подписка: ' + v.подписка_первый_живой.split(':')[0],
     'смерть узла: ' + v.смерть_узла.split(':')[0] + '; timeout мс: ' + v.timeout_мс.split(':')[0],
   ], first);

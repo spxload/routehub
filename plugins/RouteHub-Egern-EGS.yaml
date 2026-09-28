@@ -47,7 +47,7 @@ proxies:
 # fallback — фоновая проверка, у auto_test — замер. interval / timeout — секунды
 # (timeout не больше 60). Фоновые группы (правило есть, скрипт через них не ходит):
 # F60, A30, SM, DG, SUB, NAT, DIE-R; без правила — F60N. Через группы ORD, REJ, DA,
-# DB, SUBS, DIE-S, COND ходит скрипт (запрос снимает с группы «unreachable»).
+# DB, SUBS, DIE-S, COND, GRP ходит скрипт (запрос снимает с группы «unreachable»).
 policy_groups:
   # 1. Фоновые проверки fallback с интервалом 60 с.
   - fallback:
@@ -151,7 +151,13 @@ policy_groups:
       interval: 60
       timeout: 5
       latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/t24-pulse?t=t24ta
-  # 15. conditional по сети: Wi-Fi (любой SSID) — DIRECT, иначе REJECT.
+  # 15. Контроль скрипта «группы находятся по имени» (select, …/policy_groups/):
+  #     select сам не проверяет членов в фоне; правила нет, в фоне не наблюдается.
+  - select:
+      name: EGS-GRP
+      policies: [DIRECT]
+      latency_test_url: https://routehub-stash.proton4iker.workers.dev/lab/pulse?t=egs-grp
+  # 16. conditional по сети: Wi-Fi (любой SSID) — DIRECT, иначе REJECT.
   - conditional:
       name: EGS-COND
       rules:
@@ -161,7 +167,7 @@ policy_groups:
       default_policy: REJECT
 
 # Правила (…/rules/): домены .invalid (RFC 2606) — трафика нет, но группа «в
-# правилах». У EGS-F60N и EGS-COND правил нет намеренно.
+# правилах». У EGS-F60N, EGS-COND и EGS-GRP правил нет намеренно.
 rules:
   - domain:
       match: egs-f60.invalid

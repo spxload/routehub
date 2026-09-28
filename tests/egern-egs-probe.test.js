@@ -24,7 +24,7 @@ const W = 600000;
 const EVEN = 3000000 * W + 5 * 60000;        // чётное окно, 5-я минута
 const ODD = EVEN + W;                         // нечётное окно, 5-я минута
 const CRON = '5,15,25,35,45,55 * * * *';
-const SCRIPT_POLICIES = ['DIRECT', 'EGS-ORD', 'EGS-REJ', 'EGS-DA', 'EGS-DB', 'EGS-SUBS', 'EGS-DIE-S', 'EGS-COND', 'EGS-N1', 'EGS-NOPE', 'EGS-DEAD-3'];
+const SCRIPT_POLICIES = ['DIRECT', 'EGS-ORD', 'EGS-REJ', 'EGS-DA', 'EGS-DB', 'EGS-SUBS', 'EGS-DIE-S', 'EGS-COND', 'EGS-GRP', 'EGS-N1', 'EGS-NOPE', 'EGS-DEAD-3'];
 const BACKGROUND = ['EGS-F60', 'EGS-F60N', 'EGS-A30', 'EGS-SM', 'EGS-DG', 'EGS-SUB', 'EGS-NAT', 'EGS-DIE-R'];
 const SECRETS = ['SECRET', '10.20.30', 'fe80', 'aa:bb:cc', 'Carrier'];
 
@@ -39,6 +39,7 @@ function world(over) {
     'EGS-SUBS': { status: 204, ms: 40 },
     'EGS-DIE-S': { throw: 'rejected', ms: 2 },        // ушёл с DIRECT
     'EGS-COND': { status: 204, ms: 40 },
+    'EGS-GRP': { status: 204, ms: 40 },               // группы находятся по имени
     'EGS-N1': { throw: 'connect timeout 192.0.2.71', ms: 5000 },
     'EGS-NOPE': { status: 404, ms: 3 },
     'EGS-DEAD-3': { throw: 'connect timeout 192.0.2.63', ms: 5000 },
@@ -149,7 +150,9 @@ test('задуманный мир, нечётное окно: все «да» и
   assert.equal(r.dump.мин, 5);
   assert.equal(r.dump.в_итоги, true);
   assert.equal(r.dump.policy_не_соблюдён, 0);
+  assert.equal(r.dump.группы_не_находятся, 0);
   assert.match(v.policy_ctx_http, /^да:/);
+  assert.match(v.группы_по_имени, /^да:/);
   assert.match(v.fallback_первый_живой, /^да:/);
   assert.match(v.REJECT_в_fallback, /^считается живым/);
   assert.match(v.свой_адрес_DIRECT, /^да:/);
@@ -163,8 +166,10 @@ test('задуманный мир, нечётное окно: все «да» и
 });
 
 test('«нет» — только при живом контроле, по каждому вопросу', async () => {
-  // EGS-ORD отдельно: его отказ снимает подтверждение REJECT (группы могло не быть).
+  // EGS-ORD отдельно: его отказ снимает подтверждение REJECT. «Нет» — при
+  // контроле: EGS-GRP прошла, отказ ORD (муляж, долго) ≠ отказу несуществующего имени.
   const q = await cron(ODD, { 'EGS-ORD': { throw: 'connect timeout', ms: 5000 } });
+  assert.match(q.dump.итоги.группы_по_имени, /^да:/);
   assert.match(q.dump.итоги.fallback_первый_живой, /^нет:/);
   const r = await cron(ODD, {
     'EGS-DA': { throw: 'connect timeout', ms: 5000 },
@@ -233,6 +238,34 @@ test('отказ REJECT неотличим от несуществующего �
   // EGS-REJ прошёл при соблюдённом policy — REJECT пропущен (группа есть: несуществующее имя отказало).
   const p = await cron(ODD, { 'EGS-REJ': OK, 'EGS-NOPE': REJ });
   assert.match(p.dump.итоги.REJECT_в_fallback, /^пропускается/);
+});
+
+test('группы по имени не находятся (узлы находятся, группы отказывают как NOPE) — ни одного группового «нет»', async () => {
+  const NO = { status: 404, ms: 3 };                  // как EGS-NOPE в задуманном мире
+  const over = {};
+  for (const g of ['EGS-ORD', 'EGS-REJ', 'EGS-DA', 'EGS-DB', 'EGS-SUBS', 'EGS-DIE-S', 'EGS-COND', 'EGS-GRP']) over[g] = NO;
+  const store = new Map();
+  await cron(EVEN, over, store, 'wifi');
+  const r = await cron(ODD, over, store, 'cell');
+  const v = r.dump.итоги;
+  assert.equal(r.dump.в_итоги, false);
+  assert.equal(r.dump.policy_не_соблюдён, 0, 'policy соблюдён: муляж и NOPE отказали');
+  assert.equal(r.dump.группы_не_находятся, 2);
+  assert.match(v.группы_по_имени, /^нет: EGS-GRP не прошла/);
+  for (const k of BY_POLICY) {
+    if (k === 'имя_узла_подписки') continue;          // вывод об узлах, контроль — муляж ≠ NOPE
+    assert.equal(v[k], 'нет данных', k + ': ' + v[k]);
+  }
+  assert.match(v.имя_узла_подписки, /^да:/);
+  assert.match(r.f.notes[0].body, /^группы по имени не находятся — группы не в итогах/);
+  // EGS-GRP прошла, но отказ ORD / A неотличим от несуществующего имени — «не различить», не «нет».
+  const u = await cron(ODD, { 'EGS-ORD': NO, 'EGS-DA': NO });
+  assert.match(u.dump.итоги.fallback_первый_живой, /^не различить: отказ EGS-ORD как у несуществующего имени/);
+  assert.match(u.dump.итоги.свой_адрес_DIRECT, /^не различить: отказ A как у несуществующего имени/);
+  // Смешанно: групповые итоги — только из прогона, где EGS-GRP прошла.
+  const m = await cron(ODD + 2 * W, { 'EGS-ORD': { throw: 'connect timeout', ms: 5000 } }, store, 'wifi');
+  assert.match(m.dump.итоги.группы_по_имени, /^не всегда: да 1, нет 2$/);
+  assert.match(m.dump.итоги.fallback_первый_живой, /^нет: .*\(1\)$/);
 });
 
 test('граница окна (минута < 4) — прогон не в итогах; с 4-й минуты — в итогах', async () => {
@@ -308,7 +341,7 @@ test('conditional: Wi-Fi — DIRECT, сотовая — REJECT — «да»; о�
 
 test('запросы: только стенд, timeout в МИЛЛИСЕКУНДАХ, политики — DIRECT и группы скрипта, не фоновые', async () => {
   const r = await cron(ODD);
-  assert.equal(r.f.calls.length, 12);
+  assert.equal(r.f.calls.length, 13);
   const via = new Set();
   for (const c of r.f.calls) {
     assert.ok(c.url.indexOf(STAND + '/lab/') === 0, c.url);
@@ -345,6 +378,12 @@ test('группы скрипта есть в профиле и не совпа�
   // Муляж контроля policy — вне всех групп: запросы скрипта по имени не трогают группы.
   for (const g of P.policy_groups) assert.ok(!(g[Object.keys(g)[0]].policies || []).includes('EGS-DEAD-3'), 'EGS-DEAD-3 в группе');
   assert.ok(proxies.includes('EGS-DEAD-3'));
+  // Контроль «группы находятся по имени»: select [DIRECT], не фоновая и ни в чьём составе.
+  const grp = P.policy_groups.find((g) => g[Object.keys(g)[0]].name === 'EGS-GRP');
+  assert.ok(grp && grp.select, 'EGS-GRP — select');
+  assert.deepEqual(grp.select.policies, ['DIRECT']);
+  assert.ok(!BACKGROUND.includes('EGS-GRP'));
+  for (const g of P.policy_groups) assert.ok(!(g[Object.keys(g)[0]].policies || []).includes('EGS-GRP'), 'EGS-GRP в составе группы');
   // Политики в коде скрипта — ровно список выше.
   const inSrc = [...SRC.matchAll(/'(EGS-[A-Z0-9-]+|DIRECT)', (?:HTTP_MS|TO_MS)\)/g)].map((m) => m[1]);
   assert.deepEqual([...new Set(inSrc)].sort(), SCRIPT_POLICIES.slice().sort());
