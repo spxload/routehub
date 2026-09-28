@@ -56,14 +56,17 @@
  * ВРЕМЯ. timeout $httpClient у Stash — в СЕКУНДАХ. Запрос начинается,
  * только если бюджета хватает (room); худший честный путь ≈ 48 с (последний
  * запрос с 39-й с, повтор EOF через растянутые 4 с, 5 с тайм-аута), сторож
- * 75 с. Ровно один $done. Замок RH_ST25_lock — cron и плитка не пишут вместе.
+ * 70 с. Сторож — сам setTimeout и в фоне растягивается до 4 раз: 70 × 4 =
+ * 280 с — раньше timeout 300 с задания cron (у ST24 было 75 × 4 = 300 —
+ * впритык к сбросу скрипта самим Stash). Ровно один $done. Замок
+ * RH_ST25_lock — cron и плитка не пишут вместе.
  */
 
 var REV = 'ST25';
 var T0 = Date.now();
 
 var BUDGET_MS = 45000;
-var GUARD_MS = 75000;
+var GUARD_MS = 70000;
 var CTRL_SEC = 5;                    // Stash: секунды, не миллисекунды
 var STAND_SEC = 5;                   // timeout отчёта, тоже секунды
 var STEP_MS = (CTRL_SEC + 1) * 1000;
@@ -469,6 +472,11 @@ function shortVerdicts(ms) {
   return GROUPS.map(function (g) { return short(g) + ' — ' + groupVerdict(g, ms); }).join('; ');
 }
 // Тело отчёта: только новое, ≤ REPORT_MAX байт (лишние старые переходы — счётчиком «пр»).
+// Ужатие (while ниже) — страховка: при штатных именах узлов тело ≤ ~1770 байт
+// (r ≤ ~200: имена A/B и причина касания ≤ 28 букв; tr ≤ 8 × ~60; ит ≤ 500
+// букв ≈ 1010; прочее ≈ 80). Больше — только если ядро отдаст длинные чужие
+// now (в строке до 12 знаков, в JSON управляющий знак — 6 байт). Тест — на
+// функцию напрямую (tests/probe-stash25.test.js, «ужатие отчёта»).
 function reportBody(e, stopWhy, ms) {
   var tr = S.переходы.filter(function (x) { return x.seq > S.отпр; }).map(trLine);
   var o = { rev: REV, seq: e.seq, r: e.r, tr: tr };

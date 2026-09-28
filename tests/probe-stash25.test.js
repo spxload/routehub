@@ -19,6 +19,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import { createStash, sandbox, settle, SECRET } from './fake-stash.js';
 import { T } from './harness.js';
 
@@ -504,6 +505,29 @@ test('автостоп по сроку 6 ч от t0: итог, отчёт нес
   assert.equal(w.calls.length, n);
 });
 
+// Автостоп по данным — только когда ВСЕ четыре группы набрали по 6 исходов:
+// одна группа с 5 исходами держит опыт.
+test('автостоп «данных достаточно»: три группы по 6 исходов, одна — 5 → опыт идёт; все по 6 → стоп', async () => {
+  const deadWins = (n) => Array.from({ length: n }, (_, i) => ({ k: K0 + 2 * i + 1, вид: 'смерть', чтений: 3, от_мин: 0.5, на_A_мин: 9.5 }));
+  for (const short of IDS) {
+    const w = world({ notice: {} });
+    w.clock.t = MS + 30000;
+    await run(w);
+    const s = state(w);
+    for (const x of IDS) s.окна[P + x] = deadWins(x === short ? 5 : 6);
+    w.store.RH_ST25 = JSON.stringify(s);
+    w.clock.t = MS + 13 * WIN + 30000;                         // все 6 мёртвых окон (K0+1 … K0+11) закрыты
+    await run(w);
+    assert.equal(state(w).стоп, undefined, 'стоп при 5 исходах у ' + short);
+    const s2 = state(w);
+    s2.окна[P + short] = deadWins(6);
+    w.store.RH_ST25 = JSON.stringify(s2);
+    w.clock.t += MIN;
+    await run(w);
+    assert.equal(state(w).стоп && state(w).стоп.почему, 'данных достаточно', 'нет стопа при 6 исходах у всех (' + short + ')');
+  }
+});
+
 test('автостоп «данных достаточно»: по каждой группе ≥ 6 закрытых окон смерти с исходом (фон / не заметил / застрял на B)', async () => {
   // L — застрял на B с самого начала, N и T — замечают, P — не замечает.
   const w = world({ notice: { [P + 'N']: 1, [P + 'P']: null, [P + 'T']: 1 }, back: { [P + 'N']: 0, [P + 'T']: 0 } });
@@ -727,4 +751,41 @@ test('сторож позже худшего честного пути (повт
   const ov = fs.readFileSync(path.join(ROOT, 'plugins/RouteHub-Stash-Lab.stoverride'), 'utf8');
   const to = Number(/\n {6}timeout:\s*(\d+)/.exec(ov)[1]) * 1000;
   assert.ok(to >= numOf('GUARD_MS') && to >= numOf('BUDGET_MS') && numOf('LOCK_MS') > to);
+  // Сторож — setTimeout: в фоне растягивается до 4 раз (ST14) и всё равно
+  // должен сработать раньше, чем Stash сам оборвёт задание cron.
+  assert.ok(numOf('GUARD_MS') * 4 < to, 'растянутый сторож ' + numOf('GUARD_MS') * 4 + ' мс не раньше timeout cron ' + to + ' мс');
+});
+
+// Ужатие тела отчёта при штатных данных недостижимо (расчёт — в коде у
+// reportBody); проверяем саму функцию: тело из кода пробы в отдельном vm.
+function reportFn(o) {
+  const src = ['utf8', 'trLine', 'reportBody'].map((n) => {
+    const m = CODE.match(new RegExp('\\nfunction ' + n + '\\([\\s\\S]*?\\n}\\n'));
+    assert.ok(m, 'нет функции ' + n);
+    return m[0];
+  }).join('');
+  const ctx = { JSON, REV: 'ST25', TR_SEND: numOf('TR_SEND'), REPORT_MAX: numOf('REPORT_MAX'), S: o.S, shortVerdicts: () => o.ит };
+  vm.runInNewContext(src, ctx);
+  return (e, stop) => ctx.reportBody(e, stop, 0);
+}
+test('ужатие отчёта: тело ≤ REPORT_MAX, отброшены самые старые переходы (счётчик «пр»), итог цел; крайний случай — итог до 150', () => {
+  const S = { отпр: 0, переходы: Array.from({ length: 60 }, (_, i) => ({ seq: i + 1, г: 'T', вид: 'вернулся', мин: 9.9, не_раньше_мин: 9.8, фон: false })) };
+  const ит = 'Ж'.repeat(500);
+  const f = reportFn({ S, ит });
+  const s = f({ seq: 61, r: 'Ж'.repeat(300) }, 'срок 6 ч');
+  const b = JSON.parse(s);
+  assert.ok(utf8(s) <= numOf('REPORT_MAX'), 'тело ' + utf8(s) + ' байт');
+  assert.ok(b.tr.length > 0 && b.tr.length < 8, 'ужатие не сработало или выбросило всё: ' + b.tr.length);
+  assert.equal(b.пр, 60 - b.tr.length);
+  const seqs = b.tr.map((x) => Number(x.split('#')[1]));
+  assert.deepEqual(seqs, Array.from({ length: b.tr.length }, (_, i) => 61 - b.tr.length + i), 'выброшены не самые старые');
+  assert.equal(b.ит, ит, 'итог обрезан, хотя хватало ужатия переходов');
+  const x = JSON.parse(f({ seq: 61, r: 'Ж'.repeat(700) }, 'срок 6 ч'));
+  assert.deepEqual(x.tr, []);
+  assert.equal(x.пр, 60);
+  assert.equal(x.ит, ит.slice(0, 150));
+  assert.ok(utf8(JSON.stringify(x)) <= numOf('REPORT_MAX'));
+  // Без стопа и при коротком r — ужатия нет: 8 новейших.
+  const y = JSON.parse(f({ seq: 61, r: 'r' }, null));
+  assert.deepEqual([y.tr.length, y.пр, y.ит], [8, 52, undefined]);
 });
