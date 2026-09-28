@@ -35,15 +35,18 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 // Стенд: адреса опытов (/lab/t24-nodes, /lab/t24-pulse) — без токена и ключа.
 // В холостом режиме их в override нет вовсе.
 const STAND = 'https://routehub-stash.proton4iker.workers.dev';
+const L24 = T.STASH_LAB24;
 
 // ── ЕДИНСТВЕННЫЙ УКАЗАТЕЛЬ ТЕКУЩЕГО ОПЫТА ────────────────────────────────
-// ST24 (27.09, согласие Дианы «Все да» и «Оба»): замечает ли Stash в фоне
-// смерть узла поставщика (путь А). Только чтение + одно касание группы T
-// по правилу override Lab; холостой режим — 'idle' и пустые списки ниже.
-const LAB_SOURCE = 'probes/routehub-probe-stash24.js';
+// ST25 (28.09, ревизия ST24; согласие Дианы «Живой лог да», «стоп флаг
+// делай»): замечает ли Stash в фоне смерть узла поставщика (путь А). Чтение
+// + касание группы T по правилу override Lab + короткий отчёт на стенд
+// (хост стенда — DIRECT первым правилом); холостой режим — 'idle' и пустые
+// списки ниже. ST24 — архив (probes/routehub-probe-stash24.js).
+const LAB_SOURCE = 'probes/routehub-probe-stash25.js';
+const ARCHIVE = ['probes/routehub-probe-stash24.js'];
 // Узлы, группы и поставщики опыта в override — ровно эти строки (формат
 // фиксирован). Холостой режим — пусто, секций нет вовсе.
-const L24 = T.STASH_LAB24;
 const PULSE24 = STAND + L24.T24_PULSE_PATH + '?t=';
 const LAB_NODES = [
   '  - name: RH-Т24-Пульс', '    type: direct', '    benchmark-url: ' + PULSE24 + 't24ctl',
@@ -63,7 +66,12 @@ const STAND_URLS = LAB_PROVIDERS.concat(LAB_NODES).filter((l) => /^\s*(url|bench
 // проба это сверяет по /rules и без сверки не касается.
 const TOUCH_HOST = 'connectivitycheck.android.com';
 const TOUCH = 'https://' + TOUCH_HOST + '/generate_204';
-const LAB_RULES = ['  - DOMAIN,' + TOUCH_HOST + ',RH-Т24-T'];
+// ST25: отчёт на стенд идёт $httpClient скрипта по правилам профиля —
+// первым правилом хост стенда ведётся DIRECT (правило 1), проба сверяет это
+// по /rules и без сверки отчёт не шлёт.
+const STAND_HOST = new URL(STAND).hostname;
+const REPORT = STAND + L24.T24_REPORT_PATH;
+const LAB_RULES = ['  - DOMAIN,' + STAND_HOST + ',DIRECT', '  - DOMAIN,' + TOUCH_HOST + ',RH-Т24-T'];
 
 const LAB = 'probes/routehub-lab.js';
 const OV_PATH = 'plugins/RouteHub-Stash-Lab.stoverride';
@@ -127,12 +135,23 @@ test('холостая строка в песочнице: ровно один $
 // ST22 пишет (PUT) — но только в свои тестовые группы. Статически: у
 // $httpClient только get и put, put — один, внутри write() за проверкой
 // WRITABLE; /delay и прочих рычагов нет. Динамически — ниже, в песочнице.
-test('текущий опыт: $httpClient только get/put, put один и за WRITABLE, без /delay', () => {
+test('текущий опыт: $httpClient только get/put/post, put один и за WRITABLE, post один и за REPORT_GATE, без /delay', () => {
   if (IDLE) { assert.match(LAB_TEXT, IDLE_RE); return; }
   const code = bare(LAB_TEXT);
   assert.ok(code.indexOf('/delay') < 0, 'в опыте /delay (замер — запись в маршрутизацию)');
   const used = [...code.matchAll(/\$httpClient\s*(?:\.\s*(\w+)|\[)/g)].map((m) => m[1] || '[');
-  assert.deepEqual([...new Set(used)].filter((m) => m !== 'get' && m !== 'put'), [], 'у $httpClient не только get/put: ' + used.join(','));
+  assert.deepEqual([...new Set(used)].filter((m) => m !== 'get' && m !== 'put' && m !== 'post'), [], 'у $httpClient не только get/put/post: ' + used.join(','));
+  // POST — только отчёт стенда ST25: один вызов, в sendReport(), после проверки REPORT_GATE.
+  const posts = used.filter((m) => m === 'post').length;
+  assert.ok(posts <= 1, 'post вызывается в нескольких местах');
+  if (posts) {
+    const f = code.indexOf('function sendReport(');
+    const at = code.indexOf('$httpClient.post');
+    assert.ok(f >= 0 && at > f && code.indexOf('if (REPORT_GATE) return', f) < at, 'post вне sendReport() или до проверки REPORT_GATE');
+    const next = code.indexOf('\nfunction ', f + 1);
+    assert.ok(next < 0 || next > at, 'post не в теле sendReport()');
+    assert.ok(LAB_TEXT.indexOf("var REPORT_URL = '" + REPORT + "'") > 0, 'адрес отчёта не стенд');
+  }
   const puts = used.filter((m) => m === 'put').length;
   assert.ok(puts <= 1, 'put вызывается в нескольких местах');
   if (puts) {
@@ -153,7 +172,7 @@ function ovGroupNames() {
 }
 
 // Песочница: опыт читает только группы и поставщиков своего override и ничего
-// не пишет в боевые группы. ST22 писал (PUT) в свои тестовые группы; ST23 и
+// не пишет в боевые группы; наружу — касание и отчёт стенда (ST25). ST22 писал (PUT) в свои тестовые группы; ST23 и
 // ST24 — только чтение (группы, поставщики, /rules). ST24 ещё шлёт один GET
 // касания на хост правила касания — без ключа контроллера и без заголовков.
 const READ_ONLY = true;
@@ -171,17 +190,19 @@ test('опыт в песочнице: читает только группы, п
     g[P + x.toUpperCase()] = { type: 'Fallback', use: ['rh-t24' + x] };
     providers['rh-t24' + x] = { proxies: L24.t24Nodes(x) };
   }
-  const rules = [{ type: 'Domain', payload: TOUCH_HOST, proxy: P + 'T' }, { type: 'Match', payload: '', proxy: 'RH-Главный' }];
+  const rules = [{ type: 'Domain', payload: STAND_HOST, proxy: 'DIRECT' }, { type: 'Domain', payload: TOUCH_HOST, proxy: P + 'T' },
+    { type: 'Match', payload: '', proxy: 'RH-Главный' }];
   const w = createStash({ groups: g, providers,
-    route: (m, p, opt, reply) => (p === '/rules' ? (reply(200, JSON.stringify({ rules })), true) : undefined) });
-  for (let i = 0; i < 2; i++) { await settle(sandbox(w, LAB_TEXT, LAB)); w.clock.t += 60000; }
+    route: (m, p, opt, reply) => (p === '/rules' ? (reply(200, JSON.stringify({ rules })), true)
+      : opt.url === REPORT ? (reply(200, '{"ok":1,"stop":false}'), true) : undefined) });
+  for (let i = 0; i < 2; i++) { await settle(sandbox(w, LAB_TEXT, LAB, { forbid: ['patch'] })); w.clock.t += 60000; }
   const names = ovGroupNames();
   const provs = sectionOrEmpty('proxy-providers').filter((l) => /^ {2}\S.*:$/.test(l)).map((l) => l.trim().slice(0, -1));
   assert.ok(w.calls.length > 0, 'опыт ничего не прочитал — проверка пуста');
   assert.ok(w.calls.some((c) => c.url === TOUCH), 'касания нет — песочница не проверила его путь');
-  if (READ_ONLY) assert.deepEqual(w.writes(), [], 'опыт только для чтения, а пишет');
+  if (READ_ONLY) assert.deepEqual(w.writes().filter((c) => c.url !== REPORT), [], 'опыт только для чтения, а пишет');
   for (const c of w.calls) {
-    if (c.url === TOUCH) { assert.equal(c.auth, undefined, 'ключ контроллера ушёл наружу'); continue; }
+    if (c.url === TOUCH || c.url === REPORT) { assert.equal(c.auth, undefined, 'ключ контроллера ушёл наружу'); continue; }
     assert.ok(c.url.indexOf('http://127.0.0.1:9090/') === 0, 'запрос мимо контроллера: ' + c.url);
     if (c.p === '/rules') { assert.equal(c.method, 'get'); continue; }
     const prov = /^\/providers\/proxies\/([^/?]+)$/.exec(c.p);
@@ -218,13 +239,13 @@ test('timeout cron не меньше сторожа и бюджета текущ
 });
 
 // ── OVERRIDE: ЧЕГО В НЁМ БЫТЬ НЕ МОЖЕТ ──────────────────────────────────
-test('верхний уровень — скрипт, cron, плитка, узлы, группы и одно правило касания; ни наборов, ни MITM, ни DNS', () => {
+test('верхний уровень — скрипт, cron, плитка, узлы, группы и два правила (стенд DIRECT, касание); ни наборов, ни MITM, ни DNS', () => {
   const allowed = ['name', 'desc', 'author', 'category', 'script-providers', 'cron', 'tiles', 'proxies', 'proxy-providers', 'proxy-groups', 'rules'];
   assert.deepEqual(TOP.filter((k) => allowed.indexOf(k) < 0), [], 'лишние секции');
   for (const k of ['rule-providers', 'mitm', 'hostname', 'dns:', 'rewrite', '#!replace', 'MATCH', 'RULE-SET', 'GEOIP']) {
     assert.ok(BODY.every((l) => l.indexOf(k) < 0), 'в override есть ' + k);
   }
-  // Ровно одно правило: хост касания в тестовую группу T (ревью ST24).
+  // Ровно два правила: стенд DIRECT первым (отчёт ST25), хост касания в группу T (ревью ST24).
   if (!IDLE) assert.deepEqual(section('rules'), LAB_RULES);
 });
 
@@ -258,7 +279,7 @@ test('хост касания не встречается в боевых пра
     if (!fs.existsSync(path.join(ROOT, dir))) continue;
     for (const f of fs.readdirSync(path.join(ROOT, dir))) {
       const rel = dir + '/' + f;
-      if (!/\.js$/.test(f) || rel === LAB || rel === LAB_SOURCE) continue;
+      if (!/\.js$/.test(f) || rel === LAB || rel === LAB_SOURCE || ARCHIVE.indexOf(rel) >= 0) continue;
       assert.ok(read(rel).indexOf(TOUCH_HOST) < 0, 'хост касания в ' + rel);
     }
   }
@@ -334,7 +355,8 @@ test('поставщики опыта — только стенд /lab/t24-nodes
     assert.ok(u === RAW + LAB || (u.indexOf(STAND) === 0 && STAND_URLS.indexOf(u) >= 0), 'чужой адрес в override: ' + u);
     assert.ok(!/\/t\/|[?&](key|token)=/.test(u), 'токен или ключ в адресе: ' + u);
   }
-  const hosts = [...OV.matchAll(/[\w.-]+\.workers\.dev[^\s'"]*/g)].map((m) => m[0]);
+  const hosts = [...OV.matchAll(/[\w.-]+\.workers\.dev[^\s'"]*/g)].map((m) => m[0])
+    .filter((h) => h !== STAND_HOST + ',DIRECT');                // правило стенда (ST25), сверено тестом правил
   for (const h of hosts) {
     assert.ok(STAND_URLS.map((u) => u.slice(8)).indexOf(h) >= 0, 'другой адрес Worker\'а в override: ' + h);
     assert.ok(!/\/t\/|[?&](key|token)=/.test(h), 'токен или ключ: ' + h);
@@ -369,7 +391,7 @@ test('override Lab разбирается настоящим YAML-парсеро
     for (const k of ['proxies', 'proxy-groups', 'proxy-providers', 'rules']) assert.equal(d[k], undefined);
     return;
   }
-  assert.deepEqual(d.rules, ['DOMAIN,' + TOUCH_HOST + ',RH-Т24-T'], 'правило касания');
+  assert.deepEqual(d.rules, ['DOMAIN,' + STAND_HOST + ',DIRECT', 'DOMAIN,' + TOUCH_HOST + ',RH-Т24-T'], 'правила стенда и касания');
   // ST24: четыре поставщика (у rh-t24p — health-check), узел-пульс и группы;
   // выдача каждого поставщика — узлы A и B своей группы.
   const pv = d['proxy-providers'];
