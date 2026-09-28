@@ -10,6 +10,17 @@
             "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-prod.js"]
           }
         ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-read.js"],
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionStart": [
