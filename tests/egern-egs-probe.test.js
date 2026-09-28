@@ -24,7 +24,7 @@ const W = 600000;
 const EVEN = 3000000 * W + 5 * 60000;        // чётное окно, 5-я минута
 const ODD = EVEN + W;                         // нечётное окно, 5-я минута
 const CRON = '5,15,25,35,45,55 * * * *';
-const SCRIPT_POLICIES = ['DIRECT', 'EGS-ORD', 'EGS-REJ', 'EGS-DA', 'EGS-DB', 'EGS-SUBS', 'EGS-DIE-S', 'EGS-COND', 'EGS-N1', 'EGS-NOPE', 'EGS-DEAD-1'];
+const SCRIPT_POLICIES = ['DIRECT', 'EGS-ORD', 'EGS-REJ', 'EGS-DA', 'EGS-DB', 'EGS-SUBS', 'EGS-DIE-S', 'EGS-COND', 'EGS-N1', 'EGS-NOPE', 'EGS-DEAD-3'];
 const BACKGROUND = ['EGS-F60', 'EGS-F60N', 'EGS-A30', 'EGS-SM', 'EGS-DG', 'EGS-SUB', 'EGS-NAT', 'EGS-DIE-R'];
 const SECRETS = ['SECRET', '10.20.30', 'fe80', 'aa:bb:cc', 'Carrier'];
 
@@ -41,7 +41,7 @@ function world(over) {
     'EGS-COND': { status: 204, ms: 40 },
     'EGS-N1': { throw: 'connect timeout 192.0.2.71', ms: 5000 },
     'EGS-NOPE': { status: 404, ms: 3 },
-    'EGS-DEAD-1': { throw: 'connect timeout 192.0.2.61', ms: 5000 },
+    'EGS-DEAD-3': { throw: 'connect timeout 192.0.2.63', ms: 5000 },
     to: { throw: 'The request timed out', ms: 3004 },
   }, over || {});
 }
@@ -147,6 +147,9 @@ test('задуманный мир, нечётное окно: все «да» и
   const v = r.dump.итоги;
   assert.equal(r.dump.нечёт, true);
   assert.equal(r.dump.мин, 5);
+  assert.equal(r.dump.в_итоги, true);
+  assert.equal(r.dump.policy_не_соблюдён, 0);
+  assert.match(v.policy_ctx_http, /^да:/);
   assert.match(v.fallback_первый_живой, /^да:/);
   assert.match(v.REJECT_в_fallback, /^считается живым/);
   assert.match(v.свой_адрес_DIRECT, /^да:/);
@@ -160,15 +163,16 @@ test('задуманный мир, нечётное окно: все «да» и
 });
 
 test('«нет» — только при живом контроле, по каждому вопросу', async () => {
+  // EGS-ORD отдельно: его отказ снимает подтверждение REJECT (группы могло не быть).
+  const q = await cron(ODD, { 'EGS-ORD': { throw: 'connect timeout', ms: 5000 } });
+  assert.match(q.dump.итоги.fallback_первый_живой, /^нет:/);
   const r = await cron(ODD, {
-    'EGS-ORD': { throw: 'connect timeout', ms: 5000 },
     'EGS-DA': { throw: 'connect timeout', ms: 5000 },
     'EGS-DIE-S': { status: 204, ms: 40 },
     'EGS-N1': { status: 404, ms: 3 },
     to: { throw: 'timed out', ms: 25010 },
   });
   const v = r.dump.итоги;
-  assert.match(v.fallback_первый_живой, /^нет:/);
   assert.match(v.свой_адрес_DIRECT, /^нет:/);
   assert.match(v.смерть_узла, /^не замечает: на DIRECT на 5-й мин/);
   assert.match(v.имя_узла_подписки, /^нет:/);
@@ -179,6 +183,69 @@ test('«нет» — только при живом контроле, по ка�
   const o = await cron(ODD, { 'EGS-SUBS': { throw: 'no proxy', ms: 3 } });
   assert.equal(o.dump.итоги.clash_direct_разобран, 'нет данных', 'ошибка в нечётном окне — не про разбор');
   assert.equal(o.dump.итоги.подписка_первый_живой, 'нет данных', 'без разбора «нет» по порядку не выносится');
+});
+
+// Вердикты, которые опираются на выбор члена группы по policy.
+const BY_POLICY = ['fallback_первый_живой', 'REJECT_в_fallback', 'свой_адрес_DIRECT', 'clash_direct_разобран',
+  'подписка_первый_живой', 'смерть_узла', 'возврат', 'имя_узла_подписки', 'conditional'];
+const OK = { status: 204, ms: 40 };
+
+test('policy не соблюдён (муляж или несуществующее имя прошли) — группы «нет данных», отдельный счёт', async () => {
+  const all = {};
+  for (const k of Object.keys(world())) if (k !== 'ctl' && k !== 'to') all[k] = OK;
+  // Egern игнорирует policy целиком; только муляж; только несуществующее имя (молча DIRECT).
+  const cases = [[all, 1, 1], [{ 'EGS-DEAD-3': OK, 'EGS-N1': OK }, 1, 0], [{ 'EGS-NOPE': OK }, 0, 1]];
+  for (const [over, dead, name] of cases) {
+    const r = await cron(ODD, over);
+    const v = r.dump.итоги;
+    assert.equal(r.dump.в_итоги, false, JSON.stringify(over));
+    assert.equal(r.dump.policy_не_соблюдён, 1);
+    assert.equal(v.policy_ctx_http, 'нет: policy не соблюдён — муляж пропустил ' + dead + ', несуществующее имя ' + name
+      + '; прогоны не в итогах групп (1)');
+    for (const k of BY_POLICY) assert.equal(v[k], 'нет данных', k + ': ' + v[k]);
+    assert.match(v.timeout_мс, /^да:/, 'timeout идёт через DIRECT и от policy не зависит');
+    assert.match(r.f.notes[0].body, /^policy НЕ соблюдён — группы не в итогах/);
+  }
+  // Смешанный прогон: в итоги групп — только прогон с соблюдённым policy.
+  const store = new Map();
+  await cron(ODD, {}, store);
+  const m = await cron(ODD + 2 * W, all, store);
+  assert.match(m.dump.итоги.policy_ctx_http, /^не всегда: да 1, нет 1$/);
+  assert.match(m.dump.итоги.fallback_первый_живой, /^да: .*\(1\)$/);
+  assert.match(m.dump.итоги.REJECT_в_fallback, /\(1\)$/);
+});
+
+test('отказ REJECT неотличим от несуществующего имени или EGS-ORD не прошёл — REJECT-выводы «не различить»', async () => {
+  const REJ = { throw: 'rejected', ms: 2 };
+  for (const over of [{ 'EGS-NOPE': REJ }, { 'EGS-ORD': { throw: 'connect timeout', ms: 5000 } }]) {
+    const r = await cron(ODD, over);
+    const v = r.dump.итоги;
+    assert.equal(r.dump.в_итоги, true, 'policy соблюдён: муляж не прошёл');
+    assert.match(v.REJECT_в_fallback, /^не различить: отказ как у несуществующего имени/, JSON.stringify(over));
+    assert.match(v.свой_адрес_DIRECT, /^не различить/);
+    assert.match(v.смерть_узла, /^не различить/);
+  }
+  // REJECT подтверждён, но отказ B / EGS-DIE-S иного класса, чем у REJECT (например, «группа не найдена»).
+  const r = await cron(ODD, { 'EGS-DB': { status: 404, ms: 3 }, 'EGS-DIE-S': { status: 404, ms: 3 } });
+  assert.match(r.dump.итоги.REJECT_в_fallback, /^считается живым/);
+  assert.match(r.dump.итоги.свой_адрес_DIRECT, /^не различить/);
+  assert.match(r.dump.итоги.смерть_узла, /^не различить/);
+  // EGS-REJ прошёл при соблюдённом policy — REJECT пропущен (группа есть: несуществующее имя отказало).
+  const p = await cron(ODD, { 'EGS-REJ': OK, 'EGS-NOPE': REJ });
+  assert.match(p.dump.итоги.REJECT_в_fallback, /^пропускается/);
+});
+
+test('граница окна (минута < 4) — прогон не в итогах; с 4-й минуты — в итогах', async () => {
+  const e = await cron(ODD - 5 * 60000 + 30000);
+  assert.equal(e.dump.мин, 0.5);
+  assert.equal(e.dump.в_итоги, false);
+  assert.equal(e.dump.на_границе, 1);
+  for (const [k, v] of Object.entries(e.dump.итоги)) if (k !== 'cron') assert.equal(v, 'нет данных', k);
+  assert.match(e.f.notes[0].body, /^граница окна/);
+  const f = await cron(ODD - 60000);
+  assert.equal(f.dump.мин, 4);
+  assert.equal(f.dump.в_итоги, true);
+  assert.match(f.dump.итоги.fallback_первый_живой, /^да:/);
 });
 
 test('REJECT не живой — смерть узла и свой адрес DIRECT «не различить», а не «да» или «нет»', async () => {
@@ -200,13 +267,13 @@ test('адрес «мёртвого» узла не молчал (ответил
 });
 
 test('имена: статический муляж и несуществующее имя неразличимы — «не различить»', async () => {
-  const r = await cron(ODD, { 'EGS-DEAD-1': { status: 404, ms: 3 } });
+  const r = await cron(ODD, { 'EGS-DEAD-3': { status: 404, ms: 3 } });
   assert.match(r.dump.итоги.имя_узла_подписки, /^не различить/);
-  assert.equal(r.dump.имена['EGS-DEAD-1'], 'http404/быстро');
+  assert.equal(r.dump.имена['EGS-DEAD-3'], 'http404/быстро');
   assert.equal(r.dump.имена['EGS-N1'], 'искл/долго connect timeout 192.0.2.71');
   // Все три одинаковы: без контроля это читалось бы как «адресуется».
   const same = { status: 404, ms: 3 };
-  const s = await cron(ODD, { 'EGS-DEAD-1': same, 'EGS-N1': same, 'EGS-NOPE': same });
+  const s = await cron(ODD, { 'EGS-DEAD-3': same, 'EGS-N1': same, 'EGS-NOPE': same });
   assert.match(s.dump.итоги.имя_узла_подписки, /^не различить/);
 });
 
@@ -275,6 +342,9 @@ test('группы скрипта есть в профиле и не совпа�
   }
   assert.ok(!names.includes('EGS-NOPE') && !proxies.includes('EGS-NOPE'), 'контрольное имя обязано отсутствовать');
   for (const b of BACKGROUND) assert.ok(names.includes(b), b);
+  // Муляж контроля policy — вне всех групп: запросы скрипта по имени не трогают группы.
+  for (const g of P.policy_groups) assert.ok(!(g[Object.keys(g)[0]].policies || []).includes('EGS-DEAD-3'), 'EGS-DEAD-3 в группе');
+  assert.ok(proxies.includes('EGS-DEAD-3'));
   // Политики в коде скрипта — ровно список выше.
   const inSrc = [...SRC.matchAll(/'(EGS-[A-Z0-9-]+|DIRECT)', (?:HTTP_MS|TO_MS)\)/g)].map((m) => m[1]);
   assert.deepEqual([...new Set(inSrc)].sort(), SCRIPT_POLICIES.slice().sort());
@@ -311,6 +381,14 @@ test('ровно одна строка [EGS] и одно уведомление 
   }
   assert.equal(a.f.notes[0].sound, true);
   assert.equal(b.f.notes[0].sound, false);
+  // network: звук тоже только на первой смене сети.
+  const ns = new Map();
+  const n1 = fakeCtx({ clock: { t: ODD }, respond: responder(world()), store: ns });
+  await run(n1);
+  const n2 = fakeCtx({ clock: { t: ODD + W }, respond: responder(world()), store: ns, net: 'cell' });
+  await run(n2);
+  assert.equal(n1.notes[0].sound, true);
+  assert.equal(n2.notes[0].sound, false);
 });
 
 test('сбой хранилища или уведомления не роняет прогон: одна строка [EGS]', async () => {

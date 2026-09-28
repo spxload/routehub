@@ -36,6 +36,12 @@ proxies:
       name: EGS-DEAD-2
       server: 192.0.2.62
       port: 1
+  # Муляж только для скрипта (запрос по имени — контроль, что ctx.http соблюдает
+  # policy): ни в одной группе, чтобы запросы скрипта не трогали фоновые группы.
+  - socks5:
+      name: EGS-DEAD-3
+      server: 192.0.2.63
+      port: 1
 
 # Группы (…/policy_groups/). latency_test_url группы главнее глобальных; у
 # fallback — фоновая проверка, у auto_test — замер. interval / timeout — секунды
