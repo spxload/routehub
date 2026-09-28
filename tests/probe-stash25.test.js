@@ -67,6 +67,11 @@ function world(o = {}) {
         reply(ww.touchStatus || 204, '');
         return true;
       }
+      if (p === '/configs') {
+        if (ww.configsStatus) { reply(ww.configsStatus, '{"message":"x"}'); return true; }
+        reply(200, ww.configsBody !== undefined ? ww.configsBody : JSON.stringify({ port: 7890, mode: ww.mode || 'rule', 'log-level': 'info' }));
+        return true;
+      }
       if (p === '/rules') {
         if (ww.rulesStatus) { reply(ww.rulesStatus, '{"message":"x"}'); return true; }
         reply(200, ww.rulesBody !== undefined ? ww.rulesBody : JSON.stringify({ rules: ww.rules }));
@@ -136,15 +141,15 @@ test('запросы: GET 5 групп, 4 поставщиков, /rules; кас
   await run(w);
   const ctrl = ctrlCalls(w);
   const allowed = new Set(GR.concat([P + 'К']).map((g) => '/proxies/' + encodeURIComponent(g))
-    .concat(IDS.map((x) => '/providers/proxies/rh-t24' + x.toLowerCase()), ['/rules']));
-  assert.equal(ctrl.length, 10);
+    .concat(IDS.map((x) => '/providers/proxies/rh-t24' + x.toLowerCase()), ['/rules', '/configs']));
+  assert.equal(ctrl.length, 11);
   for (const c of ctrl) {
     assert.equal(c.method, 'get');
     assert.equal(c.timeout, 5, 'timeout у Stash в секундах: ' + c.timeout);
     assert.equal(c.auth, SECRET);
     assert.ok(c.url.indexOf('http://127.0.0.1:9090/') === 0 && allowed.has(c.p), 'путь ' + c.url);
   }
-  assert.equal(new Set(ctrl.map((c) => c.p)).size, 10);
+  assert.equal(new Set(ctrl.map((c) => c.p)).size, 11);
   assert.equal(touchCalls(w), 1);
   assert.equal(w.reports.length, 1);
   const r = w.reports[0];
@@ -271,9 +276,11 @@ test('касание T: сверка /rules та же (ruleGate), правило
 
 test('бюджет: медленный контроллер — ни касания, ни отчёта за краем бюджета; контроллер молчит — ни /rules, ни отчёта', async () => {
   const w = world();
-  w.step = 4000;                                   // 9 чтений и /rules — 40 с из 45: на касание и отчёт места нет
+  w.step = 3700;                                   // 9 чтений, /rules и /configs — 40,7 с из 45: на касание и отчёт места нет
   const d = dump(await run(w, { tile: true })).ans;
   assert.equal(w.calls.filter((c) => c.p === '/rules').length, 1);
+  assert.equal(w.calls.filter((c) => c.p === '/configs').length, 1);
+  assert.equal(d.режим, 'rule');
   assert.equal(touchCalls(w), 0, 'касание за краем бюджета');
   assert.deepEqual(d.касание, { пропущено: 'бюджет' });
   assert.equal(w.reports.length, 0);
@@ -283,6 +290,61 @@ test('бюджет: медленный контроллер — ни касан�
   const s = await run(we);
   assert.match(s.done.content, /КОНТРОЛЛЕР НЕ ОТВЕТИЛ/);
   assert.equal(we.calls.filter((c) => c.p === '/rules' || c.url === REPORT || c.url === TOUCH).length, 0);
+});
+
+// ⛔ Правило 1 (ревью ST25): в режиме global / direct правила не действуют —
+// отчёт и касание ушли бы мимо правил override (global — через селектор GLOBAL).
+test('режим ядра (GET /configs): только rule — отчёт и касание; global / direct / нет ответа / мусор — оба пропущены с причиной', async () => {
+  for (const m of ['rule', 'Rule', 'RULE']) {
+    const w = world();
+    w.mode = m;
+    const d = dump(await run(w, { tile: true })).ans;
+    assert.equal(w.reports.length, 1, m);
+    assert.equal(touchCalls(w), 1, m);
+    assert.equal(d.режим, 'rule');
+    const iC = w.calls.findIndex((c) => c.p === '/configs');
+    assert.ok(iC >= 0 && w.reports[0].at > iC && w.touches[0].after > iC, 'отправка раньше сверки режима');
+    assert.equal(w.calls[iC].method, 'get');
+    assert.equal(w.calls[iC].timeout, 5);
+  }
+  const cases = [
+    ['режим global — правила не действуют', (w) => { w.mode = 'global'; }],
+    ['режим global — правила не действуют', (w) => { w.mode = 'Global'; }],
+    ['режим direct — правила не действуют', (w) => { w.mode = 'direct'; }],
+    ['режим script — правила не действуют', (w) => { w.mode = 'script'; }],
+    ['режим: нет данных — /configs не прочитан', (w) => { w.configsStatus = 404; }],
+    ['режим: нет данных — /configs не прочитан', (w) => { w.configsStatus = 500; }],
+    ['режим: нет данных — /configs не прочитан', (w) => { w.eofWhen = (m, p) => p === '/configs'; }],
+    ...['не json', 'null', '[]', '{}', '{"mode":""}', '{"mode":5}', '{"Mode":"rule"}', '"rule"']
+      .map((b) => ['режим: нет данных — формат /configs не разобран', (w) => { w.configsBody = b; }]),
+  ];
+  for (const [why, set] of cases) {
+    const w = world();
+    set(w);
+    const s = await run(w, { tile: true });
+    const d = dump(s).ans;
+    assert.equal(w.reports.length, 0, 'отчёт при: ' + why);
+    assert.equal(touchCalls(w), 0, 'касание при: ' + why);
+    assert.equal(d.режим, why);
+    assert.deepEqual(d.отчёт, { пропущено: why });
+    assert.deepEqual(d.касание, { пропущено: why });
+    assert.equal(state(w).журнал[0].отчёт, 'пропущено: ' + why);
+    assert.equal(state(w).касания.пропущено, 1);
+  }
+  // Одиночный обрыв /configs — повтор, как у прочих чтений.
+  const w1 = world();
+  let once = 0;
+  w1.eofWhen = (m, p) => p === '/configs' && once++ === 0;
+  await run(w1);
+  assert.equal(w1.calls.filter((c) => c.p === '/configs').length, 2);
+  assert.equal(w1.reports.length, 1);
+  // Бюджета на /configs нет — «нет данных», не «rule».
+  const wb = world();
+  wb.step = 3900;                                  // 9 чтений и /rules — 39 с: /configs не начат
+  const db = dump(await run(wb, { tile: true })).ans;
+  assert.equal(wb.calls.filter((c) => c.p === '/configs').length, 0);
+  assert.equal(db.режим, 'режим: нет данных — бюджет');
+  assert.equal(wb.reports.length + touchCalls(wb), 0);
 });
 
 // ── ОТЧЁТ: СОДЕРЖАНИЕ И УКАЗАТЕЛЬ ──────────────────────────────────────

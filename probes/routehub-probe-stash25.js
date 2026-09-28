@@ -22,8 +22,10 @@
  * RH-Главный → может уйти на платный обход). Первое правило override Lab —
  * `DOMAIN,<хост стенда>,DIRECT`; отчёт уходит, только если /rules
  * контроллера подтверждает: это правило стоит раньше любого не-DOMAIN
- * правила и любого другого правила этого хоста. Та же сверка, что для
- * касания T (ruleGate). /rules не прочитан или не разобран — не отправлять.
+ * правила и любого другого правила этого хоста, а GET /configs — режим
+ * rule (в global / direct правила не действуют: global ведёт через селектор
+ * GLOBAL, возможно на обход). Та же сверка — для касания T (gates: modeGate
+ * + ruleGate). /rules или /configs не прочитан, не разобран — не отправлять.
  * Стенд ответит stop, если запрос пришёл не из RU (дошёл через обход).
  *
  * СТОП. Ответ стенда stop:true (секрет LAB_STOP или обход), срок 6 ч от t0
@@ -44,7 +46,7 @@
  * «замечает».
  *
  * ЗАПРОСЫ. К контроллеру — только GET: /proxies/RH-Т24-L|N|P|T|К,
- * /providers/proxies/rh-t24l|n|p|t, /rules. Наружу — касание (GET без
+ * /providers/proxies/rh-t24l|n|p|t, /rules, /configs. Наружу — касание (GET без
  * заголовков на хост правила касания) и отчёт (POST на стенд, без ключа
  * контроллера). Ни PUT, ни /delay, ни боевых групп (правило 2).
  *
@@ -184,6 +186,17 @@ function rulesList(r) {
 }
 // Сверка: null — правило DOMAIN хоста host с прокси proxy стоит раньше любого
 // не-DOMAIN правила и любого другого правила этого хоста; иначе причина.
+// Режим ядра (GET /configs): правила действуют только в режиме rule; в global /
+// direct отчёт и касание ушли бы мимо них (global — через селектор GLOBAL,
+// возможно на обход). null — rule; иначе причина. Не прочитан / не разобран —
+// «нет данных», никогда «на всякий случай».
+function modeGate(r) {
+  if (r.status !== 200) return 'режим: нет данных — /configs не прочитан';
+  var j = json(r.body);
+  if (!j || typeof j !== 'object' || !valid(j.mode)) return 'режим: нет данных — формат /configs не разобран';
+  var m = j.mode.toLowerCase();
+  return m === 'rule' ? null : 'режим ' + m.slice(0, 16) + ' — правила не действуют';
+}
 function isHostRule(q, host) { return normType(q.type) === 'DOMAIN' && String(q.payload).toLowerCase() === host; }
 function ruleGate(list, host, proxy, what) {
   if (typeof list === 'string') return list;
@@ -597,17 +610,25 @@ function main() {
     if (!room()) return after({ пропущено: 'бюджет' });
     get(opts('/rules'), true, function (r) {
       var list = rulesList(r);
-      REPORT_GATE = ruleGate(list, STAND_HOST, 'DIRECT', 'стенда');
-      A.правило_стенда = REPORT_GATE || 'первое: DOMAIN,' + STAND_HOST + ',DIRECT';
-      var why = groupBlock(snap.g[TOUCH_GROUP]);
-      if (why) return after({ пропущено: why });
-      var gate = ruleGate(list, TOUCH_HOST, TOUCH_GROUP, 'касания');
-      A.правило_касания = gate || 'первое: DOMAIN,' + TOUCH_HOST + ',' + TOUCH_GROUP;
-      if (gate) return after({ пропущено: gate });
-      if (!room()) return after({ пропущено: 'бюджет' });
-      touch(after);
+      if (!room()) return gates(list, 'режим: нет данных — бюджет');
+      get(opts('/configs'), true, function (c) { gates(list, modeGate(c)); });
     });
   });
+  // Общая сверка правила 1 для отчёта и касания: режим rule И правило хоста первым.
+  function gates(list, mode) {
+    A.режим = mode || 'rule';
+    var stand = ruleGate(list, STAND_HOST, 'DIRECT', 'стенда');
+    A.правило_стенда = stand || 'первое: DOMAIN,' + STAND_HOST + ',DIRECT';
+    REPORT_GATE = mode || stand;
+    var why = groupBlock(snap.g[TOUCH_GROUP]);
+    if (why) return after({ пропущено: why });
+    var rule = ruleGate(list, TOUCH_HOST, TOUCH_GROUP, 'касания');
+    A.правило_касания = rule || 'первое: DOMAIN,' + TOUCH_HOST + ',' + TOUCH_GROUP;
+    var gate = mode || rule;
+    if (gate) return after({ пропущено: gate });
+    if (!room()) return after({ пропущено: 'бюджет' });
+    touch(after);
+  }
   function after(t) {
     if (FINISHED) return;
     A.касание = t;

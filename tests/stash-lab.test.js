@@ -194,17 +194,19 @@ test('опыт в песочнице: читает только группы, п
     { type: 'Match', payload: '', proxy: 'RH-Главный' }];
   const w = createStash({ groups: g, providers,
     route: (m, p, opt, reply) => (p === '/rules' ? (reply(200, JSON.stringify({ rules })), true)
+      : p === '/configs' ? (reply(200, '{"mode":"rule"}'), true)
       : opt.url === REPORT ? (reply(200, '{"ok":1,"stop":false}'), true) : undefined) });
   for (let i = 0; i < 2; i++) { await settle(sandbox(w, LAB_TEXT, LAB, { forbid: ['patch'] })); w.clock.t += 60000; }
   const names = ovGroupNames();
   const provs = sectionOrEmpty('proxy-providers').filter((l) => /^ {2}\S.*:$/.test(l)).map((l) => l.trim().slice(0, -1));
   assert.ok(w.calls.length > 0, 'опыт ничего не прочитал — проверка пуста');
   assert.ok(w.calls.some((c) => c.url === TOUCH), 'касания нет — песочница не проверила его путь');
+  assert.ok(w.calls.some((c) => c.url === REPORT), 'отчёта нет — песочница не проверила его путь');
   if (READ_ONLY) assert.deepEqual(w.writes().filter((c) => c.url !== REPORT), [], 'опыт только для чтения, а пишет');
   for (const c of w.calls) {
     if (c.url === TOUCH || c.url === REPORT) { assert.equal(c.auth, undefined, 'ключ контроллера ушёл наружу'); continue; }
     assert.ok(c.url.indexOf('http://127.0.0.1:9090/') === 0, 'запрос мимо контроллера: ' + c.url);
-    if (c.p === '/rules') { assert.equal(c.method, 'get'); continue; }
+    if (c.p === '/rules' || c.p === '/configs') { assert.equal(c.method, 'get'); continue; }
     const prov = /^\/providers\/proxies\/([^/?]+)$/.exec(c.p);
     if (prov) { assert.ok(provs.indexOf(decodeURIComponent(prov[1])) >= 0, 'чужой поставщик: ' + c.p); continue; }
     assert.ok(c.name !== null && names.indexOf(c.name) >= 0, 'опыт трогал не свою группу: ' + c.p);
