@@ -28,7 +28,8 @@
  * (иначе 2xx группы — не выбор её члена; счёт «policy не соблюдён»), и группы
  * находятся по имени: запрос через EGS-GRP (select [DIRECT], вне фоновых групп)
  * прошёл (иначе отказ любой группы мог значить «группа не найдена»; счёт
- * «группы не находятся»).
+ * «группы не находятся» — при отказе класса EGS-NOPE, иначе «сбой контроля»).
+ * Отказ группы того же класса, что у EGS-NOPE, — «не различить», не «нет».
  *
  * ФОРМА. Нативный скрипт Egern: `export default async function (ctx)`, без
  * `$done`. Тип запуска: есть ctx.cron — schedule, нет — network.
@@ -92,16 +93,18 @@ function save(ctx, key, v) { try { ctx.storage.setJSON(key, v); } catch (e) { /*
 
 function fresh() {
   return { rev: REV, первый: null, запуски: [], без_контроля: 0, на_границе: 0, c: {
-    pol: { да: 0, нет: 0, муляж: 0, имя: 0 }, grp: { да: 0, нет: 0 },
+    pol: { да: 0, нет: 0, муляж: 0, имя: 0 }, grp: { да: 0, нет: 0, сбой: 0 },
     ord: { да: 0, нет: 0, нр: 0 }, rej: { выбран: 0, пропущен: 0, нр: 0 }, dab: { да: 0, нет: 0, нр: 0 },
-    subs: { чёт_ok: 0, чёт_err: 0, нечёт_ok: 0, нечёт_err: 0 },
+    subs: { чёт_ok: 0, чёт_err: 0, нечёт_ok: 0, нечёт_err: 0, нр: 0 },
     die: { ушёл: [], остался: [], вернулся: [], не_вернулся: [], нр: 0 },
     to: { да: [], нет: [], нр: [], без_паузы: 0, чёт_ok: 0 },
     names: { адр: 0, нет: 0, нр: 0 },
-    cond: { wifi_ok: 0, wifi_err: 0, cell_ok: 0, cell_err: 0 },
+    cond: { wifi_ok: 0, wifi_err: 0, cell_ok: 0, cell_err: 0, нр: 0 },
   } };
 }
 function push(a, v) { a.push(v); if (a.length > KEEP) a.splice(0, a.length - KEEP); }
+// Счётчик, которого могло не быть в сохранённом состоянии прошлой ревизии.
+function inc(o, k) { o[k] = (o[k] || 0) + 1; }
 
 // Класс исхода для сравнения имён: успех / HTTP-код / исключение, быстро / долго.
 function cls(r) {
@@ -138,10 +141,11 @@ function tally(c, R, odd, min, net) {
   else c.names.нр++;
   // Контроль «группы находятся по имени»: без него отказ группы мог значить
   // «группа не найдена», и любое групповое «нет» было бы без контроля.
-  if (!R.grp.ok) { c.grp.нет++; return; }
-  c.grp.да++;
+  // Отказ отличный от EGS-NOPE (таймаут, 5xx) — сбой контроля, не «не находятся».
   // Отказ, неотличимый от несуществующего имени, — не «выбран мёртвый член».
   const like0 = function (r) { return !r.ok && cls(r) === k0; };
+  if (!R.grp.ok) { if (like0(R.grp)) c.grp.нет++; else inc(c.grp, 'сбой'); return; }
+  c.grp.да++;
   if (R.ord.ok) c.ord.да++; else if (like0(R.ord)) c.ord.нр++; else c.ord.нет++;
   // REJECT выбран — только если группы профиля точно есть (EGS-ORD прошёл) и
   // отказ EGS-REJ отличим от отказа несуществующего имени: иначе отказ мог
@@ -154,7 +158,9 @@ function tally(c, R, odd, min, net) {
   else if (!R.da.ok) c.dab.нр++;
   else if (onRej(R.db)) c.dab.да++;
   else c.dab.нр++;
-  if (odd) { if (R.subs.ok) c.subs.нечёт_ok++; else c.subs.нечёт_err++; }
+  // EGS-SUBS: отказ как у несуществующего имени — группа могла не найтись.
+  if (like0(R.subs)) inc(c.subs, 'нр');
+  else if (odd) { if (R.subs.ok) c.subs.нечёт_ok++; else c.subs.нечёт_err++; }
   else { if (R.subs.ok) c.subs.чёт_ok++; else c.subs.чёт_err++; }
   // Смерть узла: различимо, только если REJECT живой (иначе при мёртвом DIRECT
   // все члены мертвы и группа вправе остаться на DIRECT), отказ EGS-DIE-S —
@@ -163,8 +169,12 @@ function tally(c, R, odd, min, net) {
   if (!rejAlive || (!R.die.ok && !onRej(R.die)) || (odd && (R.to.ok || R.to.ms < 2000))) c.die.нр++;
   else if (odd) { if (R.die.ok) push(c.die.остался, min); else push(c.die.ушёл, min); }
   else if (c.die.ушёл.length) { if (R.die.ok) push(c.die.вернулся, min); else push(c.die.не_вернулся, min); }
-  if (net === 'wifi') { if (R.cond.ok) c.cond.wifi_ok++; else c.cond.wifi_err++; }
-  if (net === 'cell') { if (R.cond.ok) c.cond.cell_ok++; else c.cond.cell_err++; }
+  // EGS-COND: EGS-GRP (select) не доказывает, что conditional находится по
+  // имени; отказ класса EGS-NOPE — «не различить», не ветка REJECT.
+  if (net !== 'wifi' && net !== 'cell') return;
+  if (like0(R.cond)) inc(c.cond, 'нр');
+  else if (net === 'wifi') { if (R.cond.ok) c.cond.wifi_ok++; else c.cond.wifi_err++; }
+  else if (R.cond.ok) c.cond.cell_ok++; else c.cond.cell_err++;
 }
 
 function mixed(a, b, yes, no, both) {
@@ -185,6 +195,11 @@ function verdicts(S) {
   v.группы_по_имени = mixed(c.grp.да, c.grp.нет, 'да: EGS-GRP прошла (' + c.grp.да + ')',
     'нет: EGS-GRP не прошла при соблюдённом policy — группы по имени не находятся, групповые выводы не в итогах (' + c.grp.нет + ')',
     'не всегда: да ' + c.grp.да + ', нет ' + c.grp.нет);
+  if (c.grp.сбой) {
+    v.группы_по_имени = v.группы_по_имени === 'нет данных'
+      ? 'нет данных: сбой контроля — отказ EGS-GRP не как у несуществующего имени (' + c.grp.сбой + ')'
+      : v.группы_по_имени + '; сбой контроля ' + c.grp.сбой;
+  }
   v.fallback_первый_живой = mixed(c.ord.да, c.ord.нет, 'да: муляж первым пропущен, выбран DIRECT (' + c.ord.да + ')',
     'нет: через EGS-ORD запрос не прошёл при живом контроле — выбран мёртвый первый (' + c.ord.нет + ')',
     'не всегда: да ' + c.ord.да + ', нет ' + c.ord.нет);
@@ -199,7 +214,8 @@ function verdicts(S) {
   const s = c.subs;
   const parsed = s.чёт_ok + s.нечёт_ok;
   v.clash_direct_разобран = parsed ? 'да: запрос через EGS-SUBS прошёл (' + parsed + ')'
-    : (s.чёт_err ? 'нет: в чётном окне (все узлы direct) запрос через EGS-SUBS не прошёл — не разобран или не скачан (' + s.чёт_err + ')' : 'нет данных');
+    : (s.чёт_err ? 'нет: в чётном окне (все узлы direct) запрос через EGS-SUBS не прошёл — не разобран или не скачан (' + s.чёт_err + ')'
+      : (s.нр ? 'не различить: отказ EGS-SUBS как у несуществующего имени (' + s.нр + ')' : 'нет данных'));
   v.подписка_первый_живой = s.нечёт_ok && !s.нечёт_err ? 'да: в нечётном окне (муляж первым) выбран живой (' + s.нечёт_ok + ')'
     : (s.нечёт_ok && s.нечёт_err ? 'не всегда: да ' + s.нечёт_ok + ', нет ' + s.нечёт_err
       : (s.нечёт_err && parsed ? 'нет: в нечётном окне выбран муляж (' + s.нечёт_err + ')' : 'нет данных'));
@@ -225,7 +241,7 @@ function verdicts(S) {
     v.conditional = k.wifi_ok && k.cell_err && !k.wifi_err && !k.cell_ok ? 'да: Wi-Fi — DIRECT, сотовая — REJECT'
       : ((k.wifi_ok && k.cell_ok) || (k.wifi_err && k.cell_err) ? 'нет: ветка одна в обеих сетях' : 'не всегда: ' + JSON.stringify(k));
   } else if (wObs || cObs) v.conditional = 'частично: видна только ' + (wObs ? 'wifi' : 'cell') + ' ' + JSON.stringify(k);
-  else v.conditional = 'нет данных';
+  else v.conditional = k.нр ? 'не различить: отказ EGS-COND как у несуществующего имени (' + k.нр + ')' : 'нет данных';
   const r = S.запуски;
   let gmin = null, gmax = null, miss = 0;
   for (let i = 1; i < r.length; i++) {
@@ -313,11 +329,13 @@ async function runCron(ctx, now, net) {
   names.forEach(function (k) { run[k] = brief(R[k]); });
   const dump = { rev: REV, ts: iso(now), вид: 'cron', сеть: net, радио: radioOf(ctx), окно: w, нечёт: odd, мин: min,
     прогон: run, в_итоги: inSum, без_контроля: S.без_контроля, на_границе: S.на_границе,
-    policy_не_соблюдён: S.c.pol.нет, группы_не_находятся: S.c.grp.нет, итоги: v, имена: seen };
+    policy_не_соблюдён: S.c.pol.нет, группы_не_находятся: S.c.grp.нет, сбой_контроля_групп: S.c.grp.сбой || 0,
+    итоги: v, имена: seen };
   report(ctx, dump, [
     (!ctl.ok ? 'контроль НЕ прошёл — прогон не в итогах' : edge ? 'граница окна — прогон не в итогах'
       : !pol ? 'policy НЕ соблюдён — группы не в итогах'
-        : !R.grp.ok ? 'группы по имени не находятся — группы не в итогах' : 'контроль ok') + ', сеть ' + net + ', ' + v.cron,
+        : !R.grp.ok ? (cls(R.grp) === cls(R.nope) ? 'группы по имени не находятся' : 'сбой контроля EGS-GRP') + ' — группы не в итогах'
+          : 'контроль ok') + ', сеть ' + net + ', ' + v.cron,
     'первый живой: ' + v.fallback_первый_живой.split(':')[0] + '; подписка: ' + v.подписка_первый_живой.split(':')[0],
     'смерть узла: ' + v.смерть_узла.split(':')[0] + '; timeout мс: ' + v.timeout_мс.split(':')[0],
   ], first);

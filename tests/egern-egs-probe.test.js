@@ -190,6 +190,26 @@ test('«нет» — только при живом контроле, по ка�
   assert.equal(o.dump.итоги.подписка_первый_живой, 'нет данных', 'без разбора «нет» по порядку не выносится');
 });
 
+test('EGS-SUBS в чётном окне отказывает как несуществующее имя — «не различить», не «не разобран»', async () => {
+  const r = await cron(EVEN, { 'EGS-SUBS': { status: 404, ms: 3 } });
+  assert.equal(r.dump.в_итоги, true);
+  assert.equal(r.dump.итоги.clash_direct_разобран, 'не различить: отказ EGS-SUBS как у несуществующего имени (1)');
+  assert.equal(r.dump.итоги.подписка_первый_живой, 'нет данных');
+});
+
+test('EGS-GRP: отказ не как у несуществующего имени (таймаут, 5xx) — «сбой контроля», а не «группы не находятся»', async () => {
+  for (const g of [{ throw: 'timed out', ms: 5000 }, { status: 502, ms: 20 }]) {
+    const r = await cron(ODD, { 'EGS-GRP': g });
+    const v = r.dump.итоги;
+    assert.equal(r.dump.в_итоги, false);
+    assert.equal(r.dump.группы_не_находятся, 0, JSON.stringify(g));
+    assert.equal(r.dump.сбой_контроля_групп, 1);
+    assert.equal(v.группы_по_имени, 'нет данных: сбой контроля — отказ EGS-GRP не как у несуществующего имени (1)');
+    for (const k of BY_POLICY) if (k !== 'имя_узла_подписки') assert.equal(v[k], 'нет данных', k + ': ' + v[k]);
+    assert.match(r.f.notes[0].body, /^сбой контроля EGS-GRP — группы не в итогах/);
+  }
+});
+
 // Вердикты, которые опираются на выбор члена группы по policy.
 const BY_POLICY = ['fallback_первый_живой', 'REJECT_в_fallback', 'свой_адрес_DIRECT', 'clash_direct_разобран',
   'подписка_первый_живой', 'смерть_узла', 'возврат', 'имя_узла_подписки', 'conditional'];
@@ -337,6 +357,21 @@ test('conditional: Wi-Fi — DIRECT, сотовая — REJECT — «да»; о�
   await cron(ODD, {}, s2, 'wifi');
   const b = await cron(ODD + W, {}, s2, 'cell');
   assert.match(b.dump.итоги.conditional, /^нет:/);
+});
+
+test('conditional: EGS-GRP прошла, EGS-COND отказывает как несуществующее имя в обеих сетях — «не различить», не «нет»', async () => {
+  // select EGS-GRP не доказывает, что conditional-группа находится по имени.
+  const NO = { 'EGS-COND': { status: 404, ms: 3 } };  // как EGS-NOPE в задуманном мире
+  const s = new Map();
+  await cron(ODD, NO, s, 'wifi');
+  const r = await cron(ODD + W, NO, s, 'cell');
+  assert.match(r.dump.итоги.группы_по_имени, /^да:/);
+  assert.equal(r.dump.итоги.conditional, 'не различить: отказ EGS-COND как у несуществующего имени (2)');
+  // Одна сеть различима, другая нет — «частично», без вывода «ветка одна».
+  const p = new Map();
+  await cron(ODD, {}, p, 'wifi');
+  const q = await cron(ODD + W, NO, p, 'cell');
+  assert.match(q.dump.итоги.conditional, /^частично: видна только wifi/);
 });
 
 test('запросы: только стенд, timeout в МИЛЛИСЕКУНДАХ, политики — DIRECT и группы скрипта, не фоновые', async () => {
