@@ -15,8 +15,10 @@
 // запросов, заголовки и прочее НЕ печатаются — в них бывают токены /t/….
 //
 // ЧТО ПЕЧАТАЕТ (время — МСК):
-//   «ожила» — метка, молчавшая ≥ WAKE_MIN мин, снова проверяется (или
-//             первая за сеанс); повод спросить, не открыт ли Stash;
+//   «ожила» — метка молчала ≥ WAKE_MIN мин (скачивание — ≥ WAKE_DL_MIN),
+//             пока другие метки шли, и снова в журнале (или первая за
+//             сеанс); повод спросить, не открыт ли Stash. После общей
+//             паузы — только «пауза кончилась»;
 //   «тишина» — нет ни одного события ≥ QUIET_MIN мин; «пауза кончилась» —
 //             первое событие после тишины, с длительностью;
 //   «окно»  — итог закрытого 10-минутного окна стенда: жизнь/смерть,
@@ -27,12 +29,15 @@
 
 const WAKE_MIN = Number(process.env.LAB_WAKE_MIN) || 5;
 const QUIET_MIN = Number(process.env.LAB_QUIET_MIN) || 4;
+// Поставщики качаются раз в ~5 мин (interval 300) и после паузы — всегда;
+// «ожило» скачивание — только после долгого молчания.
+const WAKE_DL_MIN = Number(process.env.LAB_WAKE_DL_MIN) || 15;
 const WIN_MS = 600000;
 
 const msk = (ms) => new Date(ms + 3 * 3600e3).toISOString().slice(11, 16);
 
 function createState() {
-  return { last: {}, lastAny: 0, quiet: false, win: null, counts: {}, dl: {} };
+  return { last: {}, lastAny: 0, quiet: false, pause: null, win: null, counts: {}, dl: {} };
 }
 
 // Разбор одного события хвоста: массив записей {ms, lab}. Всё, что не JSON
@@ -76,9 +81,11 @@ function feed(st, { ms, j }) {
   }
   if (st.win === null || k > st.win) st.win = k;
 
+  const before = st.lastAny; // последнее событие любой метки до этого
   if (st.quiet) {
     out.push(`${msk(ms)} пауза кончилась: тишина ${Math.round((ms - st.lastAny) / 60000)} мин`);
     st.quiet = false;
+    st.pause = { from: st.lastAny, to: ms };
   }
   st.lastAny = Math.max(st.lastAny, ms);
 
@@ -92,7 +99,11 @@ function feed(st, { ms, j }) {
   if (kk.startsWith('скач:')) st.dl[kk.slice(5)] = true;
   else st.counts[kk] = (st.counts[kk] || 0) + 1;
   const prev = st.last[base];
-  if (prev === undefined || ms - prev >= WAKE_MIN * 60000) {
+  const wake = (kk.startsWith('скач:') ? WAKE_DL_MIN : WAKE_MIN) * 60000;
+  // Метка молчала, пока другие работали; общая пауза — это «тишина», не «ожила».
+  let busy = before - prev; // сколько шли другие метки, пока эта молчала
+  if (st.pause && prev < st.pause.from) busy = (st.pause.from - prev) + Math.max(0, before - st.pause.to);
+  if (prev === undefined || (ms - prev >= wake && busy >= wake)) {
     const gap = prev === undefined ? 'впервые за сеанс' : `молчала ${Math.round((ms - prev) / 60000)} мин`;
     out.push(`${msk(ms)} ожила ${base} (${gap})`);
   }

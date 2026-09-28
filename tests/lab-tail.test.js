@@ -43,11 +43,29 @@ test('первая проверка метки — «ожила … впервы
   assert.deepEqual(T.feed(st, pulse(at(2), 't24na')), []);
 });
 
-test('метка молчала ≥ 5 мин — «ожила, молчала N мин»; 4 мин 59 с — нет', () => {
+test('метка молчала ≥ 5 мин, пока шли другие, — «ожила»; меньше 5 мин — нет', () => {
   const st = T.createState();
   T.feed(st, pulse(at(0), 't24la'));
-  assert.deepEqual(T.feed(st, pulse(at(4, 59), 't24la')), []);
+  for (const m of [1, 2, 3, 4]) T.feed(st, pulse(at(m), 't24nb'));
+  assert.deepEqual(T.feed(st, pulse(at(4, 30), 't24la')), []);
+  for (const m of [5, 6, 7, 8, 9]) T.feed(st, pulse(at(m, 30), 't24nb'));
   assert.deepEqual(T.feed(st, pulse(at(9, 59), 't24la')), ['14:29 ожила la (молчала 5 мин)']);
+});
+
+test('после общей паузы метки не «оживают» — только «пауза кончилась»', () => {
+  const st = T.createState();
+  T.feed(st, pulse(at(0), 't24la'));
+  T.feed(st, pulse(at(1), 't24nb'));
+  T.tick(st, at(5, 30));
+  const out = [...T.feed(st, pulse(at(8), 't24nb')), ...T.feed(st, pulse(at(8), 't24la'))];
+  assert.deepEqual(out, ['14:28 пауза кончилась: тишина 7 мин']);
+  // До паузы nb шла 1 мин, после — 4 мин: итого 5 мин работы других → «ожила».
+  const st2 = T.createState();
+  T.feed(st2, pulse(at(0), 't24la'));
+  T.feed(st2, pulse(at(1), 't24nb'));
+  T.tick(st2, at(5, 30));
+  for (const m of [8, 9, 10, 11, 12]) T.feed(st2, pulse(at(m), 't24nb'));
+  assert.deepEqual(T.feed(st2, pulse(at(12, 10), 't24la')), ['14:32 ожила la (молчала 12 мин)']);
 });
 
 test('метка «мёртв» и живая — одна метка для «ожила», разные для счёта окна', () => {
@@ -94,4 +112,16 @@ test('окно смерти помечено; отчёт пробы печата
   const out = T.feed(st, { ms: ms + 1000, j: { lab: 'report', now: { N: 'B' } } });
   assert.deepEqual(out, ['14:31 отчёт {"now":{"N":"B"}}']);
   assert.match(T.winSummary(st), /окно \(смерть\)/);
+});
+
+test('скачивание поставщика «оживает» только после ≥ 15 мин молчания', () => {
+  const st = T.createState();
+  // Итоги окон (переход через :10/:20/:30) здесь не проверяются — только «ожила».
+  const dl = (ms) => T.feed(st, { ms, j: { lab: 't24-nodes', g: 'p' } }).filter((l) => l.includes('ожила'));
+  assert.deepEqual(dl(at(0)), ['14:20 ожила скач:p (впервые за сеанс)']);
+  assert.deepEqual(dl(at(7)), []);
+  assert.deepEqual(dl(at(21, 59)), []);
+  for (let m = 22; m < 37; m++) T.feed(st, pulse(at(m), 't24nb')); // другие идут
+  T.feed(st, pulse(at(36, 59), 't24nb'));
+  assert.deepEqual(dl(at(36, 59)), ['14:56 ожила скач:p (молчала 15 мин)']);
 });
