@@ -5,7 +5,8 @@
 // молча грузит его без полей, и он перестаёт срабатывать сам
 // (code.claude.com/docs/en/skills, «Skill not triggering»: «If YAML between
 // the markers doesn't parse, the skill still loads with no fields set»).
-// Роль без `model: opus` уходит на модель по умолчанию; роль-наблюдатель с
+// Роль без явных `model:` и `effort:` уходит на модель и уровень сессии
+// (решение Дианы 01.10 — таблица ROLE_MODEL, studio/README.md «Роли»); роль-наблюдатель с
 // `Write` в `tools` получает право править репозиторий. Ни то, ни другое
 // глазами не видно — поэтому тест.
 //
@@ -85,7 +86,19 @@ function toolList(v) {
   return arr.map((s) => s.trim()).filter(Boolean).map((s) => s.replace(/\(.*\)$/, ''));
 }
 
-export function checkAgent(text, base) {
+export // Модель и effort ролей — решение Дианы 01.10 (studio/README.md «Роли»).
+const ROLE_MODEL = {
+  'executor-simple': ['sonnet', 'medium'],
+  'executor-medium': ['sonnet', 'high'],
+  'executor-complex': ['opus', 'medium'],
+  reviewer: ['opus', 'high'],
+  tester: ['sonnet', 'high'],
+  researcher: ['sonnet', 'medium'],
+  ideator: ['opus', 'medium'],
+  usilenie: ['opus', 'high'],
+};
+
+function checkAgent(text, base) {
   const errs = [];
   const fm = parseFrontmatter(text);
   if (!fm) return ['нет frontmatter между строками ---'];
@@ -93,7 +106,12 @@ export function checkAgent(text, base) {
   if (!fm.name || typeof fm.name !== 'string') errs.push('пустой name');
   else if (fm.name !== base) errs.push(`name ${fm.name} ≠ имени файла ${base}`);
   if (!fm.description || !String(fm.description).trim()) errs.push('пустой description');
-  if (fm.model !== 'opus') errs.push(`model должен быть opus, а не ${fm.model ?? 'пусто'}`);
+  const want = ROLE_MODEL[base];
+  if (!want) errs.push(`роли ${base} нет в ROLE_MODEL (studio/README.md «Роли»)`);
+  else {
+    if (fm.model !== want[0]) errs.push(`model должен быть ${want[0]}, а не ${fm.model ?? 'пусто'}`);
+    if (fm.effort !== want[1]) errs.push(`effort должен быть ${want[1]}, а не ${fm.effort ?? 'пусто'}`);
+  }
   const tools = toolList(fm.tools);
   if (READ_ONLY.includes(base)) {
     if (!tools || !tools.length) errs.push('роль без записи обязана перечислить tools (иначе наследует Write)');
@@ -154,6 +172,12 @@ const read = (p) => fs.readFileSync(p, 'utf8');
 test('мутация: роль без model — ошибка', () => {
   const t = read(path.join(AGENTS, 'ideator.md')).replace(/^model:.*\n/m, '');
   assert.ok(checkAgent(t, 'ideator').some((e) => e.includes('model')));
+});
+
+test('мутация: роль без effort или с чужой моделью — ошибка', () => {
+  const t = read(path.join(AGENTS, 'reviewer.md'));
+  assert.ok(checkAgent(t.replace(/^effort:.*\n/m, ''), 'reviewer').some((e) => e.includes('effort')));
+  assert.ok(checkAgent(t.replace(/^model:.*$/m, 'model: sonnet'), 'reviewer').some((e) => e.includes('model')));
 });
 
 test('мутация: Write у роли-наблюдателя — ошибка', () => {

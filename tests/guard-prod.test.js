@@ -123,3 +123,46 @@ test('симлинк на боевой файл или каталог → ask', 
 test('вход без file_path → пропуск', () => {
   assertPass(run(null, { raw: JSON.stringify({ tool_name: 'Edit', tool_input: {}, cwd: ROOT }) }));
 });
+
+// Bash: правка боевого файла командой оболочки (`sed -i` и т. п.) обходила
+// хук, пока matcher был только Edit|Write. Теперь хук смотрит и Bash.
+function runBash(command, { cwd = ROOT, root = ROOT } = {}) {
+  return run(null, {
+    root,
+    raw: JSON.stringify({
+      session_id: 't', cwd, hook_event_name: 'PreToolUse',
+      tool_name: 'Bash', tool_input: { command }, tool_use_id: 'toolu_t',
+    }),
+  });
+}
+
+test('Bash: запись в боевой файл → ask', () => {
+  assertAsk(runBash("sed -i 's/a/b/' scripts/routehub-rkn.js"));
+  assertAsk(runBash(`cd ${ROOT} && perl -pi -e 's/a/b/' routehub.conf`));
+  assertAsk(runBash('printf x > src/api.js'));
+  assertAsk(runBash('echo x | tee -a plugins/RouteHub-Dash.plugin'));
+  assertAsk(runBash(`cp /tmp/x.js ${ROOT}/routehub-worker.js`));
+  assertAsk(runBash('git checkout -- wrangler.toml'));
+  assertAsk(runBash(`node -e "require('fs').writeFileSync('src/a.js','')"`));
+  assertAsk(runBash("cd src && sed -i 's/a/b/' api.js"));
+  assertAsk(runBash(`sed -i 's/a/b/' "$CLAUDE_PROJECT_DIR/src/api.js"`));
+  assertAsk(runBash('rm -rf scripts'));
+});
+test('Bash: git apply / patch в проекте → ask (пути из диффа не видны)', () => {
+  assertAsk(runBash('git apply /tmp/fix.diff'));
+  assertAsk(runBash('patch -p1 < /tmp/fix.diff'));
+});
+test('Bash: чтение, тесты, правка вне боевого контура → пропуск', () => {
+  assertPass(runBash('grep -n setSelectPolicy src/*.js scripts/*.js'));
+  assertPass(runBash('node --test tests/*.test.js'));
+  assertPass(runBash('cat routehub.conf 2>/dev/null | head -5'));
+  assertPass(runBash('git diff --stat src/ 2>&1'));
+  assertPass(runBash("sed -n '1,20p' routehub.conf"));
+  assertPass(runBash("sed -i 's/a/b/' docs/x.md"));
+  assertPass(runBash('git apply --check /tmp/fix.diff'));
+});
+test('Bash: клон вне проекта (мутации тестировщика) → пропуск', () => {
+  assertPass(runBash("cd /tmp/clone && sed -i 's/a/b/' src/api.js && node --test tests/*.test.js"));
+  assertPass(runBash('git -C /tmp/clone apply /tmp/m.diff'));
+  assertPass(runBash("sed -i 's/a/b/' /tmp/clone/routehub.conf"));
+});
