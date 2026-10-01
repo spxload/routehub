@@ -95,6 +95,7 @@ const ROLE_MODEL = {
   tester: ['sonnet', 'high'],
   researcher: ['sonnet', 'medium'],
   ideator: ['opus', 'medium'],
+  usilenie: ['opus', 'high'],
 };
 
 function checkAgent(text, base) {
