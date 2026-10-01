@@ -7,7 +7,9 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-prod.js"]
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-prod.js"
+            ]
           }
         ]
       },
@@ -17,7 +19,9 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-read.js"],
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-read.js"
+            ],
             "timeout": 10
           }
         ]
@@ -30,7 +34,9 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/context-watch.js"],
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/context-watch.js"
+            ],
             "timeout": 10
           }
         ]
@@ -42,7 +48,9 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/context-watch.js"],
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/context-watch.js"
+            ],
             "timeout": 10
           }
         ]
@@ -54,7 +62,9 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/context-watch.js"],
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/context-watch.js"
+            ],
             "timeout": 10
           }
         ]
@@ -67,11 +77,14 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/context-watch.js"],
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/context-watch.js"
+            ],
             "timeout": 10
           }
         ]
       }
     ]
-  }
+  },
+  "autoMemoryDirectory": "/home/user/routehub/studio/memory/auto"
 }
