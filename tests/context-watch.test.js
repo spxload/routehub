@@ -459,5 +459,5 @@ test('settings.json: хук на четырёх событиях, guard-prod н�
     assert.ok(cmds(ev).some((c) => c.endsWith('/.claude/hooks/context-watch.js')), ev);
   }
   assert.ok(cmds('PreToolUse').some((c) => c.endsWith('/.claude/hooks/guard-prod.js')));
-  assert.equal(s.hooks.PreToolUse[0].matcher, 'Edit|Write|NotebookEdit');
+  assert.equal(s.hooks.PreToolUse[0].matcher, 'Edit|Write|NotebookEdit|Bash');
 });

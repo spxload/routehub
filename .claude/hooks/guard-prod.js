@@ -19,11 +19,19 @@
 //   Любое исключение ловится и превращается в «ask»: по документации
 //   падение с кодом 1 — неблокирующая ошибка, правка прошла бы без вопроса.
 //
-// Ограничения: хук видит только инструменты из `matcher` в settings.json;
-// правка через Bash (`sed -i`, `git apply`) его обходит — это предохранитель,
-// а не замок. Хуки `.claude/settings.json` действуют только в сессии с одним
-// репозиторием (code.claude.com/docs/en/cloud-environments, «What carries
-// over»). Сетевых вызовов и записи на диск нет.
+// Bash (`tool_input.command`): хук ищет в команде признак записи (`sed -i`,
+//   `perl -i`, `>`/`>>`, `tee`, `cp`/`mv`/`rm`, `git checkout|restore`,
+//   `writeFile…`) и боевой путь среди её слов — относительно `cd <каталог>` /
+//   `git -C <каталог>` в начале команды, иначе от `cwd`; `git apply|am` и
+//   `patch` внутри проекта — «ask» всегда: пути из диффа в команде не видны.
+//   Клон вне проекта (`/tmp/…`) боевым не считается — тестировщику не мешает.
+//   Ложное срабатывание стоит одного вопроса, пропуск — правки без согласия.
+//
+// Ограничения: хук видит только инструменты из `matcher` в settings.json и
+// не разбирает shell целиком (переменные, `eval`, скрипт, который сам пишет
+// файл, — мимо) — это предохранитель, а не замок. Хуки `.claude/settings.json`
+// действуют только в сессии с одним репозиторием (code.claude.com/docs/en/
+// cloud-environments, «What carries over»). Сетевых вызовов и записи на диск нет.
 'use strict';
 
 const fs = require('fs');
@@ -71,15 +79,63 @@ function relTo(root, file) {
 }
 
 function isProd(rel) {
-  return PROD_FILES.includes(rel) || PROD_DIRS.some((d) => rel.startsWith(d));
+  return PROD_FILES.includes(rel)
+    || PROD_DIRS.some((d) => rel.startsWith(d) || rel === d.slice(0, -1));
+}
+
+// Признаки записи в команде Bash; шум вроде `2>&1`, `>/dev/null` убирается до проверки.
+const NOISE_RE = /\d*>&\d+|&>\s*\/dev\/null|\d*>{1,2}\s*\/dev\/null/g;
+const WRITE_RE = new RegExp([
+  String.raw`\bsed\b[^;&|]*\s(-[a-zA-Z]*i|--in-place)`,
+  String.raw`\bperl\b[^;&|]*\s-[a-zA-Z]*i`,
+  String.raw`\btee\b`,
+  '>',
+  String.raw`(^|[\s;&|(])(cp|mv|rm|ln|install|truncate|dd|touch)\s`,
+  String.raw`\bgit\s+(checkout|restore|rm|mv)\b`,
+  String.raw`writeFile|appendFile|createWriteStream|\bopen\s*\([^)]*,\s*['"][wa]`,
+].join('|'));
+const PATCH_RE = /\bgit(\s+-C\s+\S+)?\s+(apply|am)\b|(^|[\s;&|(])patch\s/;
+const DRY_RE = /\s--(check|stat|numstat|summary)\b/;
+const SPLIT_RE = /[\s'"`()=;,|&<>]+/;
+
+function unquote(s) {
+  return String(s).replace(/^['"]|['"]$/g, '');
+}
+
+// Bash: относительный боевой путь (или пометка про git apply) либо null.
+function classifyBash(command, roots, cwd, projectDir) {
+  let cmd = String(command).replace(NOISE_RE, ' ');
+  if (projectDir) cmd = cmd.replace(/\$\{?CLAUDE_PROJECT_DIR\}?/g, projectDir);
+  const at = (cmd.match(/(?:^|[;&|(]\s*)cd\s+([^\s;&|)]+)/)
+    || cmd.match(/\bgit\s+-C\s+([^\s;&|)]+)/) || [])[1];
+  const base = path.resolve(toPosix(cwd || roots[0] || '/'), toPosix(unquote(at || '.')));
+  const inside = roots.some((r) => !relTo(r, base).startsWith('..'));
+  if (inside && PATCH_RE.test(cmd) && !DRY_RE.test(cmd)) return 'git apply / patch (пути из диффа)';
+  if (!WRITE_RE.test(cmd)) return null;
+  let weak = null;
+  for (const tok of cmd.split(SPLIT_RE)) {
+    if (!tok || tok.startsWith('-')) continue;
+    const abs = path.resolve(base, toPosix(tok));
+    for (const root of roots) {
+      const rel = relTo(root, abs);
+      if (!isProd(rel)) continue;
+      if (/[./]/.test(tok)) return rel; // похоже на путь — сразу
+      weak = weak || rel; // голое слово после `cd src` — запасной ответ
+    }
+  }
+  return weak;
 }
 
 // Возвращает относительный боевой путь или null.
 function classify(input, env) {
   const ti = (input && input.tool_input) || {};
+  const roots = [env.CLAUDE_PROJECT_DIR, input.cwd].filter(Boolean);
+  if (input.tool_name === 'Bash') {
+    const hit = classifyBash(ti.command || '', roots, input.cwd, env.CLAUDE_PROJECT_DIR);
+    return hit && hit + ' (Bash; боевые файлы — через Edit/Write)';
+  }
   const file = ti.file_path || ti.notebook_path;
   if (!file) return null;
-  const roots = [env.CLAUDE_PROJECT_DIR, input.cwd].filter(Boolean);
   for (const root of roots) {
     const rel = relTo(root, file);
     if (isProd(rel)) return rel;

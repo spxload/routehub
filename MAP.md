@@ -68,7 +68,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `probes-smoke.test.js` | каждая проба `probes/*` доходит до `$done` |
 | `speedtest-ewma.test.js` | EWMA α=0.2 — вес нового замера, флаг `ewma` |
 | `speedtest-jitter.test.js` | `RTT_SAMPLES=5`, джиттер — усечённый размах |
-| `guard-prod.test.js` | хук правила 5: боевые пути → `ask`, прочие молча; `../`, симлинки, сбой → `ask` |
+| `guard-prod.test.js` | хук правила 5: боевые пути → `ask`, прочие молча; `../`, симлинки, сбой → `ask`; Bash: `sed -i`/`>`/`git apply` по боевому пути → `ask`, чтение и клон в `/tmp` → молча |
 | `context-watch.test.js` | монитор контекста: ступени 50/65/80, память ступени, хвост транскрипта, сбой → тишина; SessionStart, PreCompact |
 | `guard-read.test.js` | сторож Read: кусок > 20 тыс. токенов → `deny` с оценкой; граница порога, кириллица по байтам, картинки/PDF мимо, сбой → тишина; `--estimate` |
 | `lab-tail.test.js` | живой журнал опыта: только JSON с `lab`, без адресов; «ожила» ≥ 5 мин, «тишина» ≥ 4 мин и её конец, итог окна (жизнь/смерть), отчёт пробы |
@@ -183,7 +183,7 @@ C-draft-43, `routehub-speedtest.js` v0.7.1, `routehub-dash.js` v0.8.0).
 | `.claude/skills/prove-blocked/SKILL.md` | скилл: лестница доказательств перед выводом «невозможно», контрольный опыт |
 | `.claude/skills/ideas/SKILL.md` | скилл: 1–3 строки «что улучшить» в конце закрытой задачи, иначе молчать |
 | `.claude/settings.json` | хуки: `PreToolUse` (guard-prod, guard-read); `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PreCompact` (context-watch) |
-| `.claude/hooks/guard-prod.js` | правка боевого контура → запрос подтверждения (правило 5) |
+| `.claude/hooks/guard-prod.js` | правка боевого контура (Edit/Write и Bash с записью) → запрос подтверждения (правило 5) |
 | `.claude/hooks/guard-read.js` | Read дороже 20 тыс. токенов → отказ с оценкой; `--estimate <файл>` — оценка без чтения |
 | `.claude/tools/lab-tail.js` | живой хвост Worker'а стенда → строки о переменах для Monitor (хвост заводится через Cloudflare MCP, живёт ~6 ч) |
 | `.claude/hooks/context-watch.js` | монитор контекста → ступени и `/handoff`; аудит при старте; первый ручной `/compact` → блок |
